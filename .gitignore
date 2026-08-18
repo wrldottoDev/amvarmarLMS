@@ -104,3 +104,31 @@ PLAN_DE_TRABAJO.md
 docs/migration/inventario.md
 archivos_faltantes.csv
 backup_checksums.txt
+
+
+# Python adicional
+__pypackages__/
+.pyre/
+.pytype/
+celerybeat-schedule
+celerybeat.pid
+
+# Frontend: pruebas y cobertura
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Configuración local
+.envrc
+.direnv/
+.cache/
+
+# Docker Compose local
+compose.override.yaml
+compose.override.yml
+docker-compose.override.yaml
+
+# Respaldos adicionales
+*.backup
+*.bak
