@@ -96,3 +96,11 @@ Thumbs.db
 !.vscode/extensions.json
 *.swp
 *.swo
+
+# ---------------------------------------------------------------------------
+# Documentos internos de trabajo — no versionar
+# ---------------------------------------------------------------------------
+PLAN_DE_TRABAJO.md
+docs/migration/inventario.md
+archivos_faltantes.csv
+backup_checksums.txt
