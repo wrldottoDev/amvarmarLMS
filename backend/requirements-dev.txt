@@ -1,0 +1,32 @@
+# AMVARMAR LMS — backend dev/test dependencies
+# Instalar sobre requirements.txt:  pip install -r requirements-dev.txt
+# Ref: documentation/AMVARMAR_LMS_Arquitectura_Tecnica_v1.md (sección 9)
+
+-r requirements.txt
+
+# --- Tests ---
+pytest>=8.3,<9.0
+pytest-asyncio>=0.24,<2.0
+pytest-cov>=6.0,<8.0
+pytest-xdist>=3.6,<4.0
+anyio>=4.6,<5.0
+testcontainers[postgres,redis]>=4.8,<5.0   # integración con PostgreSQL y Redis reales
+factory-boy>=3.3,<4.0
+faker>=30.0
+freezegun>=1.5,<2.0                        # expiración de JWT y ventanas de rotación
+respx>=0.22,<1.0                           # mock de httpx (proveedores externos)
+
+# --- Lint / formato / tipos ---
+ruff>=0.8,<1.0
+mypy>=1.13,<2.0
+types-python-dateutil
+boto3-stubs[s3]>=1.35,<2.0
+
+# --- Seguridad / auditoría de dependencias ---
+bandit>=1.8,<2.0
+pip-audit>=2.7,<3.0
+detect-secrets>=1.5,<2.0
+
+# --- Utilidades de desarrollo ---
+pre-commit>=4.0,<5.0
+watchfiles>=0.24,<2.0

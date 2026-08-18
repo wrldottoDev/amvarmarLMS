@@ -1,0 +1,198 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amvarmar-lms-backend"
+version = "0.1.0"
+description = "AMVARMAR LMS — API FastAPI async, PostgreSQL, Redis, RBAC y expediente de carga (Shipment)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "AMVARMAR" }]
+
+dependencies = [
+    # API framework
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32,<1.0",
+    "python-multipart>=0.0.18",
+
+    # Configuración validada
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.6,<3.0",
+    "email-validator>=2.2,<3.0",
+
+    # Base de datos
+    "sqlalchemy[asyncio]>=2.0.36,<3.0",
+    "asyncpg>=0.30,<1.0",
+    "alembic>=1.14,<2.0",
+    "psycopg[binary]>=3.2,<4.0",
+
+    # Seguridad: Argon2id + JWT
+    "pwdlib[argon2]>=0.2.1,<1.0",
+    "argon2-cffi>=23.1,<26.0",
+    "pyjwt[crypto]>=2.10,<3.0",
+    "cryptography>=43.0",
+
+    # Redis: caché de permisos, rate limiting, broker
+    "redis[hiredis]>=5.2,<6.0",
+
+    # Worker / outbox
+    "celery[redis]>=5.4,<6.0",
+    "tenacity>=9.0,<10.0",
+
+    # Object storage S3-compatible (MinIO en local)
+    "boto3>=1.35,<2.0",
+    "botocore>=1.35,<2.0",
+
+    # Notificaciones
+    "firebase-admin>=6.5,<7.0",
+    "aiosmtplib>=3.0,<4.0",
+    "jinja2>=3.1,<4.0",
+
+    # Validación de archivos subidos
+    "python-magic>=0.4.27,<1.0",
+    "pillow>=11.0,<12.0",
+
+    # Cliente HTTP
+    "httpx>=0.28,<1.0",
+
+    # Observabilidad
+    "structlog>=24.4,<26.0",
+    "prometheus-fastapi-instrumentator>=7.0,<8.0",
+    "opentelemetry-sdk>=1.28,<2.0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.49b0",
+    "opentelemetry-exporter-otlp>=1.28,<2.0",
+    "sentry-sdk[fastapi]>=2.18,<3.0",
+
+    # Utilidades
+    "orjson>=3.10,<4.0",
+    "python-dateutil>=2.9,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Tests
+    "pytest>=8.3,<9.0",
+    "pytest-asyncio>=0.24,<2.0",
+    "pytest-cov>=6.0,<8.0",
+    "pytest-xdist>=3.6,<4.0",
+    "anyio>=4.6,<5.0",
+    "testcontainers[postgres,redis]>=4.8,<5.0",
+    "factory-boy>=3.3,<4.0",
+    "faker>=30.0",
+    "freezegun>=1.5,<2.0",
+    "respx>=0.22,<1.0",
+
+    # Lint / formato / tipos
+    "ruff>=0.8,<1.0",
+    "mypy>=1.13,<2.0",
+    "types-python-dateutil",
+    "boto3-stubs[s3]>=1.35,<2.0",
+
+    # Seguridad / auditoría de dependencias
+    "bandit>=1.8,<2.0",
+    "pip-audit>=2.7,<3.0",
+    "detect-secrets>=1.5,<2.0",
+
+    # Desarrollo
+    "pre-commit>=4.0,<5.0",
+    "watchfiles>=0.24,<2.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# Ruff — paso 1 del pipeline CI (sección 9.2)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests", "scripts"]
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "DTZ",       # datetimes sin tz (TIMESTAMPTZ en todo el esquema)
+    "T20",       # print olvidado
+    "SIM",       # simplify
+    "ASYNC",     # antipatrones async
+    "S",         # bandit
+    "RUF",
+]
+ignore = [
+    "E501",      # longitud gestionada por el formatter
+    "B008",      # Depends() en defaults es idiomático en FastAPI
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]   # asserts y credenciales de prueba
+"scripts/**" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+show_error_codes = true
+exclude = ["^alembic/versions/"]
+
+[[tool.mypy.overrides]]
+module = ["firebase_admin.*", "magic.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# ---------------------------------------------------------------------------
+# Pytest — marcadores alineados con tests/{unit,integration,security,e2e}
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "unit: pruebas puras de dominio y políticas",
+    "integration: requieren PostgreSQL y Redis reales",
+    "security: RBAC, aislamiento de empresa/IDOR, rotación y reuse de refresh",
+    "e2e: flujo prealerta -> recepción -> almacenamiento -> despacho",
+    "slow",
+]
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/main.py", "alembic/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+# ---------------------------------------------------------------------------
+# Bandit — SAST (sección 9.2, paso 7)
+# ---------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests", "alembic/versions", ".venv"]
