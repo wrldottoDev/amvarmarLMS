@@ -1,0 +1,144 @@
+name: amvarmar-lms
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-amvarmar_lms}
+      POSTGRES_USER: ${POSTGRES_USER:-amvarmar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env}
+    ports:
+      - "5434:5432" # 5432 ya está en uso en el host por un PostgreSQL nativo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amvarmar} -d ${POSTGRES_DB:-amvarmar_lms}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379" # 6379 ya está en uso en el host por otro proceso local
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-amvarmar}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD en .env}
+    ports:
+      - "9000:9000" # API S3
+      - "9001:9001" # consola web
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clamav:
+    # La imagen `clamav` (sin `_base`) ya trae las firmas: `clamav_base` las
+    # descarga al arrancar y tarda varios minutos.
+    image: clamav/clamav:latest
+    # Las imágenes oficiales de ClamAV solo se publican para amd64. En Apple
+    # Silicon corre emulado (más lento); en los servidores amd64 es nativo.
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav-db:/var/lib/clamav
+    healthcheck:
+      # `clamdcheck` verifica que el demonio ya cargó la base de firmas, no
+      # solo que el proceso exista.
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      # Cargar las firmas en memoria toma cerca de un minuto la primera vez.
+      start_period: 180s
+      retries: 5
+
+  # El worker de Celery no se define acá: corre desde el backend con
+  # `celery -A app.workers.app.celery_app worker`. Levantarlo en compose
+  # obligaría a construir la imagen del backend en cada `up`, que en desarrollo
+  # es más lento que útil.
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP (Fase 4 apunta aquí en local)
+      - "8025:8025" # UI web para leer correos capturados
+
+  # --- Observabilidad (Paso 4.3) ---
+  # Perfil aparte: en desarrollo casi nunca hacen falta y suman memoria.
+  # `docker compose --profile observabilidad up` los levanta.
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alertas.yml:/etc/prometheus/alertas.yml:ro
+      # El token de `/metrics` se monta como fichero, nunca se versiona.
+      - ./metrics_token:/etc/prometheus/metrics_token:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  # Recibe las métricas de los trabajos programados (respaldo, ensayo de
+  # restauración). Terminan antes del siguiente raspado, así que no se los
+  # puede raspar: empujan su resultado.
+  pushgateway:
+    image: prom/pushgateway:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "3001:3000" # 3000 lo usa el frontend
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?falta GRAFANA_PASSWORD en .env}
+      # Sin registro abierto: cualquiera con la URL podría crearse una cuenta.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  pgdata:
+  prometheus-data:
+  grafana-data:
+  clamav-db:
+  redis-data:
+  minio-data:

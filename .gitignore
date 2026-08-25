@@ -102,5 +102,6 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 PLAN_DE_TRABAJO.md
 docs/migration/inventario.md
+docs/migration/inventario_raw_*.txt
 archivos_faltantes.csv
 backup_checksums.txt

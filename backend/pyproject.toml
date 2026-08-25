@@ -133,10 +133,19 @@ select = [
 ignore = [
     "E501",      # longitud gestionada por el formatter
     "B008",      # Depends() en defaults es idiomático en FastAPI
+    # N818 exige sufijo "Error" en excepciones. El proyecto nombra en español y
+    # `CredencialesInvalidasError` no aporta claridad sobre `CredencialesInvalidas`:
+    # el `raise` ya deja claro que es una excepción.
+    "N818",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]   # asserts y credenciales de prueba
+# Los objetivos no funcionales se miden ejecutando: imprimir los números es el
+# resultado del test, y las herramientas de PostgreSQL se invocan a propósito.
+"tests/integration/test_objetivos_no_funcionales.py" = [
+    "S101", "S105", "S106", "T201", "S603", "S607", "S608", "S108", "ASYNC221", "ASYNC240",
+]
 "scripts/**" = ["T20"]
 
 [tool.ruff.lint.isort]
@@ -158,8 +167,15 @@ show_error_codes = true
 exclude = ["^alembic/versions/"]
 
 [[tool.mypy.overrides]]
-module = ["firebase_admin.*", "magic.*", "testcontainers.*"]
+# Paquetes sin stubs publicados.
+module = ["firebase_admin.*", "magic.*", "testcontainers.*", "celery.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# El decorador de Celery no está tipado; sin esto toda tarea quedaría como
+# `Any` y perderíamos el chequeo del resto del módulo.
+module = "app.workers.tasks.*"
+disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -180,7 +196,14 @@ markers = [
     "e2e: flujo prealerta -> recepción -> almacenamiento -> despacho",
     "slow",
 ]
-filterwarnings = ["error::DeprecationWarning"]
+filterwarnings = [
+    # Un DeprecationWarning en nuestro código es un error: obliga a arreglarlo
+    # antes de que la API desaparezca.
+    "error::DeprecationWarning",
+    # Deprecaciones internas de dependencias: no podemos arreglarlas y romperían
+    # la suite por algo ajeno al proyecto.
+    "ignore::DeprecationWarning:testcontainers.*",
+]
 
 [tool.coverage.run]
 source = ["app"]
