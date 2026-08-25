@@ -83,6 +83,34 @@ services:
       - "1025:1025" # SMTP (Fase 4 apunta aquí en local)
       - "8025:8025" # UI web para leer correos capturados
 
+  # --- Sistema viejo, solo para la migración (Fase 5) ---
+  # PostgreSQL 18 porque los volcados de producción vienen de esa versión y
+  # `pg_restore` no lee archivos más nuevos que él. Es un contenedor aparte a
+  # propósito: el esquema viejo y el nuevo no deben convivir en la misma base,
+  # o dejaría de saberse qué dato vino de dónde.
+  #
+  #   docker compose --profile legacy up -d
+  postgres-legacy:
+    image: postgres:18-alpine
+    profiles: ["legacy"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: amvarmar_legacy
+      POSTGRES_USER: ${POSTGRES_USER:-amvarmar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env}
+    ports:
+      - "5435:5432"
+    volumes:
+      # PostgreSQL 18 cambió la convención: el montaje va en el directorio padre
+      # y la imagen coloca los datos en un subdirectorio. Montar en `/data`
+      # como en las versiones anteriores deja el contenedor reiniciándose.
+      - pgdata-legacy:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amvarmar} -d amvarmar_legacy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # --- Observabilidad (Paso 4.3) ---
   # Perfil aparte: en desarrollo casi nunca hacen falta y suman memoria.
   # `docker compose --profile observabilidad up` los levanta.
@@ -137,6 +165,7 @@ services:
 
 volumes:
   pgdata:
+  pgdata-legacy:
   prometheus-data:
   grafana-data:
   clamav-db:

@@ -143,10 +143,16 @@ ignore = [
 "tests/**" = ["S101", "S105", "S106"]   # asserts y credenciales de prueba
 # Los objetivos no funcionales se miden ejecutando: imprimir los números es el
 # resultado del test, y las herramientas de PostgreSQL se invocan a propósito.
+# Los scripts de limpieza legacy se prueban ejecutándolos con psql dentro del
+# contenedor: rutas fijas y `docker` por nombre son parte de eso.
+"tests/migration/**" = ["S101", "S105", "S106", "S603", "S607", "S108"]
 "tests/integration/test_objetivos_no_funcionales.py" = [
     "S101", "S105", "S106", "T201", "S603", "S607", "S608", "S108", "ASYNC221", "ASYNC240",
 ]
 "scripts/**" = ["T20"]
+# El sembrado de demo escribe su contraseña a la vista y usa `random` con semilla
+# fija: las dos cosas son deliberadas y el script se niega a correr fuera de local.
+"scripts/seed_demo.py" = ["T20", "S105", "S311"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

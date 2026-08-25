@@ -12,6 +12,7 @@ from app.core.database import Base
 # Importar aquí todo módulo de modelos para que Base.metadata los conozca.
 # Sin esto, `alembic revision --autogenerate` genera migraciones vacías y
 # `alembic check` no detecta modelos sin migración.
+from app.modules.audit import legacy as audit_legacy  # noqa: F401
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.companies import models as companies_models  # noqa: F401
