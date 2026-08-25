@@ -1,0 +1,414 @@
+"""Subida en dos tiempos y descarga autorizada (Paso 3.1).
+
+El archivo nunca pasa por la aplicación: el cliente sube directo al storage con
+una URL firmada. Subir 250 MB a través de FastAPI ocuparía un worker durante
+toda la transferencia.
+
+A cambio, el servidor no ve los bytes mientras suben — por eso `completar()`
+verifica sobre lo ya almacenado y no sobre lo que el cliente declaró.
+"""
+
+import hashlib
+import json
+import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID, uuid4
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import Conflicto, RecursoNoEncontrado
+from app.core.observability import metrics
+from app.infrastructure.storage import s3
+from app.modules.documents.models import ScanStatus, UploadStatus
+from app.modules.documents.validation import (
+    ArchivoInvalido,
+    FormatoNoPermitido,
+    nombre_seguro,
+    validar_contenido,
+    validar_extension,
+    validar_tamano,
+)
+from app.modules.shipments.models import RequirementStatus
+
+# Límites por defecto (ADR-0009). Se sobreescriben desde `system_settings`, que
+# SUPER_ADMIN puede editar sin desplegar.
+LIMITES_POR_DEFECTO: dict[str, int] = {
+    "upload.max_size.pdf": 250 * 1024 * 1024,
+    "upload.max_size.image": 100 * 1024 * 1024,
+    "upload.max_size.other": 100 * 1024 * 1024,
+    "upload.max_size.batch": 1024 * 1024 * 1024,
+}
+
+_FORMATOS_IMAGEN = frozenset({"JPG", "JPEG", "PNG", "WEBP", "HEIC"})
+
+
+class DocumentoNoDisponible(Conflicto):
+    """Existe pero todavía no se puede descargar: falta procesarlo o escanearlo."""
+
+    code = "DOCUMENTO_NO_DISPONIBLE"
+
+
+class DocumentoEnCuarentena(Conflicto):
+    code = "DOCUMENTO_EN_CUARENTENA"
+
+
+@dataclass(frozen=True)
+class SubidaPreparada:
+    document_id: UUID
+    storage_key: str
+    upload_url: str
+    expira_en: datetime
+    max_bytes: int
+
+
+async def _limite_para(session: AsyncSession, formato: str) -> int:
+    if formato == "PDF":
+        clave = "upload.max_size.pdf"
+    elif formato in _FORMATOS_IMAGEN:
+        clave = "upload.max_size.image"
+    else:
+        clave = "upload.max_size.other"
+
+    valor = (
+        await session.execute(
+            text("SELECT value FROM system_settings WHERE key = :k"), {"k": clave}
+        )
+    ).scalar_one_or_none()
+
+    if valor is None:
+        return LIMITES_POR_DEFECTO[clave]
+
+    return (
+        int(valor if isinstance(valor, int) else valor.get("bytes", 0))
+        or LIMITES_POR_DEFECTO[clave]
+    )
+
+
+async def _tipo_de_documento(session: AsyncSession, document_type_id: UUID) -> Any:
+    fila = (
+        await session.execute(
+            text("""
+                SELECT id, code, allowed_formats
+                FROM document_types WHERE id = :id AND is_active
+            """),
+            {"id": document_type_id},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise RecursoNoEncontrado("Tipo de documento no encontrado.")
+
+    return fila
+
+
+def _storage_key(company_id: UUID, document_id: UUID, safe_name: str) -> str:
+    """Ruta dentro del bucket.
+
+    Incluye la empresa para que una política de bucket pueda aislarlas más
+    adelante, y un sufijo aleatorio para que la clave no sea adivinable a
+    partir del id: aunque la lectura pública está bloqueada, una clave
+    predecible es una defensa menos.
+    """
+    hoy = datetime.now(UTC)
+    sufijo = secrets.token_hex(8)
+    return f"{company_id}/{hoy:%Y/%m}/{document_id}-{sufijo}-{safe_name}"
+
+
+async def preparar_subida(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    document_type_id: UUID,
+    original_name: str,
+    company_id: UUID,
+    actor_user_id: UUID,
+) -> SubidaPreparada:
+    """Primer tiempo: reserva el documento y emite la URL firmada.
+
+    El documento queda en `UPLOADING`: existe en la base pero no es descargable
+    ni satisface ningún requisito hasta que `completar()` lo verifique.
+    """
+    tipo = await _tipo_de_documento(session, document_type_id)
+
+    # Validación temprana de extensión: evita emitir una URL para algo que se
+    # va a rechazar igual, y le da al usuario el error antes de subir 200 MB.
+    extension = validar_extension(original_name)
+    formato = extension.upper()
+    if formato not in {f.upper() for f in tipo.allowed_formats}:
+        metrics.upload_rechazado_total.labels(motivo="formato_no_permitido").inc()
+        raise FormatoNoPermitido(
+            f"El tipo de documento {tipo.code} no acepta archivos .{extension}. "
+            f"Formatos aceptados: {', '.join(sorted(tipo.allowed_formats))}."
+        )
+
+    document_id = uuid4()
+    safe_name = nombre_seguro(original_name)
+    storage_key = _storage_key(company_id, document_id, safe_name)
+    max_bytes = await _limite_para(session, formato)
+
+    await session.execute(
+        text("""
+            INSERT INTO documents (
+                id, company_id, uploaded_by, storage_provider, storage_key,
+                original_name, safe_name, media_type, size_bytes, sha256,
+                upload_status, scan_status
+            )
+            VALUES (
+                :id, :company, :actor, 's3', :key,
+                :original, :safe, 'application/octet-stream', 1, :hash_vacio,
+                :upload_status, :scan_status
+            )
+        """),
+        {
+            "id": document_id,
+            "company": company_id,
+            "actor": actor_user_id,
+            "key": storage_key,
+            "original": original_name[:255],
+            "safe": safe_name,
+            # Placeholders hasta que `completar()` mida los bytes reales. Los
+            # CHECK de la tabla exigen valores, y usar ceros los violaría.
+            "hash_vacio": "0" * 64,
+            "upload_status": UploadStatus.UPLOADING.value,
+            "scan_status": ScanStatus.PENDING.value,
+        },
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
+            VALUES (:s, :d, :t)
+        """),
+        {"s": shipment_id, "d": document_id, "t": document_type_id},
+    )
+
+    url = await s3.url_de_subida(storage_key)
+
+    return SubidaPreparada(
+        document_id=document_id,
+        storage_key=storage_key,
+        upload_url=url,
+        expira_en=datetime.now(UTC).replace(microsecond=0),
+        max_bytes=max_bytes,
+    )
+
+
+@dataclass(frozen=True)
+class DocumentoCompletado:
+    document_id: UUID
+    media_type: str
+    size_bytes: int
+    sha256: str
+
+
+async def completar(
+    session: AsyncSession, *, document_id: UUID, company_id: UUID
+) -> DocumentoCompletado:
+    """Segundo tiempo: verificar lo que realmente se subió.
+
+    Todo se mide sobre los bytes almacenados. Lo que el cliente haya declarado
+    en el primer tiempo no se usa para nada aquí.
+
+    Si algo falla, el documento queda en `FAILED` y el objeto se borra: una
+    subida rechazada no debe dejar basura en el bucket.
+    """
+    fila = (
+        await session.execute(
+            text("""
+                SELECT d.id, d.storage_key, d.original_name, d.upload_status,
+                       dt.allowed_formats
+                FROM documents d
+                JOIN shipment_documents sd ON sd.document_id = d.id
+                JOIN document_types dt ON dt.id = sd.document_type_id
+                WHERE d.id = :id AND d.company_id = :company AND d.deleted_at IS NULL
+                FOR UPDATE OF d
+            """),
+            {"id": document_id, "company": company_id},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    if fila.upload_status != UploadStatus.UPLOADING:
+        raise Conflicto("Este documento ya fue procesado.", code="DOCUMENTO_YA_COMPLETADO")
+
+    try:
+        objeto = await s3.describir_objeto(fila.storage_key)
+    except s3.ObjetoNoEncontrado as error:
+        await _marcar_fallido(session, document_id)
+        raise ArchivoInvalido(
+            "No se encontró el archivo. Verificá que la subida haya terminado."
+        ) from error
+
+    try:
+        cabecera = await s3.leer_rango(fila.storage_key, bytes_iniciales=_BYTES_CABECERA)
+        resultado = validar_contenido(
+            cabecera=cabecera,
+            nombre=fila.original_name,
+            formatos_permitidos=list(fila.allowed_formats),
+        )
+        validar_tamano(
+            objeto.size_bytes,
+            maximo=await _limite_para(session, resultado.formato),
+        )
+    except Exception as error:
+        # Rechazado: se marca y se borra el objeto. Es el único caso en que un
+        # archivo se elimina del storage — nunca uno ya válido (ADR-0007).
+        await _marcar_fallido(session, document_id)
+        await s3.eliminar(fila.storage_key)
+        metrics.upload_rechazado_total.labels(motivo=type(error).__name__).inc()
+        raise
+
+    contenido = await s3.leer_completo(fila.storage_key)
+    sha256 = hashlib.sha256(contenido).hexdigest()
+
+    await session.execute(
+        text("""
+            UPDATE documents
+            SET media_type = :media_type,
+                size_bytes = :size,
+                sha256 = :sha256,
+                safe_name = :safe_name,
+                upload_status = :estado
+            WHERE id = :id
+        """),
+        {
+            "media_type": resultado.media_type,
+            "size": objeto.size_bytes,
+            "sha256": sha256,
+            "safe_name": resultado.safe_name,
+            # PROCESSING, no READY: el antivirus (Paso 3.2) corre antes de que
+            # el documento sea descargable. Optimizar o servir contenido no
+            # escaneado expondría las librerías de procesamiento a bytes
+            # hostiles (ADR-0009).
+            "estado": UploadStatus.PROCESSING.value,
+            "id": document_id,
+        },
+    )
+
+    await _marcar_requisito_subido(session, document_id)
+
+    return DocumentoCompletado(
+        document_id=document_id,
+        media_type=resultado.media_type,
+        size_bytes=objeto.size_bytes,
+        sha256=sha256,
+    )
+
+
+async def _marcar_requisito_subido(session: AsyncSession, document_id: UUID) -> None:
+    """El requisito que este documento venía a satisfacer pasa a `UPLOADED`.
+
+    NO pasa a `VERIFIED` (ADR-0003): subir un archivo no equivale a que
+    Operaciones lo haya aceptado, así que el requisito sigue bloqueando hasta
+    que alguien con `documents.verify` lo revise. El plan de trabajo decía
+    `FULFILLED` automático; manda el ADR, que es la decisión más nueva.
+
+    El enlace es por carga y tipo de documento, no por un `requirement_id` que
+    el cliente mande: así no puede apuntar su factura al requisito que le
+    convenga. Si hubiera varios abiertos del mismo tipo se toma el más viejo.
+    """
+    await session.execute(
+        text("""
+            UPDATE shipment_requirements
+            SET status = :subido
+            WHERE id = (
+                SELECT r.id
+                FROM shipment_requirements r
+                JOIN shipment_documents sd
+                  ON sd.shipment_id = r.shipment_id
+                 AND sd.document_type_id = r.document_type_id
+                WHERE sd.document_id = :documento
+                  AND r.requirement_type = 'DOCUMENT'
+                  AND r.status IN ('PENDING', 'REJECTED')
+                ORDER BY r.created_at
+                LIMIT 1
+                FOR UPDATE OF r
+            )
+        """),
+        {"subido": RequirementStatus.UPLOADED.value, "documento": document_id},
+    )
+
+
+_BYTES_CABECERA = 8192
+
+
+async def _marcar_fallido(session: AsyncSession, document_id: UUID) -> None:
+    await session.execute(
+        text("UPDATE documents SET upload_status = :e WHERE id = :id"),
+        {"e": UploadStatus.FAILED.value, "id": document_id},
+    )
+
+
+@dataclass(frozen=True)
+class DescargaAutorizada:
+    url: str
+    nombre_archivo: str
+    media_type: str
+
+
+async def preparar_descarga(
+    session: AsyncSession, *, document_id: UUID, company_ids: list[UUID] | None
+) -> DescargaAutorizada:
+    """Emite una URL firmada de corta duración.
+
+    `company_ids is None` significa alcance global. El filtro va en el WHERE:
+    traer la fila y descartarla después ya la habría expuesto al proceso.
+    """
+    condiciones = ["d.id = :id", "d.deleted_at IS NULL"]
+    parametros: dict[str, object] = {"id": document_id}
+
+    if company_ids is not None:
+        condiciones.append("d.company_id = ANY(:empresas)")
+        parametros["empresas"] = company_ids
+
+    consulta = f"""
+        SELECT d.storage_key, d.original_name, d.media_type,
+               d.upload_status, d.scan_status
+        FROM documents d
+        WHERE {" AND ".join(condiciones)}
+    """  # noqa: S608
+
+    fila = (await session.execute(text(consulta), parametros)).one_or_none()
+
+    if fila is None:
+        # Ajeno e inexistente son indistinguibles desde afuera.
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    if fila.scan_status == ScanStatus.INFECTED:
+        raise DocumentoEnCuarentena(
+            "El archivo fue puesto en cuarentena por el análisis de seguridad."
+        )
+
+    if fila.scan_status != ScanStatus.CLEAN:
+        # Fail closed: PENDING y FAILED no se descargan. Si el escáner está
+        # caído, el documento espera; no pasa por defecto.
+        raise DocumentoNoDisponible(
+            "El archivo todavía se está verificando. Intentá en unos minutos."
+        )
+
+    if fila.upload_status != UploadStatus.READY:
+        raise DocumentoNoDisponible("El archivo todavía se está procesando.")
+
+    url = await s3.url_de_descarga(fila.storage_key, nombre_archivo=fila.original_name)
+
+    return DescargaAutorizada(
+        url=url, nombre_archivo=fila.original_name, media_type=fila.media_type
+    )
+
+
+async def sembrar_limites(session: AsyncSession) -> None:
+    """Deja los límites de ADR-0009 en `system_settings`. Idempotente."""
+    for clave, bytes_ in LIMITES_POR_DEFECTO.items():
+        await session.execute(
+            text("""
+                INSERT INTO system_settings (key, value)
+                VALUES (:k, CAST(:v AS JSONB))
+                ON CONFLICT (key) DO NOTHING
+            """),
+            {"k": clave, "v": json.dumps({"bytes": bytes_})},
+        )
