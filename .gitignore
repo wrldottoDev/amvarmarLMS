@@ -105,3 +105,7 @@ docs/migration/inventario.md
 docs/migration/inventario_raw_*.txt
 archivos_faltantes.csv
 backup_checksums.txt
+
+# Código fuente del sistema viejo. Se conserva aparte, en su propio repositorio;
+# acá solo estorbaría y duplicaría historia que ya existe en otro lado.
+amvarmarProduccion*.zip
