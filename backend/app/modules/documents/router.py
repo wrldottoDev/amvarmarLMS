@@ -5,6 +5,7 @@ storage, `complete` verifica lo que realmente llegó. La descarga siempre emite
 una URL firmada de corta duración; nunca se expone la `storage_key`.
 """
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -279,4 +280,91 @@ async def preparar_descarga(
         filename=descarga.nombre_archivo,
         media_type=descarga.media_type,
         expires_in_seconds=TTL_DESCARGA_SEGUNDOS,
+    )
+
+
+class RequisitoResponse(BaseModel):
+    """Un documento que la carga necesita, con su estado actual."""
+
+    id: UUID
+    document_type_id: UUID | None
+    code: str | None
+    label: str
+    description: str | None
+    status: str
+    required_from: str
+    blocks_dispatch: bool
+    allowed_formats: list[str]
+    # El documento ya subido para este requisito, si lo hay.
+    document_id: UUID | None
+
+
+class DocumentoResponse(BaseModel):
+    id: UUID
+    document_type_code: str
+    document_type_label: str
+    original_name: str
+    media_type: str
+    size_bytes: int
+    upload_status: str
+    scan_status: str
+    created_at: datetime
+
+
+class TipoDocumentoResponse(BaseModel):
+    id: UUID
+    code: str
+    label: str
+    description: str | None
+    provided_by: str
+    allowed_formats: list[str]
+
+
+class ExpedienteResponse(BaseModel):
+    """Todo lo documental de una carga en una sola respuesta.
+
+    Va junto y no en tres llamadas: la pantalla necesita las tres cosas a la vez
+    para poder decir qué falta, qué hay y qué se puede subir.
+    """
+
+    requisitos: list[RequisitoResponse]
+    documentos: list[DocumentoResponse]
+    tipos: list[TipoDocumentoResponse]
+
+
+@router.get("/shipments/{shipment_id}/documents", response_model=ExpedienteResponse)
+async def expediente_de_carga(
+    shipment_id: UUID,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> ExpedienteResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+
+    if alcance.no_ve_nada:
+        # 404 y no 403: confirmar que la carga existe ya es información.
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    datos = await service.expediente(
+        db,
+        shipment_id=shipment_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+    tipos = await service.tipos_de_documento(db)
+
+    return ExpedienteResponse(
+        requisitos=[RequisitoResponse(**vars(r)) for r in datos.requisitos],
+        documentos=[DocumentoResponse(**vars(d)) for d in datos.documentos],
+        tipos=[
+            TipoDocumentoResponse(
+                id=t.id,
+                code=t.code,
+                label=t.label,
+                description=t.description,
+                provided_by=t.provided_by,
+                allowed_formats=list(t.allowed_formats),
+            )
+            for t in tipos
+        ],
     )

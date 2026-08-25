@@ -459,3 +459,134 @@ async def _estado_requisito(session: AsyncSession, requirement_id: uuid.UUID) ->
         )
     ).scalar_one()
     return estado
+
+
+class TestExpediente:
+    """Qué documentos pide la carga y cuáles ya tiene.
+
+    Con solo un contador, la interfaz puede decir "faltan documentos" pero no
+    cuál, y esa es justo la información que hace falta para resolverlo.
+    """
+
+    async def test_lista_requisitos_documentos_y_tipos(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        await db_directa.execute(
+            text("""
+                INSERT INTO shipment_requirements
+                    (shipment_id, requirement_type, document_type_id, title,
+                     required_from, status, blocks_dispatch, created_by)
+                VALUES (:s, 'DOCUMENT', :t, 'Factura comercial',
+                        'CLIENT', 'PENDING', true, :u)
+            """),
+            {"s": entorno["carga"], "t": entorno["tipo_factura"], "u": entorno["user_id"]},
+        )
+        await db_directa.commit()
+
+        r = await cliente.get(f"/api/v1/shipments/{entorno['carga']}/documents", headers=cabeceras)
+
+        assert r.status_code == 200
+        cuerpo = r.json()
+        assert len(cuerpo["requisitos"]) == 1
+        requisito = cuerpo["requisitos"][0]
+        assert requisito["label"] == "Factura comercial"
+        assert requisito["status"] == "PENDING"
+        assert requisito["blocks_dispatch"] is True
+        # Los formatos vienen del tipo: sin eso la interfaz no puede decir qué
+        # archivo aceptar y el rechazo llegaría después de subir.
+        assert requisito["allowed_formats"]
+        # Todavía no hay documento subido para ese requisito.
+        assert requisito["document_id"] is None
+        assert cuerpo["tipos"]
+
+    async def test_una_reserva_sin_archivo_no_cuenta_como_subido(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """`presign` crea la fila, pero el archivo puede no llegar nunca.
+
+        Si el expediente devolviera ese documento, la interfaz ofrecería ver
+        algo que no existe.
+        """
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        await _abrir_requisito(db_directa, entorno)
+
+        await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+            headers=cabeceras,
+            json={
+                "document_type_id": str(entorno["tipo_factura"]),
+                "original_name": "factura.pdf",
+            },
+        )
+
+        cuerpo = (
+            await cliente.get(f"/api/v1/shipments/{entorno['carga']}/documents", headers=cabeceras)
+        ).json()
+
+        assert cuerpo["requisitos"][0]["document_id"] is None
+
+    async def test_el_requisito_apunta_al_documento_ya_subido(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """Así se puede abrir desde el mismo renglón que lo pide."""
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        await _abrir_requisito(db_directa, entorno)
+
+        presign = (
+            await cliente.post(
+                f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+                headers=cabeceras,
+                json={
+                    "document_type_id": str(entorno["tipo_factura"]),
+                    "original_name": "factura.pdf",
+                },
+            )
+        ).json()
+
+        async with httpx.AsyncClient() as directo:
+            await directo.put(presign["upload_url"], content=pdf_real())
+
+        await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/complete",
+            headers=cabeceras,
+            json={"document_id": presign["document_id"]},
+        )
+
+        cuerpo = (
+            await cliente.get(f"/api/v1/shipments/{entorno['carga']}/documents", headers=cabeceras)
+        ).json()
+
+        assert cuerpo["requisitos"][0]["document_id"] == presign["document_id"]
+        # Subir NO satisface el requisito (ADR-0003): queda en revisión.
+        assert cuerpo["requisitos"][0]["status"] == "UPLOADED"
+
+    async def test_no_devuelve_el_expediente_de_otra_empresa(
+        self, cliente: httpx.AsyncClient, entorno: dict
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga_ajena']}/documents", headers=cabeceras
+        )
+
+        assert r.status_code == 404
+
+    async def test_sin_token_da_401(self, cliente: httpx.AsyncClient, entorno: dict) -> None:
+        r = await cliente.get(f"/api/v1/shipments/{entorno['carga']}/documents")
+
+        assert r.status_code == 401
+
+
+async def _abrir_requisito(session: AsyncSession, entorno: dict) -> None:
+    await session.execute(
+        text("""
+            INSERT INTO shipment_requirements
+                (shipment_id, requirement_type, document_type_id, title,
+                 required_from, status, blocks_dispatch, created_by)
+            VALUES (:s, 'DOCUMENT', :t, 'Factura comercial',
+                    'CLIENT', 'PENDING', true, :u)
+        """),
+        {"s": entorno["carga"], "t": entorno["tipo_factura"], "u": entorno["user_id"]},
+    )
+    await session.commit()

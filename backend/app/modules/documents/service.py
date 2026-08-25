@@ -412,3 +412,160 @@ async def sembrar_limites(session: AsyncSession) -> None:
             """),
             {"k": clave, "v": json.dumps({"bytes": bytes_})},
         )
+
+
+@dataclass(frozen=True)
+class RequisitoDeCarga:
+    id: UUID
+    document_type_id: UUID | None
+    code: str | None
+    label: str
+    description: str | None
+    status: str
+    required_from: str
+    blocks_dispatch: bool
+    allowed_formats: list[str]
+    document_id: UUID | None
+
+
+@dataclass(frozen=True)
+class DocumentoDeCarga:
+    id: UUID
+    document_type_code: str
+    document_type_label: str
+    original_name: str
+    media_type: str
+    size_bytes: int
+    upload_status: str
+    scan_status: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ExpedienteDeCarga:
+    requisitos: list[RequisitoDeCarga]
+    documentos: list[DocumentoDeCarga]
+
+
+async def expediente(
+    session: AsyncSession, *, shipment_id: UUID, company_ids: list[UUID] | None
+) -> ExpedienteDeCarga:
+    """Qué documentos pide esta carga y cuáles ya tiene.
+
+    El detalle de la carga solo devuelve contadores, y con un contador la
+    interfaz puede decir "faltan documentos" pero no cuál, que es justo lo que
+    la persona necesita para resolverlo.
+
+    `company_ids is None` significa alcance global. El filtro va en el WHERE:
+    traer la carga y descartarla después ya la habría expuesto al proceso.
+    """
+    condiciones = ["s.id = :shipment_id", "s.deleted_at IS NULL"]
+    parametros: dict[str, Any] = {"shipment_id": shipment_id}
+
+    if company_ids is not None:
+        condiciones.append("s.company_id = ANY(:empresas)")
+        parametros["empresas"] = company_ids
+
+    donde = " AND ".join(condiciones)
+
+    existe = (
+        await session.execute(
+            text(f"SELECT 1 FROM shipments s WHERE {donde}"),  # noqa: S608
+            parametros,
+        )
+    ).scalar_one_or_none()
+
+    if existe is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    requisitos = (
+        await session.execute(
+            text("""
+                SELECT r.id, r.document_type_id, dt.code, r.title, r.description,
+                       r.status, r.required_from, r.blocks_dispatch,
+                       COALESCE(dt.allowed_formats, ARRAY[]::varchar[]) AS allowed_formats,
+                       -- El documento que ya satisface (o intenta satisfacer)
+                       -- este requisito, para poder descargarlo desde el mismo
+                       -- renglón en vez de buscarlo en otra lista.
+                       (SELECT sd.document_id
+                          FROM shipment_documents sd
+                          JOIN documents d ON d.id = sd.document_id
+                         WHERE sd.shipment_id = r.shipment_id
+                           AND sd.document_type_id = r.document_type_id
+                           AND d.deleted_at IS NULL
+                           -- `UPLOADING` es una reserva: el archivo puede no
+                           -- haber llegado nunca. Devolverlo haría que la
+                           -- interfaz ofrezca ver algo que no existe.
+                           AND d.upload_status <> 'UPLOADING'
+                         ORDER BY d.created_at DESC LIMIT 1) AS document_id
+                FROM shipment_requirements r
+                LEFT JOIN document_types dt ON dt.id = r.document_type_id
+                WHERE r.shipment_id = :shipment_id
+                  AND r.status NOT IN ('CANCELLED', 'NOT_APPLICABLE')
+                ORDER BY r.blocks_dispatch DESC, r.created_at
+            """),
+            {"shipment_id": shipment_id},
+        )
+    ).all()
+
+    documentos = (
+        await session.execute(
+            text("""
+                SELECT d.id, dt.code, dt.label, d.original_name, d.media_type,
+                       d.size_bytes, d.upload_status, d.scan_status, d.created_at
+                FROM shipment_documents sd
+                JOIN documents d ON d.id = sd.document_id
+                JOIN document_types dt ON dt.id = sd.document_type_id
+                WHERE sd.shipment_id = :shipment_id AND d.deleted_at IS NULL
+                ORDER BY d.created_at DESC
+            """),
+            {"shipment_id": shipment_id},
+        )
+    ).all()
+
+    return ExpedienteDeCarga(
+        requisitos=[
+            RequisitoDeCarga(
+                id=f.id,
+                document_type_id=f.document_type_id,
+                code=f.code,
+                label=f.title,
+                description=f.description,
+                status=f.status,
+                required_from=f.required_from,
+                blocks_dispatch=f.blocks_dispatch,
+                allowed_formats=list(f.allowed_formats),
+                document_id=f.document_id,
+            )
+            for f in requisitos
+        ],
+        documentos=[
+            DocumentoDeCarga(
+                id=f.id,
+                document_type_code=f.code,
+                document_type_label=f.label,
+                original_name=f.original_name,
+                media_type=f.media_type,
+                size_bytes=f.size_bytes,
+                upload_status=f.upload_status,
+                scan_status=f.scan_status,
+                created_at=f.created_at,
+            )
+            for f in documentos
+        ],
+    )
+
+
+async def tipos_de_documento(session: AsyncSession) -> list[Any]:
+    """Catálogo activo, para que la interfaz sepa qué se puede subir."""
+    return list(
+        (
+            await session.execute(
+                text("""
+                    SELECT id, code, label, description, provided_by,
+                           allowed_formats, required_before_status
+                    FROM document_types WHERE is_active ORDER BY label
+                """)
+            )
+        ).all()
+    )
