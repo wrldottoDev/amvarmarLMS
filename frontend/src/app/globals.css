@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+:root {
+  --fondo: #f4f6f7;
+  --superficie: #ffffff;
+  --texto: #172126;
+  --texto-secundario: #5d696f;
+  --borde: #dce2e5;
+  --marca: #e65a22;
+  --marca-oscura: #bd4317;
+  --mar: #0f5363;
+  --mar-oscuro: #083d49;
+  --exito: #17734f;
+  --advertencia: #9a5c0a;
+  --peligro: #b42318;
+}
+
+@theme inline {
+  --color-background: var(--fondo);
+  --color-foreground: var(--texto);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--borde);
+  letter-spacing: 0;
+}
+
+html {
+  min-width: 320px;
+  background: var(--fondo);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--marca) 35%, transparent);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: white;
+  background: var(--mar);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,0 +1,62 @@
+import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { clases } from "@/lib/utilidades";
+
+interface PropiedadesCampo extends InputHTMLAttributes<HTMLInputElement> {
+  etiqueta: string;
+  error?: string;
+}
+
+export function Campo({ etiqueta, error, className, id, ...propiedades }: PropiedadesCampo) {
+  const campoId = id ?? propiedades.name;
+  return (
+    <label className="grid gap-1.5 text-sm font-medium text-[#334047]" htmlFor={campoId}>
+      {etiqueta}
+      <input
+        id={campoId}
+        className={clases(
+          "h-11 w-full rounded-md border bg-white px-3 text-[var(--texto)] shadow-sm outline-none placeholder:text-[#8b969b] focus:border-[var(--mar)]",
+          error && "border-[var(--peligro)]",
+          className,
+        )}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? `${campoId}-error` : undefined}
+        {...propiedades}
+      />
+      {error ? (
+        <span id={`${campoId}-error`} className="text-xs font-normal text-[var(--peligro)]">
+          {error}
+        </span>
+      ) : null}
+    </label>
+  );
+}
+
+interface PropiedadesArea extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  etiqueta: string;
+  error?: string;
+}
+
+export function AreaTexto({ etiqueta, error, className, id, ...propiedades }: PropiedadesArea) {
+  const campoId = id ?? propiedades.name;
+  return (
+    <label className="grid gap-1.5 text-sm font-medium text-[#334047]" htmlFor={campoId}>
+      {etiqueta}
+      <textarea
+        id={campoId}
+        className={clases(
+          "min-h-24 w-full resize-y rounded-md border bg-white px-3 py-2.5 text-[var(--texto)] shadow-sm outline-none placeholder:text-[#8b969b] focus:border-[var(--mar)]",
+          error && "border-[var(--peligro)]",
+          className,
+        )}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? `${campoId}-error` : undefined}
+        {...propiedades}
+      />
+      {error ? (
+        <span id={`${campoId}-error`} className="text-xs font-normal text-[var(--peligro)]">
+          {error}
+        </span>
+      ) : null}
+    </label>
+  );
+}
