@@ -19,13 +19,13 @@ sí llegó. **Cinco en diez minutos no.**
 
 ```sql
 -- Sesiones revocadas por reuse en la última hora
-SELECT s.id, s.user_id, u.email, s.ip_address, s.user_agent, s.revoked_at
+SELECT s.id, s.user_id, u.email, s.ip_created, s.user_agent, s.revoked_at
 FROM auth_sessions s JOIN users u ON u.id = s.user_id
 WHERE s.revoke_reason = 'REUSE_DETECTED' AND s.revoked_at > now() - interval '1 hour'
 ORDER BY s.revoked_at DESC;
 
 -- ¿Un usuario o muchos? Cambia por completo la respuesta.
-SELECT u.email, count(*) AS veces, count(DISTINCT s.ip_address) AS ips
+SELECT u.email, count(*) AS veces, count(DISTINCT s.ip_created) AS ips
 FROM auth_sessions s JOIN users u ON u.id = s.user_id
 WHERE s.revoke_reason = 'REUSE_DETECTED' AND s.revoked_at > now() - interval '24 hours'
 GROUP BY 1 ORDER BY 2 DESC;
@@ -46,7 +46,7 @@ el `user_agent`: si es siempre el mismo, es red inestable. Anotar y observar.
 ```sql
 -- Revocar todo lo activo de ese usuario
 UPDATE auth_sessions
-SET revoked_at = now(), revoke_reason = 'SECURITY_INCIDENT'
+SET revoked_at = now(), revoke_reason = 'ADMIN_REVOKED'
 WHERE user_id = '<uuid>' AND revoked_at IS NULL;
 
 -- Qué hizo esa sesión
