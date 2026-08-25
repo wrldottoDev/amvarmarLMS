@@ -1,0 +1,162 @@
+# Reglas de alerta (Paso 4.3).
+#
+# Cada alerta responde a una pregunta: ¿qué pasa si nadie la mira? Si la
+# respuesta es "nada", no debería existir — una alerta que se ignora entrena a
+# ignorar todas las demás.
+#
+# `for:` es lo que separa un pico de un problema. Sin él, un reinicio normal
+# despierta a alguien de madrugada.
+groups:
+  - name: disponibilidad
+    rules:
+      - alert: ApiCaida
+        expr: up{job="amvarmar-api"} == 0
+        for: 2m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "La API no responde al raspado"
+          runbook: "docs/runbooks/api-caida.md"
+
+      - alert: BaseDeDatosSinConexion
+        # El raspado consulta la base; si falla, los indicadores derivados
+        # dejan de actualizarse y esta serie desaparece.
+        expr: absent(amvarmar_outbox_pendiente)
+        for: 3m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "La API no puede consultar PostgreSQL"
+          runbook: "docs/runbooks/base-de-datos-caida.md"
+
+      - alert: ErroresSostenidos
+        expr: |
+          sum(rate(amvarmar_http_peticion_total{codigo=~"5.."}[5m]))
+          /
+          sum(rate(amvarmar_http_peticion_total[5m])) > 0.02
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "Más del 2% de las peticiones falla con 5xx"
+          runbook: "docs/runbooks/errores-sostenidos.md"
+
+      - alert: LatenciaSobreObjetivo
+        # Objetivo no funcional del proyecto: p95 < 500 ms en lecturas.
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(amvarmar_http_peticion_duracion_segundos_bucket[10m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severidad: aviso
+        annotations:
+          resumen: "El p95 superó los 500 ms durante 10 minutos"
+          runbook: "docs/runbooks/latencia.md"
+
+  - name: outbox
+    rules:
+      - alert: OutboxAcumulado
+        expr: amvarmar_outbox_pendiente > 500
+        for: 10m
+        labels:
+          severidad: aviso
+        annotations:
+          resumen: "La cola del outbox pasa de 500 eventos"
+          runbook: "docs/runbooks/outbox-atascado.md"
+
+      - alert: OutboxDetenido
+        # La antigüedad detecta un worker parado aunque la cola sea corta: con
+        # tres eventos viejos, el umbral por cantidad nunca dispararía.
+        expr: amvarmar_outbox_antiguedad_segundos > 1800
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "Hay eventos sin entregar desde hace más de 30 minutos"
+          runbook: "docs/runbooks/outbox-atascado.md"
+
+      - alert: OutboxEventosAgotados
+        # Estos ya no se reintentan solos: sin aviso, quedan en FAILED para
+        # siempre y nadie se entera de la notificación que nunca salió.
+        expr: increase(amvarmar_outbox_agotado[1h]) > 0
+        for: 1m
+        labels:
+          severidad: aviso
+        annotations:
+          resumen: "Eventos del outbox agotaron sus reintentos"
+          runbook: "docs/runbooks/outbox-atascado.md"
+
+      - alert: CorreosFallidos
+        expr: amvarmar_notificacion_fallida{canal="EMAIL"} > 20
+        for: 15m
+        labels:
+          severidad: aviso
+        annotations:
+          resumen: "Más de 20 correos en estado FAILED"
+          runbook: "docs/runbooks/correo-no-sale.md"
+
+  - name: seguridad
+    rules:
+      - alert: ReuseDeRefreshMasivo
+        # Un reuse aislado es un cliente con mala red reintentando. Varios en
+        # pocos minutos es un token robado usándose en paralelo.
+        expr: increase(amvarmar_refresh_reuse_total[10m]) > 5
+        for: 1m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "Reutilización de refresh tokens por encima de lo normal"
+          runbook: "docs/runbooks/reuse-de-refresh.md"
+
+      - alert: FallosDeLoginMasivos
+        expr: sum(rate(amvarmar_login_fallido_total[5m])) > 5
+        for: 5m
+        labels:
+          severidad: aviso
+        annotations:
+          resumen: "Tasa alta de logins fallidos: posible fuerza bruta"
+          runbook: "docs/runbooks/fallos-de-login.md"
+
+      - alert: DocumentoInfectado
+        expr: increase(amvarmar_documento_infectado_total[1h]) > 0
+        for: 1m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El antivirus detectó un documento infectado"
+          runbook: "docs/runbooks/documento-infectado.md"
+
+      - alert: EscaneoAtascado
+        # Fail closed: un documento sin escanear no es descargable, así que
+        # esto además significa clientes que no pueden ver sus archivos.
+        expr: amvarmar_documento_sin_escanear > 50
+        for: 15m
+        labels:
+          severidad: aviso
+        annotations:
+          resumen: "Documentos acumulados esperando el antivirus"
+          runbook: "docs/runbooks/storage-no-responde.md"
+
+  - name: respaldos
+    rules:
+      - alert: RespaldoVencido
+        # La métrica la publica el job de respaldo por Pushgateway: si el job
+        # ni siquiera corre, la serie envejece y esto dispara igual.
+        expr: time() - amvarmar_respaldo_ultimo_exito_timestamp > 93600
+        for: 10m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "No hay respaldo correcto en más de 26 horas (RPO: 24 h)"
+          runbook: "docs/runbooks/restaurar-backup.md"
+
+      - alert: EnsayoDeRestauracionFallido
+        expr: amvarmar_ensayo_restauracion_correcto == 0
+        for: 10m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El último ensayo de restauración falló"
+          runbook: "docs/runbooks/restaurar-backup.md"

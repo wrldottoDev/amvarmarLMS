@@ -1,0 +1,9 @@
+{{ asunto }}
+
+{{ mensaje }}
+
+{{ enlace }}
+
+--
+AMVARMAR. Este es un mensaje automático; no responda a esta dirección.
+Por seguridad, este correo no incluye datos de sus cargas ni documentos adjuntos.
