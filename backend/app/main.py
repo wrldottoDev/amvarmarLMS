@@ -8,6 +8,7 @@ from app.core.middleware import registrar_middleware
 from app.core.observability.http import registrar_metricas_http
 from app.core.observability.router import router as metrics_router
 from app.core.observability.tracing import configurar_trazas
+from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import me_router
 from app.modules.auth.router import router as auth_router
 from app.modules.dispatches.router import router as dispatches_router
@@ -40,3 +41,4 @@ app.include_router(dashboard_router)
 app.include_router(documents_router)
 app.include_router(dispatches_router)
 app.include_router(notifications_router)
+app.include_router(admin_router)

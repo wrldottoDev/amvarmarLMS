@@ -1,23 +1,25 @@
 """Transiciones y requisitos de carga (Paso 2.4)."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
-from app.core.errors import RecursoNoEncontrado
+from app.core.errors import RecursoNoEncontrado, SinPermiso
 from app.core.pagination import Cursor, normalizar_limite
 from app.core.redis import get_redis
 from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
 from app.modules.rbac.service import obtener_permisos_efectivos
-from app.modules.shipments import queries, service
+from app.modules.shipments import gestion, queries, service
 from app.modules.shipments.models import (
     RequirementStatus,
     RequirementType,
@@ -79,6 +81,203 @@ def _denegado(error: Exception) -> RecursoNoEncontrado:
     empresa. Misma razón que en las transiciones.
     """
     return RecursoNoEncontrado("Requisito no encontrado.")
+
+
+class CrearCargaRequest(BaseModel):
+    """Alta de carga por Operaciones.
+
+    No lleva estado: toda carga nace en `PRE_ALERT` y avanza por el motor de
+    transiciones, que valida el catálogo y deja evento. Aceptar un estado acá
+    sería una puerta de atrás alrededor de esas reglas.
+    """
+
+    company_id: UUID
+    origin_location_id: UUID
+    destination_location_id: UUID
+    origin_facility_id: UUID | None = None
+    destination_address: str | None = Field(default=None, max_length=240)
+    description: str | None = Field(default=None, max_length=4000)
+    transport_mode: str | None = Field(default=None, max_length=20)
+    estimated_arrival_at: datetime | None = None
+    weight_kg: Decimal | None = Field(default=None, ge=0)
+    volumetric_weight_kg: Decimal | None = Field(default=None, ge=0)
+    volume_m3: Decimal | None = Field(default=None, ge=0)
+    permit_review_required: bool = False
+    assigned_to: UUID | None = None
+
+
+class CargaCreadaResponse(BaseModel):
+    id: UUID
+    shipment_number: str
+    status: str
+    row_version: int
+
+
+class ActualizarCargaRequest(BaseModel):
+    """Corrección de datos. Solo se toca lo que venga en el cuerpo.
+
+    `row_version` es obligatorio: sin él, dos personas editando a la vez se
+    pisan y la segunda gana en silencio.
+    """
+
+    row_version: int = Field(ge=1)
+
+    origin_location_id: UUID | None = None
+    origin_facility_id: UUID | None = None
+    destination_location_id: UUID | None = None
+    destination_address: str | None = Field(default=None, max_length=240)
+    description: str | None = Field(default=None, max_length=4000)
+    transport_mode: str | None = Field(default=None, max_length=20)
+    estimated_arrival_at: datetime | None = None
+    weight_kg: Decimal | None = Field(default=None, ge=0)
+    volumetric_weight_kg: Decimal | None = Field(default=None, ge=0)
+    volume_m3: Decimal | None = None
+    permit_review_required: bool | None = None
+    assigned_to: UUID | None = None
+
+
+class CargaActualizadaResponse(BaseModel):
+    id: UUID
+    row_version: int
+
+
+class UbicacionCatalogoResponse(BaseModel):
+    id: UUID
+    location_code: str
+    name: str
+    country_code: str
+
+
+class BodegaResponse(BaseModel):
+    id: UUID
+    facility_code: str
+    location_id: UUID
+    uses_warehouse_receipt: bool
+
+
+@router.get("/catalogos/locations", response_model=list[UbicacionCatalogoResponse])
+async def listar_ubicaciones(actor: ActorDep, db: SesionDb) -> list[UbicacionCatalogoResponse]:
+    """Catálogo de ubicaciones, para los selectores del formulario de alta.
+
+    No lleva permiso propio: son puertos y ciudades, no información de ninguna
+    empresa. Exige estar autenticado, como todo lo demás.
+    """
+    filas = (
+        await db.execute(
+            text("""
+                SELECT id, location_code, name, country_code
+                FROM locations WHERE is_active ORDER BY country_code, name
+            """)
+        )
+    ).all()
+    return [UbicacionCatalogoResponse(**dict(f._mapping)) for f in filas]
+
+
+@router.get("/catalogos/facilities", response_model=list[BodegaResponse])
+async def listar_bodegas(actor: ActorDep, db: SesionDb) -> list[BodegaResponse]:
+    """Bodegas. `uses_warehouse_receipt` decide si la carga exigirá WR (ADR-0005)."""
+    filas = (
+        await db.execute(
+            text("""
+                SELECT id, facility_code, location_id, uses_warehouse_receipt
+                FROM facilities WHERE is_active ORDER BY facility_code
+            """)
+        )
+    ).all()
+    return [BodegaResponse(**dict(f._mapping)) for f in filas]
+
+
+@router.post("", response_model=CargaCreadaResponse, status_code=status.HTTP_201_CREATED)
+async def crear_carga(
+    datos: CrearCargaRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> CargaCreadaResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    try:
+        creada = await gestion.crear(
+            db,
+            datos=gestion.DatosDeCarga(
+                company_id=datos.company_id,
+                origin_location_id=datos.origin_location_id,
+                destination_location_id=datos.destination_location_id,
+                origin_facility_id=datos.origin_facility_id,
+                destination_address=datos.destination_address,
+                description=datos.description,
+                transport_mode=datos.transport_mode,
+                estimated_arrival_at=datos.estimated_arrival_at,
+                weight_kg=datos.weight_kg,
+                volumetric_weight_kg=datos.volumetric_weight_kg,
+                volume_m3=datos.volume_m3,
+                permit_review_required=datos.permit_review_required,
+                assigned_to=datos.assigned_to,
+            ),
+            actor_user_id=actor.user_id,
+            permisos=permisos,
+        )
+    except service.SinPermisoParaTransicion as error:
+        # 403 y no 404: acá el actor eligió la empresa, así que no se le está
+        # revelando la existencia de nada que no supiera.
+        raise SinPermiso("No tiene permiso para crear cargas en esa empresa.") from error
+
+    await registrar(
+        db,
+        action="shipment.created",
+        resource_type="shipment",
+        resource_id=creada.id,
+        actor_user_id=actor.user_id,
+        company_id=datos.company_id,
+        after_data={"shipment_number": creada.shipment_number},
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+    return CargaCreadaResponse(**vars(creada))
+
+
+@router.patch("/{shipment_id}", response_model=CargaActualizadaResponse)
+async def actualizar_carga(
+    shipment_id: UUID,
+    datos: ActualizarCargaRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> CargaActualizadaResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    # `exclude_unset` y no `exclude_none`: poner un campo en null es una
+    # corrección legítima (borrar una ETA equivocada), y no debe confundirse
+    # con no haberlo mandado.
+    cambios = datos.model_dump(exclude_unset=True, exclude={"row_version"})
+
+    try:
+        nueva_version = await gestion.actualizar(
+            db,
+            shipment_id=shipment_id,
+            cambios=cambios,
+            row_version=datos.row_version,
+            actor_user_id=actor.user_id,
+            permisos=permisos,
+        )
+    except service.SinPermisoParaTransicion as error:
+        raise RecursoNoEncontrado("Carga no encontrada.") from error
+
+    await registrar(
+        db,
+        action="shipment.updated",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor.user_id,
+        after_data={"campos": sorted(cambios)},
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+    return CargaActualizadaResponse(id=shipment_id, row_version=nueva_version)
 
 
 @router.post("/{shipment_id}/transitions", response_model=TransitionResponse)

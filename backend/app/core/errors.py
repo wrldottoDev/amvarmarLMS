@@ -60,6 +60,19 @@ class RecursoNoEncontrado(ErrorDeAplicacion):
     code = "RECURSO_NO_ENCONTRADO"
 
 
+class SinPermiso(ErrorDeAplicacion):
+    """El actor está autenticado pero le falta el permiso.
+
+    Se usa SOLO cuando quien llama ya conoce el recurso porque lo nombró él
+    mismo —por ejemplo, elegir la empresa al crear una carga—. Para todo lo
+    demás va `RecursoNoEncontrado`: confirmar que algo existe ya es información
+    sobre otra empresa.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "SIN_PERMISO"
+
+
 class Conflicto(ErrorDeAplicacion):
     status_code = status.HTTP_409_CONFLICT
     code = "CONFLICTO"
