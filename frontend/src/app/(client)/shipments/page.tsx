@@ -1,13 +1,14 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Boxes, Download } from "lucide-react";
+import { Boxes, Download, PackagePlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { FiltrosCargas, filtrosIniciales, type FiltrosCarga } from "@/components/shipments/filtros-cargas";
 import { ListadoCargas } from "@/components/shipments/listado-cargas";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
+import Link from "next/link";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
 
@@ -56,9 +57,21 @@ export default function PaginaCargas() {
           <h1 className="mt-1 text-2xl font-bold">Cargas</h1>
           <p className="mt-1 text-sm text-[var(--texto-secundario)]">{cargas.length} cargadas en esta vista</p>
         </div>
-        <span className="hidden size-11 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)] sm:grid">
-          <Boxes className="size-5" aria-hidden="true" />
-        </span>
+        {usuario?.empresa ? (
+          <span className="hidden size-11 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)] sm:grid">
+            <Boxes className="size-5" aria-hidden="true" />
+          </span>
+        ) : (
+          // Operaciones alimenta el sistema: el alta va donde ya está mirando
+          // las cargas, no escondida en otro menú.
+          <Link
+            href="/cargas/nueva"
+            className="flex h-10 shrink-0 items-center gap-2 rounded-md bg-[var(--mar)] px-4 text-sm font-semibold text-white hover:opacity-90"
+          >
+            <PackagePlus className="size-4" aria-hidden="true" />
+            Nueva carga
+          </Link>
+        )}
       </header>
 
       <FiltrosCargas aplicar={setFiltros} />

@@ -8,6 +8,8 @@ import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carg
 import { TimelineCarga } from "@/components/shipments/timeline-carga";
 import { TransicionCarga } from "@/components/shipments/transicion-carga";
 import { AvisoError } from "@/components/ui/aviso-error";
+import { Expediente } from "@/components/documentos/expediente";
+import { EstadoExplicado } from "@/components/shipments/estado-explicado";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
@@ -61,7 +63,17 @@ export default function PaginaDetalleCarga() {
           </div>
           <TransicionCarga cargaId={carga.id} estado={carga.status} rowVersion={carga.row_version} />
         </div>
+
+        <div className="mt-5">
+          <EstadoExplicado
+            estado={carga.status}
+            esCliente={Boolean(usuario?.empresa)}
+            puedeDespachar={pendientes === 0}
+          />
+        </div>
       </header>
+
+      <Expediente cargaId={carga.id} esCliente={Boolean(usuario?.empresa)} />
 
       <section aria-labelledby="ruta-carga">
         <div className="mb-4 flex items-center gap-2">

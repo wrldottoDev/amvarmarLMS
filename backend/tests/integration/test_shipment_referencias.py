@@ -212,7 +212,7 @@ class TestReglaDeMiami:
     async def test_con_wr_registrado_miami_puede_almacenar(self, session: AsyncSession) -> None:
         ctx = await _contexto(session)
         shipment_id = await _crear_carga(session, ctx, origen="miami")
-        await _agregar_referencia(session, shipment_id, ReferenceType.WR, "WR105921")
+        await _agregar_referencia(session, shipment_id, ReferenceType.WR, "WR000501")
 
         await validar_wr_presente_para_almacenar(session, shipment_id)
 

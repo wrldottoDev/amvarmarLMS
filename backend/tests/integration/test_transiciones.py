@@ -430,7 +430,7 @@ class TestPoliticasDeDominio:
         await session.execute(
             text("""
                 INSERT INTO shipment_references (shipment_id, reference_type, value)
-                VALUES (:s, :t, 'WR105921')
+                VALUES (:s, :t, 'WR000501')
             """),
             {"s": shipment_id, "t": ReferenceType.WR},
         )

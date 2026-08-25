@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  Bell,
   Boxes,
+  Building2,
   ChevronDown,
   Gauge,
   LogOut,
@@ -9,12 +11,15 @@ import {
   MonitorSmartphone,
   PanelLeftClose,
   Settings,
+  Truck,
+  UsersRound,
   X,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { CampanaNotificaciones } from "@/components/notificaciones/campana";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { clases, iniciales } from "@/lib/utilidades";
 
@@ -41,6 +46,14 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
       icono: Gauge,
     },
     { href: "/shipments", etiqueta: "Cargas", icono: Boxes },
+    { href: "/despachos", etiqueta: "Despachos", icono: Truck },
+    { href: "/avisos", etiqueta: "Avisos", icono: Bell },
+    ...(esCliente
+      ? []
+      : [
+          { href: "/empresas", etiqueta: "Empresas", icono: Building2 },
+          { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
+        ]),
     { href: "/sesiones", etiqueta: "Sesiones", icono: MonitorSmartphone },
   ];
 
@@ -72,7 +85,9 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
 
       <nav className="flex-1 space-y-1 px-3 py-5" aria-label="Navegación principal">
         {navegacion.map((elemento) => {
-          const activo = pathname === elemento.href || (elemento.href === "/shipments" && pathname.startsWith("/shipments/"));
+          const activo =
+            pathname === elemento.href ||
+            (elemento.href !== "/" && pathname.startsWith(`${elemento.href}/`));
           const Icono = elemento.icono;
           return (
             <Link
@@ -126,7 +141,10 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
             {esCliente ? "Portal del cliente" : "Panel de operaciones"}
           </div>
 
-          <div className="relative ml-auto">
+          <div className="ml-auto flex items-center gap-1">
+            <CampanaNotificaciones />
+
+          <div className="relative">
             <button
               type="button"
               className="flex h-11 items-center gap-2 rounded-md px-2 text-left hover:bg-[#edf1f2]"
@@ -163,6 +181,7 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
                 </button>
               </div>
             ) : null}
+          </div>
           </div>
         </header>
 

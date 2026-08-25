@@ -203,6 +203,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shipments/catalogos/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar Ubicaciones
+         * @description Catálogo de ubicaciones, para los selectores del formulario de alta.
+         *
+         *     No lleva permiso propio: son puertos y ciudades, no información de ninguna
+         *     empresa. Exige estar autenticado, como todo lo demás.
+         */
+        get: operations["listar_ubicaciones_api_v1_shipments_catalogos_locations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/catalogos/facilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar Bodegas
+         * @description Bodegas. `uses_warehouse_receipt` decide si la carga exigirá WR (ADR-0005).
+         */
+        get: operations["listar_bodegas_api_v1_shipments_catalogos_facilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar Shipments
+         * @description Listado con filtros y paginación por cursor.
+         *
+         *     El `limit` se recorta al máximo del servidor en vez de rechazarse: pedir
+         *     10000 devuelve 100, no un error.
+         */
+        get: operations["listar_shipments_api_v1_shipments_get"];
+        put?: never;
+        /** Crear Carga */
+        post: operations["crear_carga_api_v1_shipments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Obtener Shipment */
+        get: operations["obtener_shipment_api_v1_shipments__shipment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Actualizar Carga */
+        patch: operations["actualizar_carga_api_v1_shipments__shipment_id__patch"];
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/transitions": {
         parameters: {
             query?: never;
@@ -252,46 +337,6 @@ export interface paths {
         head?: never;
         /** Resolver Requisito */
         patch: operations["resolver_requisito_api_v1_shipments__shipment_id__requirements__requirement_id__patch"];
-        trace?: never;
-    };
-    "/api/v1/shipments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Listar Shipments
-         * @description Listado con filtros y paginación por cursor.
-         *
-         *     El `limit` se recorta al máximo del servidor en vez de rechazarse: pedir
-         *     10000 devuelve 100, no un error.
-         */
-        get: operations["listar_shipments_api_v1_shipments_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/shipments/{shipment_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Obtener Shipment */
-        get: operations["obtener_shipment_api_v1_shipments__shipment_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/v1/shipments/{shipment_id}/timeline": {
@@ -354,20 +399,767 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shipments/{shipment_id}/documents/presign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preparar Subida
+         * @description Primer tiempo: reserva el documento y devuelve una URL firmada.
+         *
+         *     El documento queda en `UPLOADING`: existe pero no es descargable ni
+         *     satisface ningún requisito hasta que `complete` verifique los bytes.
+         */
+        post: operations["preparar_subida_api_v1_shipments__shipment_id__documents_presign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/documents/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Completar Subida
+         * @description Segundo tiempo: verifica lo que realmente se subió.
+         *
+         *     Si algo falla, el documento queda en `FAILED`, el objeto se borra y el
+         *     intento queda auditado: una subida rechazada suele ser un error del cliente,
+         *     pero una racha de ellas es otra cosa.
+         */
+        post: operations["completar_subida_api_v1_shipments__shipment_id__documents_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preparar Descarga
+         * @description Emite una URL firmada de corta duración.
+         *
+         *     Se devuelve la URL en el cuerpo en vez de redirigir para que el cliente
+         *     pueda decidir qué hacer con ella (abrir, descargar, previsualizar) y para
+         *     que la URL no quede en el historial de navegación como un redirect.
+         */
+        get: operations["preparar_descarga_api_v1_documents__document_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Expediente De Carga */
+        get: operations["expediente_de_carga_api_v1_shipments__shipment_id__documents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listar */
+        get: operations["listar_api_v1_dispatch_requests_get"];
+        put?: never;
+        /**
+         * Crear Solicitud
+         * @description Crea la solicitud y reclama las cargas.
+         *
+         *     Acepta `Idempotency-Key`: reintentar tras un timeout de red no debe crear
+         *     dos solicitudes ni bloquear las cargas dos veces.
+         */
+        post: operations["crear_solicitud_api_v1_dispatch_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Obtener */
+        get: operations["obtener_api_v1_dispatch_requests__dispatch_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Aprobar */
+        post: operations["aprobar_api_v1_dispatch_requests__dispatch_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rechazar */
+        post: operations["rechazar_api_v1_dispatch_requests__dispatch_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preparar */
+        post: operations["preparar_api_v1_dispatch_requests__dispatch_id__prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Completar */
+        post: operations["completar_api_v1_dispatch_requests__dispatch_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancelar
+         * @description Cancela la solicitud (ADR-0013).
+         *
+         *     El cliente solo puede antes de que Operaciones apruebe. Operaciones, hasta
+         *     `PREPARING`. La restricción la aplica la política de dominio, no el permiso.
+         */
+        post: operations["cancelar_api_v1_dispatch_requests__dispatch_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listar */
+        get: operations["listar_api_v1_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{notification_id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Marcar Leida */
+        post: operations["marcar_leida_api_v1_notifications__notification_id__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Marcar Todas */
+        post: operations["marcar_todas_api_v1_notifications_read_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/companies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listar Empresas */
+        get: operations["listar_empresas_api_v1_admin_companies_get"];
+        put?: never;
+        /** Crear Empresa */
+        post: operations["crear_empresa_api_v1_admin_companies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/companies/{company_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Desactivar Empresa
+         * @description Desactiva la empresa y suspende a sus usuarios. No borra nada.
+         *
+         *     Sus cargas, documentos y auditoría siguen existiendo: borrarla dejaría todo
+         *     ese historial apuntando a una empresa que ya no está.
+         */
+        delete: operations["desactivar_empresa_api_v1_admin_companies__company_id__delete"];
+        options?: never;
+        head?: never;
+        /** Actualizar Empresa */
+        patch: operations["actualizar_empresa_api_v1_admin_companies__company_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listar Usuarios */
+        get: operations["listar_usuarios_api_v1_admin_users_get"];
+        put?: never;
+        /** Crear Usuario */
+        post: operations["crear_usuario_api_v1_admin_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Desactivar Usuario
+         * @description Desactiva la cuenta y revoca sus sesiones. No borra el usuario.
+         *
+         *     Sus cargas creadas y su rastro de auditoría siguen apuntando a él.
+         */
+        delete: operations["desactivar_usuario_api_v1_admin_users__user_id__delete"];
+        options?: never;
+        head?: never;
+        /** Actualizar Usuario */
+        patch: operations["actualizar_usuario_api_v1_admin_users__user_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restablecer Contrasena
+         * @description Genera una contraseña temporal y corta todas las sesiones del usuario.
+         */
+        post: operations["restablecer_contrasena_api_v1_admin_users__user_id__reset_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccionRequest */
+        AccionRequest: {
+            /** Notes */
+            notes?: string | null;
+            /** Row Version */
+            row_version?: number | null;
+        };
+        /** AccionResponse */
+        AccionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** From Status */
+            from_status: string;
+            /** To Status */
+            to_status: string;
+            /** Row Version */
+            row_version: number;
+        };
+        /**
+         * ActualizarCargaRequest
+         * @description Corrección de datos. Solo se toca lo que venga en el cuerpo.
+         *
+         *     `row_version` es obligatorio: sin él, dos personas editando a la vez se
+         *     pisan y la segunda gana en silencio.
+         */
+        ActualizarCargaRequest: {
+            /** Row Version */
+            row_version: number;
+            /** Origin Location Id */
+            origin_location_id?: string | null;
+            /** Origin Facility Id */
+            origin_facility_id?: string | null;
+            /** Destination Location Id */
+            destination_location_id?: string | null;
+            /** Destination Address */
+            destination_address?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Transport Mode */
+            transport_mode?: string | null;
+            /** Estimated Arrival At */
+            estimated_arrival_at?: string | null;
+            /** Weight Kg */
+            weight_kg?: number | string | null;
+            /** Volumetric Weight Kg */
+            volumetric_weight_kg?: number | string | null;
+            /** Volume M3 */
+            volume_m3?: number | string | null;
+            /** Permit Review Required */
+            permit_review_required?: boolean | null;
+            /** Assigned To */
+            assigned_to?: string | null;
+        };
+        /** ActualizarEmpresaRequest */
+        ActualizarEmpresaRequest: {
+            /** Legal Name */
+            legal_name?: string | null;
+            /** Trade Name */
+            trade_name?: string | null;
+            /** Tax Id */
+            tax_id?: string | null;
+            /** Status */
+            status?: string | null;
+        };
+        /** ActualizarUsuarioRequest */
+        ActualizarUsuarioRequest: {
+            /** First Name */
+            first_name?: string | null;
+            /** Last Name */
+            last_name?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Role Code */
+            role_code?: string | null;
+        };
+        /** BodegaResponse */
+        BodegaResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Facility Code */
+            facility_code: string;
+            /**
+             * Location Id
+             * Format: uuid
+             */
+            location_id: string;
+            /** Uses Warehouse Receipt */
+            uses_warehouse_receipt: boolean;
+        };
+        /** CargaActualizadaResponse */
+        CargaActualizadaResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Row Version */
+            row_version: number;
+        };
+        /** CargaCreadaResponse */
+        CargaCreadaResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Shipment Number */
+            shipment_number: string;
+            /** Status */
+            status: string;
+            /** Row Version */
+            row_version: number;
+        };
         /**
          * ClientType
          * @enum {string}
          */
         ClientType: "WEB" | "IOS" | "ANDROID";
+        /** CompleteRequest */
+        CompleteRequest: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+        };
+        /** CompleteResponse */
+        CompleteResponse: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Media Type */
+            media_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Sha256 */
+            sha256: string;
+            /** Upload Status */
+            upload_status: string;
+            /** Scan Status */
+            scan_status: string;
+        };
+        /** ContrasenaTemporalResponse */
+        ContrasenaTemporalResponse: {
+            /** Password Temporal */
+            password_temporal: string;
+        };
+        /** CreadoResponse */
+        CreadoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /**
+         * CrearCargaRequest
+         * @description Alta de carga por Operaciones.
+         *
+         *     No lleva estado: toda carga nace en `PRE_ALERT` y avanza por el motor de
+         *     transiciones, que valida el catálogo y deja evento. Aceptar un estado acá
+         *     sería una puerta de atrás alrededor de esas reglas.
+         */
+        CrearCargaRequest: {
+            /**
+             * Company Id
+             * Format: uuid
+             */
+            company_id: string;
+            /**
+             * Origin Location Id
+             * Format: uuid
+             */
+            origin_location_id: string;
+            /**
+             * Destination Location Id
+             * Format: uuid
+             */
+            destination_location_id: string;
+            /** Origin Facility Id */
+            origin_facility_id?: string | null;
+            /** Destination Address */
+            destination_address?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Transport Mode */
+            transport_mode?: string | null;
+            /** Estimated Arrival At */
+            estimated_arrival_at?: string | null;
+            /** Weight Kg */
+            weight_kg?: number | string | null;
+            /** Volumetric Weight Kg */
+            volumetric_weight_kg?: number | string | null;
+            /** Volume M3 */
+            volume_m3?: number | string | null;
+            /**
+             * Permit Review Required
+             * @default false
+             */
+            permit_review_required: boolean;
+            /** Assigned To */
+            assigned_to?: string | null;
+        };
+        /** CrearEmpresaRequest */
+        CrearEmpresaRequest: {
+            /** Legal Name */
+            legal_name: string;
+            /** Trade Name */
+            trade_name?: string | null;
+            /** Tax Id */
+            tax_id?: string | null;
+        };
+        /** CrearSolicitudRequest */
+        CrearSolicitudRequest: {
+            method: components["schemas"]["DispatchMethod"];
+            /** Shipment Ids */
+            shipment_ids: string[];
+            /** Delivery Address */
+            delivery_address?: string | null;
+            /** Instructions */
+            instructions?: string | null;
+            /** Requested Pickup Date */
+            requested_pickup_date?: string | null;
+        };
+        /** CrearUsuarioRequest */
+        CrearUsuarioRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** First Name */
+            first_name: string;
+            /** Last Name */
+            last_name: string;
+            /** Role Code */
+            role_code: string;
+            /** Company Id */
+            company_id?: string | null;
+            /** Phone */
+            phone?: string | null;
+        };
         /** DashboardResponse */
         DashboardResponse: {
             tarjetas: components["schemas"]["TarjetasResponse"];
             /** Proximos Movimientos */
             proximos_movimientos: components["schemas"]["ShipmentResumenResponse"][];
+        };
+        /** DesactivacionResponse */
+        DesactivacionResponse: {
+            /** Usuarios Suspendidos */
+            usuarios_suspendidos: number;
+        };
+        /** DetalleSolicitudResponse */
+        DetalleSolicitudResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Dispatch Number */
+            dispatch_number: string;
+            /** Status */
+            status: string;
+            /** Method */
+            method: string;
+            /**
+             * Company Id
+             * Format: uuid
+             */
+            company_id: string;
+            /** Shipment Count */
+            shipment_count: number;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Row Version */
+            row_version: number;
+            /** Delivery Address */
+            delivery_address: string | null;
+            /** Instructions */
+            instructions: string | null;
+            /** Requested Pickup Date */
+            requested_pickup_date: string | null;
+            /** Rejected Reason */
+            rejected_reason: string | null;
+            /** Approved At */
+            approved_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Shipment Ids */
+            shipment_ids: string[];
+        };
+        /**
+         * DispatchMethod
+         * @enum {string}
+         */
+        DispatchMethod: "SEA" | "AIR" | "LAND" | "PICKUP";
+        /**
+         * DispatchStatus
+         * @description Estados de una solicitud de despacho.
+         *
+         *     `DISPATCHED` existe en el esquema aprobado pero hoy no lo alcanza ningún
+         *     endpoint: `complete` va directo de `PREPARING` a `COMPLETED` y mueve las
+         *     cargas a `DISPATCHED`. Se conserva para poder separar "salió de bodega" de
+         *     "expediente cerrado" sin migración.
+         * @enum {string}
+         */
+        DispatchStatus: "PENDING" | "APPROVED" | "PREPARING" | "DISPATCHED" | "COMPLETED" | "REJECTED" | "CANCELLED";
+        /** DocumentoResponse */
+        DocumentoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Document Type Code */
+            document_type_code: string;
+            /** Document Type Label */
+            document_type_label: string;
+            /** Original Name */
+            original_name: string;
+            /** Media Type */
+            media_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Upload Status */
+            upload_status: string;
+            /** Scan Status */
+            scan_status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** DownloadResponse */
+        DownloadResponse: {
+            /** Url */
+            url: string;
+            /** Filename */
+            filename: string;
+            /** Media Type */
+            media_type: string;
+            /** Expires In Seconds */
+            expires_in_seconds: number;
+        };
+        /** EmpresaAdminResponse */
+        EmpresaAdminResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Legal Name */
+            legal_name: string;
+            /** Trade Name */
+            trade_name: string | null;
+            /** Tax Id */
+            tax_id: string | null;
+            /** Status */
+            status: string;
+            /** Usuarios */
+            usuarios: number;
+            /** Cargas */
+            cargas: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** EmpresaResponse */
         EmpresaResponse: {
@@ -413,6 +1205,21 @@ export interface components {
             /** Actor */
             actor: string | null;
         };
+        /**
+         * ExpedienteResponse
+         * @description Todo lo documental de una carga en una sola respuesta.
+         *
+         *     Va junto y no en tres llamadas: la pantalla necesita las tres cosas a la vez
+         *     para poder decir qué falta, qué hay y qué se puede subir.
+         */
+        ExpedienteResponse: {
+            /** Requisitos */
+            requisitos: components["schemas"]["RequisitoResponse"][];
+            /** Documentos */
+            documentos: components["schemas"]["DocumentoResponse"][];
+            /** Tipos */
+            tipos: components["schemas"]["TipoDocumentoResponse"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -431,6 +1238,13 @@ export interface components {
             client_type: components["schemas"]["ClientType"];
             /** Device Name */
             device_name?: string | null;
+        };
+        /** MarcadasResponse */
+        MarcadasResponse: {
+            /** Marcadas */
+            marcadas: number;
+            /** Unread Count */
+            unread_count: number;
         };
         /**
          * MeResponse
@@ -460,10 +1274,57 @@ export interface components {
             /** Mensaje */
             mensaje: string;
         };
+        /** NotificationResponse */
+        NotificationResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Event Code */
+            event_code: string;
+            /** Title */
+            title: string;
+            /** Body */
+            body: string;
+            /** Is Critical */
+            is_critical: boolean;
+            /** Resource Type */
+            resource_type: string | null;
+            /** Resource Id */
+            resource_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Read At */
+            read_at: string | null;
+        };
+        /** PaginaNotifications */
+        PaginaNotifications: {
+            /** Items */
+            items: components["schemas"]["NotificationResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Has More */
+            has_more: boolean;
+            /** Unread Count */
+            unread_count: number;
+        };
         /** PaginaShipments */
         PaginaShipments: {
             /** Items */
             items: components["schemas"]["ShipmentResumenResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Has More */
+            has_more: boolean;
+        };
+        /** PaginaSolicitudes */
+        PaginaSolicitudes: {
+            /** Items */
+            items: components["schemas"]["SolicitudResponse"][];
             /** Next Cursor */
             next_cursor: string | null;
             /** Has More */
@@ -492,6 +1353,43 @@ export interface components {
             token: string;
             /** Nueva Password */
             nueva_password: string;
+        };
+        /** PresignRequest */
+        PresignRequest: {
+            /**
+             * Document Type Id
+             * Format: uuid
+             */
+            document_type_id: string;
+            /** Original Name */
+            original_name: string;
+        };
+        /**
+         * PresignResponse
+         * @description El cliente sube con `PUT` a `upload_url` y después llama a `complete`.
+         *
+         *     `storage_key` NO se devuelve: es detalle interno y exponerlo daría una pista
+         *     de la estructura del bucket.
+         */
+        PresignResponse: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Upload Url */
+            upload_url: string;
+            /** Expires In Seconds */
+            expires_in_seconds: number;
+            /** Max Bytes */
+            max_bytes: number;
+        };
+        /** RechazoRequest */
+        RechazoRequest: {
+            /** Reason */
+            reason: string;
+            /** Row Version */
+            row_version?: number | null;
         };
         /** RequirementPatch */
         RequirementPatch: {
@@ -548,6 +1446,35 @@ export interface components {
          * @enum {string}
          */
         RequirementType: "DOCUMENT" | "INFORMATION" | "PAYMENT" | "ACTION";
+        /**
+         * RequisitoResponse
+         * @description Un documento que la carga necesita, con su estado actual.
+         */
+        RequisitoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Document Type Id */
+            document_type_id: string | null;
+            /** Code */
+            code: string | null;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string | null;
+            /** Status */
+            status: string;
+            /** Required From */
+            required_from: string;
+            /** Blocks Dispatch */
+            blocks_dispatch: boolean;
+            /** Allowed Formats */
+            allowed_formats: string[];
+            /** Document Id */
+            document_id: string | null;
+        };
         /** SessionResponse */
         SessionResponse: {
             /**
@@ -682,6 +1609,34 @@ export interface components {
          * @enum {string}
          */
         ShipmentStatus: "PRE_ALERT" | "IN_TRANSIT" | "RECEIVED" | "STORED" | "DISPATCH_REQUESTED" | "PREPARING" | "DISPATCHED" | "DELIVERED" | "CANCELLED";
+        /** SolicitudResponse */
+        SolicitudResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Dispatch Number */
+            dispatch_number: string;
+            /** Status */
+            status: string;
+            /** Method */
+            method: string;
+            /**
+             * Company Id
+             * Format: uuid
+             */
+            company_id: string;
+            /** Shipment Count */
+            shipment_count: number;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Row Version */
+            row_version: number;
+        };
         /** TarjetasResponse */
         TarjetasResponse: {
             /** En Bodega */
@@ -694,6 +1649,24 @@ export interface components {
             requieren_accion: number;
             /** Entregados Este Mes */
             entregados_este_mes: number;
+        };
+        /** TipoDocumentoResponse */
+        TipoDocumentoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string | null;
+            /** Provided By */
+            provided_by: string;
+            /** Allowed Formats */
+            allowed_formats: string[];
         };
         /**
          * TokenResponse
@@ -747,6 +1720,20 @@ export interface components {
              */
             event_id: string;
         };
+        /** UbicacionCatalogoResponse */
+        UbicacionCatalogoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Location Code */
+            location_code: string;
+            /** Name */
+            name: string;
+            /** Country Code */
+            country_code: string;
+        };
         /** UbicacionResponse */
         UbicacionResponse: {
             /** Location Code */
@@ -755,6 +1742,49 @@ export interface components {
             name: string;
             /** Country Code */
             country_code: string;
+        };
+        /** UsuarioAdminResponse */
+        UsuarioAdminResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Email */
+            email: string;
+            /** First Name */
+            first_name: string;
+            /** Last Name */
+            last_name: string;
+            /** Phone */
+            phone: string | null;
+            /** Status */
+            status: string;
+            /** Role Code */
+            role_code: string | null;
+            /** Company Id */
+            company_id: string | null;
+            /** Company Name */
+            company_name: string | null;
+            /** Last Login At */
+            last_login_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** UsuarioCreadoResponse */
+        UsuarioCreadoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Email */
+            email: string;
+            /** Password Temporal */
+            password_temporal: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1052,6 +2082,183 @@ export interface operations {
             };
         };
     };
+    listar_ubicaciones_api_v1_shipments_catalogos_locations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UbicacionCatalogoResponse"][];
+                };
+            };
+        };
+    };
+    listar_bodegas_api_v1_shipments_catalogos_facilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BodegaResponse"][];
+                };
+            };
+        };
+    };
+    listar_shipments_api_v1_shipments_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                cursor?: string | null;
+                status?: components["schemas"]["ShipmentStatus"][] | null;
+                company_id?: string | null;
+                eta_from?: string | null;
+                eta_to?: string | null;
+                q?: string | null;
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginaShipments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crear_carga_api_v1_shipments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrearCargaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CargaCreadaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    obtener_shipment_api_v1_shipments__shipment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShipmentDetalleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actualizar_carga_api_v1_shipments__shipment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualizarCargaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CargaActualizadaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     transicionar_api_v1_shipments__shipment_id__transitions_post: {
         parameters: {
             query?: never;
@@ -1158,75 +2365,6 @@ export interface operations {
             };
         };
     };
-    listar_shipments_api_v1_shipments_get: {
-        parameters: {
-            query?: {
-                limit?: number | null;
-                cursor?: string | null;
-                status?: components["schemas"]["ShipmentStatus"][] | null;
-                company_id?: string | null;
-                eta_from?: string | null;
-                eta_to?: string | null;
-                q?: string | null;
-                archived?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginaShipments"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    obtener_shipment_api_v1_shipments__shipment_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                shipment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShipmentDetalleResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     obtener_timeline_api_v1_shipments__shipment_id__timeline_get: {
         parameters: {
             query?: {
@@ -1297,6 +2435,784 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DashboardResponse"];
+                };
+            };
+        };
+    };
+    preparar_subida_api_v1_shipments__shipment_id__documents_presign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresignResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    completar_subida_api_v1_shipments__shipment_id__documents_complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preparar_descarga_api_v1_documents__document_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    expediente_de_carga_api_v1_shipments__shipment_id__documents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExpedienteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_api_v1_dispatch_requests_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                cursor?: string | null;
+                status?: components["schemas"]["DispatchStatus"][] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginaSolicitudes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crear_solicitud_api_v1_dispatch_requests_post: {
+        parameters: {
+            query?: {
+                company_id?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrearSolicitudRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetalleSolicitudResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    obtener_api_v1_dispatch_requests__dispatch_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetalleSolicitudResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aprobar_api_v1_dispatch_requests__dispatch_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rechazar_api_v1_dispatch_requests__dispatch_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RechazoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preparar_api_v1_dispatch_requests__dispatch_id__prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    completar_api_v1_dispatch_requests__dispatch_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancelar_api_v1_dispatch_requests__dispatch_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_api_v1_notifications_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                cursor?: string | null;
+                unread?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginaNotifications"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    marcar_leida_api_v1_notifications__notification_id__read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarcadasResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    marcar_todas_api_v1_notifications_read_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarcadasResponse"];
+                };
+            };
+        };
+    };
+    listar_empresas_api_v1_admin_companies_get: {
+        parameters: {
+            query?: {
+                incluir_inactivas?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmpresaAdminResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crear_empresa_api_v1_admin_companies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrearEmpresaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreadoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    desactivar_empresa_api_v1_admin_companies__company_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                company_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesactivacionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actualizar_empresa_api_v1_admin_companies__company_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                company_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualizarEmpresaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_usuarios_api_v1_admin_users_get: {
+        parameters: {
+            query?: {
+                company_id?: string | null;
+                incluir_inactivos?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsuarioAdminResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crear_usuario_api_v1_admin_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrearUsuarioRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsuarioCreadoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    desactivar_usuario_api_v1_admin_users__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actualizar_usuario_api_v1_admin_users__user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualizarUsuarioRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restablecer_contrasena_api_v1_admin_users__user_id__reset_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContrasenaTemporalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
