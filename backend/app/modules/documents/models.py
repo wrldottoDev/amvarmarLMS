@@ -30,6 +30,7 @@ class DocumentTypeCode(StrEnum):
     BL = "BL"
     SPECIAL_PERMIT = "SPECIAL_PERMIT"
     PROOF_OF_DELIVERY = "PROOF_OF_DELIVERY"
+    WAREHOUSE_RECEIPT = "WAREHOUSE_RECEIPT"
 
 
 class ProvidedBy(StrEnum):

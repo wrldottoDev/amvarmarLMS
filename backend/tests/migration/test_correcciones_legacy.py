@@ -134,6 +134,91 @@ def _con_decisiones(decisiones: str) -> Path:
     return destino
 
 
+class TestCoberturaDeArchivos:
+    """Ninguna columna de archivo del legacy puede quedar sin migrar.
+
+    Existe por un caso real: `core_warehouse.uploaded_file` guardaba el
+    Warehouse Receipt colgado de la propia fila, sin pasar por
+    `core_warehousedocument`. El migrador leía las tres tablas de documentos y
+    esa columna no, así que 221 archivos —casi 10 GB, el grueso del archivo
+    histórico— se perdían en el corte sin que nada lo dijera.
+
+    No se detectó antes por dos motivos que esta clase corrige: el esquema de
+    prueba no tenía la columna, y ninguna prueba miraba la cobertura.
+    """
+
+    def test_el_esquema_de_prueba_tiene_las_columnas_de_archivo_reales(self, legacy) -> None:
+        """El fixture tiene que parecerse a producción o no prueba nada.
+
+        Si el esquema de prueba pierde una columna que producción sí tiene, las
+        pruebas siguen en verde mientras el migrador ignora datos reales. Es
+        exactamente lo que pasó.
+        """
+        columnas = set(
+            legacy["psql"]("""
+                SELECT table_name || '.' || column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND (column_name LIKE '%file%' OR column_name = 'uploaded_file')
+                ORDER BY 1
+            """).splitlines()
+        )
+
+        assert "core_warehouse.uploaded_file" in columnas
+        assert "core_warehousedocument.file" in columnas
+
+    def test_el_migrador_lee_toda_columna_de_archivo(self, legacy) -> None:
+        """Cada columna que guarda una ruta tiene que aparecer en el migrador.
+
+        Es una comprobación de texto y no de comportamiento, a propósito: lo que
+        falló no fue una consulta mal escrita sino una tabla que nadie miró, y
+        eso no se ve ejecutando lo que sí se escribió.
+        """
+        fuente = (_RAIZ / "backend/scripts/migrate_legacy.py").read_text()
+
+        columnas = [
+            fila.split(".", 1)
+            for fila in legacy["psql"]("""
+                SELECT table_name || '.' || column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND (column_name LIKE '%file%' OR column_name = 'uploaded_file')
+                ORDER BY 1
+            """).splitlines()
+            if fila
+        ]
+
+        assert columnas, "la semilla dejó de tener columnas de archivo"
+
+        sin_cubrir = [
+            f"{tabla}.{columna}"
+            for tabla, columna in columnas
+            if tabla not in fuente or columna not in fuente
+        ]
+
+        assert not sin_cubrir, (
+            "estas columnas guardan rutas de archivo y el migrador no las lee; "
+            f"sus archivos se perderían en el cutover: {sin_cubrir}"
+        )
+
+    def test_los_adjuntos_sembrados_cubren_zip_pdf_y_docx(self, legacy) -> None:
+        """El ZIP es el formato que ningún tipo de documento acepta.
+
+        Los 190 Warehouse Receipt comprimidos del legacy entran igual porque el
+        migrador escribe en `documents` directo, sin pasar por la validación de
+        formato. Si eso cambiara, esta semilla lo destapa.
+        """
+        extensiones = set(
+            legacy["psql"]("""
+                SELECT DISTINCT lower(split_part(uploaded_file, '.', -1))
+                FROM core_warehouse
+                WHERE uploaded_file IS NOT NULL AND uploaded_file <> ''
+            """).splitlines()
+        )
+
+        assert extensiones == {"zip", "pdf", "docx"}
+
+
 class TestDiagnostico:
     def test_encuentra_todos_los_problemas_del_inventario(self, legacy) -> None:
         legacy["copiar"](_RAIZ / "docs/migration/diagnostico_5_1.sql", "/tmp/diagnostico.sql")

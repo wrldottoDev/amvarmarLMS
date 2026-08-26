@@ -113,3 +113,7 @@ amvarmarProduccion*.zip
 # Copia local de los archivos del sistema viejo (Paso 5.3). Son documentos de
 # clientes y pesan cerca de 10 GB.
 media-legacy/
+
+# Salida de graphify (análisis de dependencias). Se regenera; 11 MB de JSON
+# y hashes que no aportan nada a la revisión.
+graphify-out/

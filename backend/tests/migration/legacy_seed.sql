@@ -55,6 +55,21 @@ INSERT INTO core_warehouse (wr_number, company_id, cliente_id, status) VALUES
     ('WR000901.', 1, 5, 'COMPLETADO'),
     ('WR000902|', 2, 7, 'COMPLETADO');
 
+-- El Warehouse Receipt adjunto a la propia fila. Se siembran las tres formas
+-- que trae producción —ZIP, PDF y DOCX— porque el ZIP es el caso que ningún
+-- tipo de documento aceptaba y hay que ver que entre igual.
+UPDATE core_warehouse SET uploaded_file = 'warehouse_files/WarehouseReceipt-' ||
+       replace(wr_number, 'WR', '') || '.zip'
+WHERE wr_number IN (SELECT wr_number FROM core_warehouse ORDER BY wr_number LIMIT 3);
+
+UPDATE core_warehouse SET uploaded_file = 'warehouse_files/' || wr_number || '.pdf'
+WHERE wr_number IN (SELECT wr_number FROM core_warehouse
+                    WHERE uploaded_file IS NULL ORDER BY wr_number LIMIT 2);
+
+UPDATE core_warehouse SET uploaded_file = 'warehouse_files/' || wr_number || '_Fotos.docx'
+WHERE wr_number IN (SELECT wr_number FROM core_warehouse
+                    WHERE uploaded_file IS NULL ORDER BY wr_number LIMIT 1);
+
 INSERT INTO core_dispatchrequest (user_id, company_id, status, method)
 SELECT 5, 1, 'COMPLETADO', 'MARITIMO' FROM generate_series(1, 10);
 

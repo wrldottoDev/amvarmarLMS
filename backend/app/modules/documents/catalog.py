@@ -71,6 +71,24 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
         allowed_formats=_PDF_E_IMAGENES,
         required_before_status=ShipmentStatus.DISPATCHED,
     ),
+    DocumentTypeCode.WAREHOUSE_RECEIPT: DefinicionTipoDocumento(
+        label="Warehouse Receipt",
+        description=(
+            "El comprobante que emite la bodega al recibir la mercancía. Lo carga "
+            "Operaciones; el cliente lo consulta."
+        ),
+        provided_by=ProvidedBy.STAFF,
+        # Sin ZIP a propósito. El sistema anterior guardaba 190 de estos como
+        # comprimidos y esos se traen igual —el migrador escribe en `documents`
+        # directo, sin pasar por la validación de formato—, pero de acá en
+        # adelante un WR nuevo se sube en PDF: un ZIP puede traer cualquier cosa
+        # adentro y el antivirus no ve dentro de un comprimido cifrado.
+        allowed_formats=_CON_DOCX,
+        # No bloquea ninguna transición. Que la carga tenga WR se exige por
+        # `shipment_references`, no por este documento: son cosas distintas, el
+        # número y el papel.
+        required_before_status=None,
+    ),
     DocumentTypeCode.PROOF_OF_DELIVERY: DefinicionTipoDocumento(
         label="Prueba de entrega",
         description=(

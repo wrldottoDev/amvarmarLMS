@@ -29,15 +29,25 @@ CREATE TABLE core_clientprofile (
 -- La clave primaria es el `wr_number`, no un entero: así es en el legacy, y de
 -- ahí sale que normalizarlo sea caro (lo referencian cinco tablas).
 CREATE TABLE core_warehouse (
-    wr_number   varchar(50) PRIMARY KEY,
-    company_id  integer REFERENCES core_company(id),
-    cliente_id  integer REFERENCES auth_user(id),
-    status      varchar(20) NOT NULL,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    invoice     varchar(100),
-    tracking    varchar(100),
-    po          varchar(100),
-    container   varchar(100)
+    wr_number      varchar(50) PRIMARY KEY,
+    company_id     integer REFERENCES core_company(id),
+    cliente_id     integer REFERENCES auth_user(id),
+    status         varchar(20) NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    invoice        varchar(100),
+    tracking       varchar(100),
+    po             varchar(100),
+    container      varchar(100),
+    shipper        varchar(180),
+    carrier        varchar(180),
+    weight_kgs     numeric(12,3),
+    weight_lbs     numeric(12,3),
+    volumetric_kgs numeric(12,3),
+    foots          numeric(12,2),
+    -- El Warehouse Receipt en sí, colgado de la fila y no de
+    -- `core_warehousedocument`. Faltaba en este esquema de prueba y por eso
+    -- nadie vio que el migrador no lo traía: 221 archivos, casi 10 GB.
+    uploaded_file  varchar(200)
 );
 
 CREATE TABLE core_dispatchrequest (

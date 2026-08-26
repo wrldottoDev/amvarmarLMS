@@ -959,6 +959,64 @@ class Migrador:
 
                 c.creados += 1
 
+    async def adjuntos_de_carga(self) -> None:
+        """El Warehouse Receipt que cuelga directo de la carga.
+
+        `core_warehouse.uploaded_file` no pasa por `core_warehousedocument`: es
+        un campo de archivo en la propia fila del warehouse, y por eso se
+        escapaba de las otras fases. Son 221 archivos y casi 10 GB — el grueso
+        del archivo histórico—, así que dejarlos afuera vaciaba el expediente de
+        casi todas las cargas migradas.
+
+        Se registra con una clave propia (`core_warehouse.uploaded_file`) y no
+        con `core_warehouse` a secas: esa ya está tomada por el mapeo de la
+        carga, y reusarla pisaría el id del shipment con el del documento.
+        """
+        c = self.reporte.contador("documents (WAREHOUSE_RECEIPT)")
+        tipo_id = (
+            await self.session.execute(
+                text("SELECT id FROM document_types WHERE code = 'WAREHOUSE_RECEIPT'")
+            )
+        ).scalar_one_or_none()
+
+        for fila in self._leer("""
+            SELECT wr_number, uploaded_file, created_at
+            FROM core_warehouse
+            WHERE uploaded_file IS NOT NULL AND uploaded_file <> ''
+            ORDER BY wr_number
+        """):
+            c.leidos += 1
+            clave = "core_warehouse.uploaded_file"
+            if self.buscar(clave, fila["wr_number"]):
+                c.ya_existian += 1
+                continue
+
+            carga = self.buscar("core_warehouse", fila["wr_number"])
+            if carga is None or tipo_id is None:
+                self.reporte.problemas.append(
+                    f"adjunto de {fila['wr_number']}: su carga no se migró o falta el tipo."
+                )
+                continue
+
+            await self._registrar_documento(
+                {
+                    "id": fila["wr_number"],
+                    "file": fila["uploaded_file"],
+                    # El nombre del archivo es todo lo que hay: la fila del
+                    # warehouse no guarda nombre original ni tipo ni tamaño. Los
+                    # tres reales los calcula el Paso 5.3 al subir el objeto.
+                    "original_name": fila["uploaded_file"].rsplit("/", 1)[-1],
+                    "content_type": None,
+                    "size_bytes": None,
+                    "subido": fila["created_at"],
+                    "uploaded_by_id": None,
+                },
+                carga=carga,
+                tipo_id=tipo_id,
+                tabla_legacy=clave,
+            )
+            c.creados += 1
+
     async def _registrar_documento(
         self, fila: dict[str, Any], *, carga: UUID, tipo_id: UUID, tabla_legacy: str
     ) -> UUID:
@@ -1030,6 +1088,7 @@ class Migrador:
         await self.cargas_de_despacho()
         await self.documentos()
         await self.documentos_de_despacho()
+        await self.adjuntos_de_carga()
         return self.reporte
 
     async def _ubicaciones(self) -> tuple[UUID, UUID]:
