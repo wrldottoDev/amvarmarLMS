@@ -93,6 +93,9 @@ def _datos(entorno, **extra) -> gestion.DatosDeCarga:
     # Lleva factura porque el origen por defecto no emite Warehouse Receipt: la
     # regla del negocio es que lo de Miami va por WR y todo lo demás por factura.
     extra.setdefault("invoice", f"INV-{uuid.uuid4().hex[:8].upper()}")
+    # Y peso, que el alta exige igual que lo exigía el sistema viejo: sin él la
+    # carga entra al inventario como un bulto de masa desconocida.
+    extra.setdefault("weight_kg", Decimal("10"))
     return gestion.DatosDeCarga(
         company_id=entorno["empresa"],
         origin_location_id=entorno["origen"],
@@ -150,6 +153,7 @@ class TestCrear:
                     company_id=entorno["empresa"],
                     origin_location_id=entorno["origen"],
                     destination_location_id=entorno["destino"],
+                    weight_kg=Decimal("10"),
                 ),
                 actor_user_id=entorno["ops"],
                 permisos=await _permisos(session, redis, entorno["ops"]),
@@ -178,12 +182,168 @@ class TestCrear:
                 origin_location_id=entorno["origen"],
                 destination_location_id=entorno["destino"],
                 origin_facility_id=bodega,
+                weight_kg=Decimal("10"),
             ),
             actor_user_id=entorno["ops"],
             permisos=await _permisos(session, redis, entorno["ops"]),
         )
 
         assert creada.id
+
+    async def test_sin_peso_no_se_crea(self, session: AsyncSession, redis, entorno) -> None:
+        """Regla del `WarehouseForm.clean` del sistema viejo.
+
+        Sin peso no se puede cotizar ni consolidar, y la carga entra al
+        inventario como un bulto de masa desconocida.
+        """
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.crear(
+                session,
+                datos=gestion.DatosDeCarga(
+                    company_id=entorno["empresa"],
+                    origin_location_id=entorno["origen"],
+                    destination_location_id=entorno["destino"],
+                    invoice="INV-SIN-PESO",
+                ),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_con_libras_alcanza(self, session: AsyncSession, redis, entorno) -> None:
+        """Uno de los dos, no los dos: el viejo pedía `lbs` o `kgs`."""
+        creada = await gestion.crear(
+            session,
+            datos=_datos(entorno, weight_kg=None, weight_lb=Decimal("550")),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert creada.id
+
+    async def test_guarda_las_piezas(self, session: AsyncSession, redis, entorno) -> None:
+        """La sección "Tipos de carga" del alta del sistema viejo.
+
+        Van en el mismo cuerpo que la carga y no en una llamada aparte: si la
+        segunda fallara quedaría una carga sin su desglose y nadie se enteraría.
+        """
+        creada = await gestion.crear(
+            session,
+            datos=_datos(
+                entorno,
+                packages=(
+                    gestion.DatosDeBulto(package_type="PALLET", quantity=3, description="Cajas"),
+                    gestion.DatosDeBulto(package_type="DRUM", quantity=2),
+                ),
+            ),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        piezas = (
+            await session.execute(
+                text("""
+                    SELECT package_type, quantity, description FROM shipment_packages
+                    WHERE shipment_id = :s ORDER BY package_type
+                """),
+                {"s": creada.id},
+            )
+        ).all()
+
+        assert [(f.package_type, f.quantity) for f in piezas] == [("DRUM", 2), ("PALLET", 3)]
+        assert piezas[1].description == "Cajas"
+
+    async def test_una_pieza_de_tipo_inventado_se_rechaza(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.crear(
+                session,
+                datos=_datos(
+                    entorno,
+                    packages=(gestion.DatosDeBulto(package_type="CONTENEDOR", quantity=1),),
+                ),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_puede_nacer_almacenada_con_sus_hitos(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Quien recibe en mostrador no debería crear en prealerta y avanzar a mano.
+
+        Se comprueban las dos consecuencias: que queden las fechas de los hitos
+        que ese estado da por cumplidos, y que la línea de tiempo explique por
+        qué arranca ahí en vez de parecer que se saltó tres pasos.
+        """
+        creada = await gestion.crear(
+            session,
+            datos=_datos(entorno, initial_status="STORED"),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert creada.status == "STORED"
+
+        fila = (
+            await session.execute(
+                text("SELECT received_at, stored_at FROM shipments WHERE id = :s"),
+                {"s": creada.id},
+            )
+        ).one()
+        assert fila.received_at is not None
+        assert fila.stored_at is not None
+
+        titulos = (
+            (
+                await session.execute(
+                    text("""
+                        SELECT title FROM shipment_events
+                        WHERE shipment_id = :s ORDER BY occurred_at, id
+                    """),
+                    {"s": creada.id},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert "Registrada con la mercancía ya presente" in titulos
+
+    async def test_no_puede_nacer_despachada(self, session: AsyncSession, redis, entorno) -> None:
+        """Una carga no empieza su vida ya despachada.
+
+        Permitirlo dejaría cargas sin ningún registro de haber estado en bodega,
+        que es justo lo que la línea de tiempo existe para evitar.
+        """
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.crear(
+                session,
+                datos=_datos(entorno, initial_status="DISPATCHED"),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_el_wr_se_guarda_como_referencia(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Lo de Miami se identifica por WR y se puede escribir al dar de alta."""
+        creada = await gestion.crear(
+            session,
+            datos=_datos(entorno, wr="WR105921"),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        valor = (
+            await session.execute(
+                text("""
+                    SELECT value FROM shipment_references
+                    WHERE shipment_id = :s AND reference_type = 'WR'
+                """),
+                {"s": creada.id},
+            )
+        ).scalar_one()
+
+        assert valor == "WR105921"
 
     async def test_guarda_los_campos_comerciales_del_sistema_viejo(
         self, session: AsyncSession, redis, entorno

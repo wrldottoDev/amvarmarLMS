@@ -12,7 +12,7 @@ export function CargandoPagina({ texto = "Cargando" }: { texto?: string }) {
 export function EstadoVacio({ titulo, descripcion }: { titulo: string; descripcion: string }) {
   return (
     <div className="flex min-h-52 flex-col items-center justify-center px-6 text-center">
-      <span className="mb-3 grid size-10 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)]">
+      <span className="mb-3 grid size-10 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)]">
         <Inbox className="size-5" aria-hidden="true" />
       </span>
       <h2 className="text-sm font-semibold">{titulo}</h2>

@@ -15,6 +15,15 @@ import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
 
+/** Los mismos nombres que usaba el desplegable del sistema viejo. */
+const ETIQUETA_PIEZA: Record<string, string> = {
+  PALLET: "Pallets",
+  BOX: "Cajas",
+  DRUM: "Tambores",
+  BUNDLE: "Bultos",
+  OTHER: "Otro",
+};
+
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: React.ReactNode }) {
   return (
     <div className="min-w-0 py-4">
@@ -44,6 +53,7 @@ export default function PaginaDetalleCarga() {
 
   const carga = consulta.data;
   const pendientes = usuario?.empresa ? carga.client_action_required_count : carga.open_requirements_count;
+  const identificador = carga.wr || carga.invoice || carga.shipment_number;
 
   // Peso y volumen en una sola línea: son la misma pregunta —cuánto ocupa— y
   // separarlos en tres filas medio vacías no ayuda a leerlo.
@@ -75,8 +85,13 @@ export default function PaginaDetalleCarga() {
               <BadgeEstado estado={carga.status} />
               <BadgePendientes cantidad={pendientes} />
             </div>
-            <h1 className="mt-3 text-2xl font-bold sm:text-3xl">{carga.invoice || carga.shipment_number}</h1>
-            {carga.invoice ? <p className="mt-1 font-mono text-sm text-[var(--texto-secundario)]">{carga.shipment_number}</p> : null}
+            {/* El identificador que el cliente reconoce: WR si sale de una bodega
+                que lo emite, factura en cualquier otro caso. El número interno
+                queda debajo — es nuestro, no aparece en ningún papel del embarque. */}
+            <h1 className="mt-3 text-2xl font-bold sm:text-3xl">{identificador}</h1>
+            {identificador !== carga.shipment_number ? (
+              <p className="mt-1 font-mono text-sm text-[var(--texto-secundario)]">{carga.shipment_number}</p>
+            ) : null}
           </div>
           <TransicionCarga cargaId={carga.id} estado={carga.status} rowVersion={carga.row_version} />
         </div>
@@ -97,7 +112,7 @@ export default function PaginaDetalleCarga() {
           <Route className="size-5 text-[var(--marca)]" aria-hidden="true" />
           <h2 id="ruta-carga" className="text-base font-bold">Ruta</h2>
         </div>
-        <div className="grid overflow-hidden rounded-lg border bg-white md:grid-cols-[1fr_auto_1fr]">
+        <div className="grid overflow-hidden rounded-lg border bg-[var(--superficie)] md:grid-cols-[1fr_auto_1fr]">
           <div className="p-5">
             <p className="text-xs font-bold uppercase text-[var(--texto-secundario)]">Origen</p>
             <p className="mt-2 text-lg font-semibold">{carga.origin.name}</p>
@@ -126,7 +141,15 @@ export default function PaginaDetalleCarga() {
             <div className="pl-5">
               <Dato etiqueta="Modo de transporte" valor={<span className="inline-flex items-center gap-2"><Ship className="size-4 text-[var(--marca)]" />{carga.transport_mode ?? "No registrado"}</span>} />
               <Dato etiqueta="Paquetes" valor={<span className="inline-flex items-center gap-2"><Package className="size-4 text-[var(--marca)]" />{carga.package_count}</span>} />
-              <Dato etiqueta="Factura" valor={<span className="inline-flex items-center gap-2"><Tag className="size-4 text-[var(--marca)]" />{carga.invoice ?? "No registrada"}</span>} />
+              <Dato
+                etiqueta={carga.wr ? "Warehouse Receipt" : "Factura"}
+                valor={
+                  <span className="inline-flex items-center gap-2">
+                    <Tag className="size-4 text-[var(--marca)]" />
+                    {carga.wr ?? carga.invoice ?? "No registrada"}
+                  </span>
+                }
+              />
             </div>
           </dl>
           {carga.description ? <p className="mt-4 text-sm leading-6 text-[var(--texto-secundario)]">{carga.description}</p> : null}
@@ -136,6 +159,34 @@ export default function PaginaDetalleCarga() {
             alguno. Muchas cargas —sobre todo las migradas— no traen ninguno, y una
             rejilla de seis "No registrado" no dice nada y entierra lo que sí importa.
           */}
+          {carga.packages.length > 0 ? (
+            <>
+              <h3 className="mt-7 border-b pb-3 text-sm font-bold uppercase tracking-wide text-[var(--texto-secundario)]">
+                Piezas
+              </h3>
+              <table className="w-full border-b text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase text-[var(--texto-secundario)]">
+                    <th className="py-2 font-semibold">Tipo</th>
+                    <th className="py-2 font-semibold">Cantidad</th>
+                    <th className="py-2 font-semibold">Descripción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {carga.packages.map((pieza) => (
+                    <tr key={pieza.id} className="border-t">
+                      <td className="py-2">{ETIQUETA_PIEZA[pieza.package_type] ?? pieza.package_type}</td>
+                      <td className="py-2">{pieza.quantity}</td>
+                      <td className="py-2 text-[var(--texto-secundario)]">
+                        {pieza.description ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : null}
+
           {tieneDatosComerciales ? (
             <>
               <h3 className="mt-7 border-b pb-3 text-sm font-bold uppercase tracking-wide text-[var(--texto-secundario)]">

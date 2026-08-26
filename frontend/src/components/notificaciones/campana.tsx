@@ -35,7 +35,7 @@ export function CampanaNotificaciones() {
     <div className="relative" ref={contenedor}>
       <button
         type="button"
-        className="relative grid size-10 place-items-center rounded-md text-[var(--texto-secundario)] hover:bg-[#edf1f2]"
+        className="relative grid size-10 place-items-center rounded-md text-[var(--texto-secundario)] hover:bg-[var(--hover)]"
         onClick={() => setAbierto((valor) => !valor)}
         aria-label={sinLeer > 0 ? `Avisos: ${sinLeer} sin leer` : "Avisos"}
         aria-expanded={abierto}
@@ -49,7 +49,7 @@ export function CampanaNotificaciones() {
       </button>
 
       {abierto ? (
-        <div className="absolute right-0 z-30 mt-2 w-[min(92vw,380px)] rounded-md border bg-white shadow-xl">
+        <div className="absolute right-0 z-30 mt-2 w-[min(92vw,380px)] rounded-md border bg-[var(--superficie)] shadow-xl">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <strong className="text-sm">Avisos</strong>
             {sinLeer > 0 ? (
@@ -72,8 +72,8 @@ export function CampanaNotificaciones() {
                   <Link
                     href={rutaDeRecurso(aviso)}
                     className={clases(
-                      "block px-4 py-3 hover:bg-[#f4f7f8]",
-                      aviso.read_at ? "" : "bg-[#f0f7fa]",
+                      "block px-4 py-3 hover:bg-[var(--hover)]",
+                      aviso.read_at ? "" : "bg-[var(--marca-tenue)]",
                     )}
                     onClick={() => {
                       if (!aviso.read_at) marcarLeida.mutate(aviso.id);

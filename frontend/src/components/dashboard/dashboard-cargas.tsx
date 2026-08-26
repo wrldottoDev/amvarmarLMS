@@ -20,11 +20,11 @@ import { formatearFecha } from "@/lib/utilidades";
 type VistaDashboard = "client" | "operations";
 
 const tarjetas = [
-  { clave: "en_bodega", etiqueta: "En bodega", icono: Warehouse, estilo: "bg-[#e8f0f2] text-[var(--mar)]" },
-  { clave: "en_transito", etiqueta: "En tránsito", icono: Ship, estilo: "bg-[#e6f0fb] text-[#245f98]" },
-  { clave: "proximos_a_llegar", etiqueta: "Próximos a llegar", icono: CalendarClock, estilo: "bg-[#fff0e9] text-[var(--marca-oscura)]" },
-  { clave: "requieren_accion", etiqueta: "Requieren acción", icono: AlertCircle, estilo: "bg-[#fff8e9] text-[#86520a]" },
-  { clave: "entregados_este_mes", etiqueta: "Entregados este mes", icono: CheckCircle2, estilo: "bg-[#edf8f3] text-[var(--exito)]" },
+  { clave: "en_bodega", etiqueta: "En bodega", icono: Warehouse, estilo: "bg-[var(--marca-tenue)] text-[var(--mar)]" },
+  { clave: "en_transito", etiqueta: "En tránsito", icono: Ship, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
+  { clave: "proximos_a_llegar", etiqueta: "Próximos a llegar", icono: CalendarClock, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
+  { clave: "requieren_accion", etiqueta: "Requieren acción", icono: AlertCircle, estilo: "bg-[var(--advertencia-tenue)] text-[var(--advertencia)]" },
+  { clave: "entregados_este_mes", etiqueta: "Entregados este mes", icono: CheckCircle2, estilo: "bg-[var(--exito-tenue)] text-[var(--exito)]" },
 ] as const;
 
 export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titulo: string }) {
@@ -49,7 +49,7 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
         </div>
         <button
           type="button"
-          className="grid size-10 place-items-center rounded-md border bg-white text-[var(--texto-secundario)] hover:bg-[#edf1f2]"
+          className="grid size-10 place-items-center rounded-md border bg-[var(--superficie)] text-[var(--texto-secundario)] hover:bg-[var(--hover)]"
           onClick={() => void consulta.refetch()}
           title="Actualizar"
           aria-label="Actualizar dashboard"
@@ -62,7 +62,7 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
         {tarjetas.map((tarjeta) => {
           const Icono = tarjeta.icono;
           return (
-            <article key={tarjeta.clave} className="min-h-32 rounded-lg border bg-white p-4 shadow-sm last:col-span-2 xl:last:col-span-1">
+            <article key={tarjeta.clave} className="min-h-32 rounded-lg border bg-[var(--superficie)] p-4 shadow-sm last:col-span-2 xl:last:col-span-1">
               <div className="flex items-start justify-between gap-3">
                 <span className={`grid size-9 place-items-center rounded-md ${tarjeta.estilo}`}>
                   <Icono className="size-4" aria-hidden="true" />
@@ -87,18 +87,18 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
         </div>
 
         {!consulta.data.proximos_movimientos.length ? (
-          <div className="rounded-lg border bg-white">
+          <div className="rounded-lg border bg-[var(--superficie)]">
             <EstadoVacio titulo="Sin movimientos próximos" descripcion="No hay cargas programadas en este momento." />
           </div>
         ) : (
-          <div className="divide-y rounded-lg border bg-white">
+          <div className="divide-y rounded-lg border bg-[var(--superficie)]">
             {consulta.data.proximos_movimientos.map((carga) => {
               const pendientes = vista === "client" ? carga.client_action_required_count : carga.open_requirements_count;
               return (
                 <Link
                   key={carga.id}
                   href={`/shipments/${carga.id}`}
-                  className="grid gap-4 p-4 hover:bg-[#f8fafb] sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.25fr)_120px_auto_32px] sm:items-center"
+                  className="grid gap-4 p-4 hover:bg-[var(--hover)] sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.25fr)_120px_auto_32px] sm:items-center"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-[var(--mar)]">{carga.invoice || carga.shipment_number}</p>

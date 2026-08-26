@@ -71,7 +71,7 @@ export default function PaginaCargas({ inventario = false }: { inventario?: bool
           </p>
         </div>
         {usuario?.empresa ? (
-          <span className="hidden size-11 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)] sm:grid">
+          <span className="hidden size-11 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)] sm:grid">
             <Boxes className="size-5" aria-hidden="true" />
           </span>
         ) : (
@@ -114,7 +114,7 @@ export default function PaginaCargas({ inventario = false }: { inventario?: bool
       {consulta.error ? <AvisoError error={consulta.error} /> : null}
 
       {!consulta.isLoading && !consulta.error && cargas.length === 0 ? (
-        <div className="rounded-lg border bg-white">
+        <div className="rounded-lg border bg-[var(--superficie)]">
           <EstadoVacio titulo="No hay cargas" descripcion="No se encontraron resultados con los filtros aplicados." />
         </div>
       ) : null}

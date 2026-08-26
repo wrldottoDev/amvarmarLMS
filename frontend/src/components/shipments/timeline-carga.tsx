@@ -36,7 +36,7 @@ export function TimelineCarga({ cargaId }: { cargaId: string }) {
 
   return (
     <div>
-      <ol className="relative ml-2 border-l-2 border-[#dce2e5]">
+      <ol className="relative ml-2 border-l-2 border-[var(--borde)]">
         {eventos.map((evento) => {
           const atrasado = esRegistroAtrasado(evento.occurred_at, evento.recorded_at);
           return (

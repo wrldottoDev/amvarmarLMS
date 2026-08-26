@@ -22,7 +22,7 @@ export default function PaginaCambiarContrasena() {
         Es el único paso que falta para empezar.
       </p>
 
-      <div className="mb-4 flex gap-2.5 rounded-md border border-[#f2d9a0] bg-[#fff6e5] px-3 py-2.5 text-sm text-[#8a5b00]">
+      <div className="mb-4 flex gap-2.5 rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-3 py-2.5 text-sm text-[var(--advertencia)]">
         <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <p>
           Entraste con una contraseña temporal que te dieron. Elegí una propia: la temporal la

@@ -156,7 +156,7 @@ export function TransicionCarga({ cargaId, estado, rowVersion }: { cargaId: stri
         {confirmarDespacho ? (
           <div className="space-y-5 p-5">
             <p className="text-sm font-medium">¿Está seguro de que desea despachar esta carga?</p>
-            <div className="flex items-center gap-3 rounded-md bg-[#f4f6f7] p-4">
+            <div className="flex items-center gap-3 rounded-md bg-[var(--hover)] p-4">
               <BadgeEstado estado={estado} />
               <ArrowRight className="size-4 text-[var(--texto-secundario)]" />
               <BadgeEstado estado="DISPATCHED" />
@@ -173,16 +173,16 @@ export function TransicionCarga({ cargaId, estado, rowVersion }: { cargaId: stri
           <form className="grid gap-5 p-5" onSubmit={enviar}>
             {mutacion.error ? <AvisoError error={mutacion.error} /> : null}
             {conflictoVersion ? (
-              <p className="rounded-md bg-[#fff8e9] px-4 py-3 text-sm text-[#86520a]">Alguien más modificó esta carga. Los datos ya se están recargando.</p>
+              <p className="rounded-md bg-[var(--advertencia-tenue)] px-4 py-3 text-sm text-[var(--advertencia)]">Alguien más modificó esta carga. Los datos ya se están recargando.</p>
             ) : null}
             {permitidas.length ? (
               <p className="text-xs text-[var(--texto-secundario)]">Transiciones permitidas por el servidor: {permitidas.map((valor) => esEstadoCarga(valor) ? etiquetaEstado[valor] : valor).join(", ")}.</p>
             ) : null}
 
-            <label className="grid gap-1.5 text-sm font-medium text-[#334047]">
+            <label className="grid gap-1.5 text-sm font-medium text-[var(--texto)]">
               Nuevo estado
               <select
-                className="h-11 rounded-md border bg-white px-3 outline-none focus:border-[var(--mar)]"
+                className="h-11 rounded-md border bg-[var(--superficie)] px-3 outline-none focus:border-[var(--mar)]"
                 value={destino}
                 onChange={(evento) => setDestino(evento.target.value as EstadoCarga)}
               >

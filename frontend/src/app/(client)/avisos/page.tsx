@@ -50,7 +50,7 @@ export default function PaginaAvisos() {
                   "rounded px-3 py-1.5 text-sm font-medium",
                   soloNoLeidas === opcion.valor
                     ? "bg-[var(--mar)] text-white"
-                    : "text-[var(--texto-secundario)] hover:bg-[#edf1f2]",
+                    : "text-[var(--texto-secundario)] hover:bg-[var(--hover)]",
                 )}
               >
                 {opcion.etiqueta}
@@ -61,7 +61,7 @@ export default function PaginaAvisos() {
           {sinLeer > 0 ? (
             <button
               type="button"
-              className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+              className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => marcarTodas.mutate()}
               disabled={marcarTodas.isPending}
             >
@@ -73,14 +73,14 @@ export default function PaginaAvisos() {
       </header>
 
       {data && data.items.length > 0 ? (
-        <ul className="divide-y overflow-hidden rounded-md border bg-white">
+        <ul className="divide-y overflow-hidden rounded-md border bg-[var(--superficie)]">
           {data.items.map((aviso) => (
             <li key={aviso.id}>
               <Link
                 href={rutaDeRecurso(aviso)}
                 className={clases(
-                  "flex items-start gap-3 px-4 py-4 hover:bg-[#f4f7f8]",
-                  aviso.read_at ? "" : "bg-[#f0f7fa]",
+                  "flex items-start gap-3 px-4 py-4 hover:bg-[var(--hover)]",
+                  aviso.read_at ? "" : "bg-[var(--marca-tenue)]",
                 )}
                 onClick={() => {
                   if (!aviso.read_at) marcarLeida.mutate(aviso.id);
@@ -111,7 +111,7 @@ export default function PaginaAvisos() {
           ))}
         </ul>
       ) : (
-        <div className="rounded-md border bg-white px-6 py-16 text-center">
+        <div className="rounded-md border bg-[var(--superficie)] px-6 py-16 text-center">
           <BellOff className="mx-auto size-8 text-[var(--texto-secundario)]" aria-hidden="true" />
           <p className="mt-3 text-sm font-medium">
             {soloNoLeidas ? "No tenés avisos sin leer." : "Todavía no tenés avisos."}

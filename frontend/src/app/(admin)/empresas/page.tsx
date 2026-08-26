@@ -74,11 +74,11 @@ export default function PaginaEmpresas() {
             <li
               key={empresa.id}
               className={clases(
-                "flex flex-wrap items-center gap-4 rounded-md border bg-white px-4 py-4",
+                "flex flex-wrap items-center gap-4 rounded-md border bg-[var(--superficie)] px-4 py-4",
                 empresa.status !== "ACTIVE" && "opacity-70",
               )}
             >
-              <span className="grid size-10 shrink-0 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)]">
+              <span className="grid size-10 shrink-0 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)]">
                 <Building2 className="size-5" aria-hidden="true" />
               </span>
 
@@ -105,7 +105,7 @@ export default function PaginaEmpresas() {
               </span>
 
               {empresa.status !== "ACTIVE" ? (
-                <span className="shrink-0 rounded-full border border-[#f0b8b3] bg-[#fff2f0] px-2.5 py-0.5 text-xs font-semibold text-[#82231b]">
+                <span className="shrink-0 rounded-full border border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] px-2.5 py-0.5 text-xs font-semibold text-[var(--peligro)]">
                   {etiquetaEstadoCuenta[empresa.status] ?? empresa.status}
                 </span>
               ) : null}
@@ -113,7 +113,7 @@ export default function PaginaEmpresas() {
               <span className="flex shrink-0 gap-2">
                 <Link
                   href={`/usuarios?empresa=${empresa.id}`}
-                  className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+                  className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
                 >
                   <Users className="size-4" aria-hidden="true" />
                   Usuarios
@@ -121,7 +121,7 @@ export default function PaginaEmpresas() {
                 {empresa.status === "ACTIVE" ? (
                   <button
                     type="button"
-                    className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium text-[var(--peligro)] hover:bg-[#fff2f0]"
+                    className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium text-[var(--peligro)] hover:bg-[var(--peligro-tenue)]"
                     onClick={() =>
                       setADesactivar({
                         id: empresa.id,
@@ -140,7 +140,7 @@ export default function PaginaEmpresas() {
       ) : null}
 
       {data && data.length === 0 ? (
-        <div className="rounded-md border bg-white px-6 py-16 text-center">
+        <div className="rounded-md border bg-[var(--superficie)] px-6 py-16 text-center">
           <Building2 className="mx-auto size-8 text-[var(--texto-secundario)]" aria-hidden="true" />
           <p className="mt-3 text-sm font-medium">Todavía no hay empresas.</p>
           <p className="mt-1 text-sm text-[var(--texto-secundario)]">
@@ -190,7 +190,7 @@ export default function PaginaEmpresas() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setCreando(false)}
             >
               Cancelar
@@ -216,7 +216,7 @@ export default function PaginaEmpresas() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setADesactivar(null)}
             >
               No, volver

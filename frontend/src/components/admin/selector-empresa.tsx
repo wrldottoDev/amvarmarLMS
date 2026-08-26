@@ -48,7 +48,7 @@ export function SelectorEmpresa({
 
   if (creando) {
     return (
-      <div className="space-y-3 rounded-md border border-[var(--mar)] bg-[#f2f7f8] px-3 py-3">
+      <div className="space-y-3 rounded-md border border-[var(--mar)] bg-[var(--marca-tenue)] px-3 py-3">
         <p className="flex items-center gap-2 text-sm font-semibold">
           <Building2 className="size-4" aria-hidden="true" />
           Cliente nuevo
@@ -89,7 +89,7 @@ export function SelectorEmpresa({
           </Boton>
           <button
             type="button"
-            className="flex h-10 items-center rounded-md border bg-white px-4 text-sm font-medium hover:bg-[#edf1f2]"
+            className="flex h-10 items-center rounded-md border bg-[var(--superficie)] px-4 text-sm font-medium hover:bg-[var(--hover)]"
             onClick={() => {
               setCreando(false);
               crear.reset();
@@ -122,7 +122,7 @@ export function SelectorEmpresa({
       </select>
       <button
         type="button"
-        className="flex h-10 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+        className="flex h-10 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
         onClick={() => setCreando(true)}
       >
         <Plus className="size-4" aria-hidden="true" />

@@ -27,7 +27,7 @@ export default function PaginaCuenta() {
         </p>
       </header>
 
-      <div className="space-y-4 rounded-md border bg-white px-4 py-4">
+      <div className="space-y-4 rounded-md border bg-[var(--superficie)] px-4 py-4">
         <div className="flex items-center gap-2">
           <UserRound className="size-5 text-[var(--marca)]" aria-hidden="true" />
           <h2 className="text-base font-bold">Datos</h2>
@@ -62,7 +62,7 @@ export default function PaginaCuenta() {
 
           <div>
             <span className="mb-1 block text-sm font-medium">Correo</span>
-            <p className="rounded-md border bg-[#f7f9fa] px-3 py-2 text-sm text-[var(--texto-secundario)]">
+            <p className="rounded-md border bg-[var(--hover)] px-3 py-2 text-sm text-[var(--texto-secundario)]">
               {usuario.email}
             </p>
             {/* El correo es con lo que entra: cambiarlo sin verificar el nuevo
@@ -74,7 +74,7 @@ export default function PaginaCuenta() {
 
           {actualizar.error ? <AvisoError error={actualizar.error} /> : null}
           {guardado ? (
-            <p className="text-sm text-[#1c6b33]">Datos guardados.</p>
+            <p className="text-sm text-[var(--exito)]">Datos guardados.</p>
           ) : null}
 
           <Boton type="submit" cargando={actualizar.isPending}>
@@ -83,7 +83,7 @@ export default function PaginaCuenta() {
         </form>
       </div>
 
-      <div className="space-y-4 rounded-md border bg-white px-4 py-4">
+      <div className="space-y-4 rounded-md border bg-[var(--superficie)] px-4 py-4">
         <h2 className="text-base font-bold">Contraseña</h2>
         <FormularioContrasena />
       </div>

@@ -39,7 +39,7 @@ export function QueHacer() {
       ? {
           clave: "documentos",
           icono: FileWarning,
-          estilo: "border-[#f2d9a0] bg-[#fff6e5] text-[#8a5b00]",
+          estilo: "border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] text-[var(--advertencia)]",
           titulo:
             conDocumentosPendientes.length === 1
               ? "Falta un documento en una carga"
@@ -53,7 +53,7 @@ export function QueHacer() {
       ? {
           clave: "despacho",
           icono: Truck,
-          estilo: "border-[#bcd6dd] bg-[#e8f0f2] text-[var(--mar)]",
+          estilo: "border-[var(--marca)] bg-[var(--marca-tenue)] text-[var(--mar)]",
           titulo:
             listasParaDespachar.length === 1
               ? "Tenés 1 carga lista para despachar"
@@ -67,7 +67,7 @@ export function QueHacer() {
 
   if (pendientes.length === 0) {
     return (
-      <div className="flex items-center gap-3 rounded-lg border border-[#b7e0c2] bg-[#e9f6ec] px-4 py-3.5 text-sm text-[#1c6b33]">
+      <div className="flex items-center gap-3 rounded-lg border border-[var(--exito-borde)] bg-[var(--exito-tenue)] px-4 py-3.5 text-sm text-[var(--exito)]">
         <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />
         <p>
           <strong>Todo al día.</strong> No hay nada pendiente de tu lado.

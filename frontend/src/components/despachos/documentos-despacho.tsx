@@ -64,7 +64,7 @@ export function DocumentosDespacho({
         {hayBls ? (
           <button
             type="button"
-            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
             onClick={() => descargarBls.mutate()}
             disabled={descargarBls.isPending}
             title="Todos los Bills of Lading juntos, para mandárselos al agente"
@@ -80,7 +80,7 @@ export function DocumentosDespacho({
       {descargar.error ? <AvisoError error={descargar.error} /> : null}
 
       {documentos.length > 0 ? (
-        <ul className="divide-y overflow-hidden rounded-lg border bg-white">
+        <ul className="divide-y overflow-hidden rounded-lg border bg-[var(--superficie)]">
           {documentos.map((documento) => {
             const descargable = sePuedeDescargar(documento.scan_status, documento.upload_status);
             return (
@@ -96,7 +96,7 @@ export function DocumentosDespacho({
                 {descargable ? (
                   <button
                     type="button"
-                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
                     onClick={() => void abrir(documento.id)}
                     disabled={descargar.isPending}
                   >
@@ -114,13 +114,13 @@ export function DocumentosDespacho({
           })}
         </ul>
       ) : (
-        <p className="rounded-lg border bg-white px-4 py-6 text-center text-sm text-[var(--texto-secundario)]">
+        <p className="rounded-lg border bg-[var(--superficie)] px-4 py-6 text-center text-sm text-[var(--texto-secundario)]">
           Todavía no hay documentos en este despacho.
         </p>
       )}
 
       {tiposDisponibles.length > 0 ? (
-        <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-white px-4 py-3">
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-[var(--superficie)] px-4 py-3">
           <label className="min-w-48 flex-1">
             <span className="mb-1 block text-sm font-medium">Adjuntar documento</span>
             <select

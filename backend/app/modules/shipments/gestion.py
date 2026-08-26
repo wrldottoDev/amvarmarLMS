@@ -28,7 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
-from app.modules.shipments.models import EventType, ReferenceType, ShipmentStatus
+from app.modules.shipments.models import (
+    EventType,
+    PackageType,
+    ReferenceType,
+    ShipmentStatus,
+)
 from app.modules.shipments.policies import validar_identificador_comercial
 from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
 
@@ -44,6 +49,19 @@ class NoSePuedeEditar(Conflicto):
 # Estados en los que la carga todavía se puede corregir libremente. Una vez
 # despachada, los datos describen algo que ya ocurrió: cambiarlos reescribiría
 # la historia en vez de corregir un error de captura.
+# Estados en los que una carga puede nacer. Solo los que describen mercancía que
+# ya está en manos de AMVARMAR: quien la recibe en mostrador no debería tener que
+# crearla en prealerta y avanzarla a mano dos veces. Más adelante no se puede
+# nacer —una carga no empieza despachada— y hacia atrás tampoco tiene sentido.
+_ESTADOS_INICIALES: frozenset[str] = frozenset(
+    {
+        ShipmentStatus.PRE_ALERT,
+        ShipmentStatus.IN_TRANSIT,
+        ShipmentStatus.RECEIVED,
+        ShipmentStatus.STORED,
+    }
+)
+
 _EDITABLES: frozenset[str] = frozenset(
     {
         ShipmentStatus.PRE_ALERT,
@@ -79,6 +97,23 @@ class DatosDeCarga:
     tracking: str | None = None
     po: str | None = None
     container: str | None = None
+    wr: str | None = None
+    # Los bultos que trae la carga. En el sistema viejo era la sección "Tipos de
+    # carga (Piezas)" del formulario de alta, y se perdía si no se cargaba ahí.
+    packages: tuple["DatosDeBulto", ...] = ()
+    # Estado en el que nace. `None` = prealerta. Solo se aceptan los estados que
+    # describen mercancía ya presente: quien recibe en mostrador la carga ya
+    # llegó, y obligarlo a crear en prealerta y avanzar a mano son tres clics
+    # que nadie da.
+    initial_status: str | None = None
+
+
+@dataclass(frozen=True)
+class DatosDeBulto:
+    package_type: str
+    quantity: int
+    description: str | None = None
+    weight_kg: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -107,12 +142,12 @@ async def crear(
     actor_user_id: UUID,
     permisos: PermisosEfectivos,
 ) -> CargaCreada:
-    """Crea una carga en `PRE_ALERT`.
+    """Da de alta una carga.
 
-    Nace siempre en prealerta, sin importar lo que mande quien llama: si la
-    carga ya está físicamente en bodega, se avanza con transiciones, que dejan
-    su evento. Crear directamente en `STORED` saltaría la línea de tiempo y
-    después nadie sabría cuándo llegó.
+    Nace en prealerta salvo que se pida otro de `_ESTADOS_INICIALES`. Nacer
+    directamente en `STORED` no saltea la línea de tiempo: se registran los
+    eventos intermedios con el mismo instante, para que el historial siga
+    contando la secuencia completa aunque la captura haya sido una sola.
     """
     if not permisos.permite(Perm.SHIPMENTS_CREATE, company_id=datos.company_id):
         raise SinPermisoParaTransicion(Perm.SHIPMENTS_CREATE)
@@ -122,6 +157,24 @@ async def crear(
 
     if datos.origin_location_id == datos.destination_location_id:
         raise DatosInvalidos("El origen y el destino no pueden ser el mismo lugar.")
+
+    estado_inicial = datos.initial_status or ShipmentStatus.PRE_ALERT.value
+    if estado_inicial not in _ESTADOS_INICIALES:
+        raise DatosInvalidos(
+            "Una carga solo puede crearse en prealerta, en tránsito, recibida o almacenada."
+        )
+
+    # La regla del sistema viejo (`WarehouseForm.clean`): sin peso no se puede
+    # cotizar ni consolidar, y una carga sin ninguno de los dos entra al
+    # inventario como un bulto de masa desconocida.
+    if datos.weight_kg is None and datos.weight_lb is None:
+        raise DatosInvalidos("Indique el peso, en kilos o en libras.")
+
+    for bulto in datos.packages:
+        if bulto.quantity < 1:
+            raise DatosInvalidos("La cantidad de una pieza tiene que ser al menos 1.")
+        if bulto.package_type not in set(PackageType):
+            raise DatosInvalidos(f"El tipo de pieza {bulto.package_type} no existe.")
 
     try:
         fila = (
@@ -145,7 +198,7 @@ async def crear(
                     "company": datos.company_id,
                     "actor": actor_user_id,
                     "asignado": datos.assigned_to,
-                    "estado": ShipmentStatus.PRE_ALERT.value,
+                    "estado": estado_inicial,
                     "origen": datos.origin_location_id,
                     "bodega": datos.origin_facility_id,
                     "destino": datos.destination_location_id,
@@ -183,6 +236,9 @@ async def crear(
         invoice=datos.invoice,
     )
 
+    await _guardar_bultos(session, fila.id, datos.packages)
+    await _sellar_hitos(session, fila.id, estado_inicial)
+
     await session.execute(
         text("""
             INSERT INTO shipment_events
@@ -192,17 +248,90 @@ async def crear(
         {
             "s": fila.id,
             "tipo": EventType.CREATED.value,
-            "estado": ShipmentStatus.PRE_ALERT.value,
+            "estado": estado_inicial,
             "titulo": "Carga creada",
             "actor": actor_user_id,
         },
     )
 
+    # Si nació más adelante que la prealerta, se deja constancia de por qué el
+    # historial arranca ahí. Sin esto la línea de tiempo de una carga creada
+    # como ALMACENADA parece que se saltó tres pasos.
+    if estado_inicial != ShipmentStatus.PRE_ALERT.value:
+        await session.execute(
+            text("""
+                INSERT INTO shipment_events
+                    (shipment_id, event_type, from_status_code, to_status_code,
+                     title, description, occurred_at, actor_user_id)
+                VALUES (:s, :tipo, :desde, :hacia, :titulo, :descripcion, now(), :actor)
+            """),
+            {
+                "s": fila.id,
+                "tipo": EventType.STATUS_CHANGED.value,
+                "desde": ShipmentStatus.PRE_ALERT.value,
+                "hacia": estado_inicial,
+                "titulo": "Registrada con la mercancía ya presente",
+                "descripcion": (
+                    "La carga se dio de alta directamente en este estado porque ya "
+                    "estaba en manos de AMVARMAR al registrarla."
+                ),
+                "actor": actor_user_id,
+            },
+        )
+
     return CargaCreada(
         id=fila.id,
         shipment_number=fila.shipment_number,
-        status=ShipmentStatus.PRE_ALERT.value,
+        status=estado_inicial,
         row_version=fila.row_version,
+    )
+
+
+async def _guardar_bultos(
+    session: AsyncSession, shipment_id: UUID, bultos: tuple[DatosDeBulto, ...]
+) -> None:
+    """Las piezas que trae la carga.
+
+    `package_count` de `shipments` no se toca acá: es un contador propio que
+    puede diferir —una carga puede tener 3 piezas declaradas y 40 bultos
+    físicos— y mezclarlos haría que corregir una cosa pisara la otra.
+    """
+    for bulto in bultos:
+        await session.execute(
+            text("""
+                INSERT INTO shipment_packages
+                    (shipment_id, package_type, quantity, description, weight_kg)
+                VALUES (:s, :tipo, :cantidad, :descripcion, :peso)
+            """),
+            {
+                "s": shipment_id,
+                "tipo": bulto.package_type,
+                "cantidad": bulto.quantity,
+                "descripcion": (bulto.description or "").strip()[:255] or None,
+                "peso": bulto.weight_kg,
+            },
+        )
+
+
+async def _sellar_hitos(session: AsyncSession, shipment_id: UUID, estado: str) -> None:
+    """Marca las fechas de los hitos que el estado inicial ya da por cumplidos.
+
+    Una carga que nace `STORED` estuvo recibida antes, aunque nadie lo haya
+    tecleado. Sin estas fechas los "Hitos logísticos" del detalle salen vacíos y
+    los informes de tiempo en bodega no tienen desde cuándo contar.
+    """
+    columnas = {
+        ShipmentStatus.RECEIVED.value: ("received_at",),
+        ShipmentStatus.STORED.value: ("received_at", "stored_at"),
+    }.get(estado)
+
+    if not columnas:
+        return
+
+    asignaciones = ", ".join(f"{c} = now()" for c in columnas)
+    await session.execute(
+        text(f"UPDATE shipments SET {asignaciones} WHERE id = :s"),  # noqa: S608
+        {"s": shipment_id},
     )
 
 
@@ -216,6 +345,7 @@ async def _guardar_referencias(
     por comas en un campo de texto.
     """
     for tipo, valor in (
+        (ReferenceType.WR, datos.wr),
         (ReferenceType.INVOICE, datos.invoice),
         (ReferenceType.TRACKING, datos.tracking),
         (ReferenceType.PO, datos.po),

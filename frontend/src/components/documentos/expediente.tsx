@@ -19,10 +19,10 @@ import { clases, formatearFecha } from "@/lib/utilidades";
 import type { RequisitoDocumental } from "@/lib/api/tipos";
 
 const tonos = {
-  falta: "border-[#f2d9a0] bg-[#fff6e5] text-[#8a5b00]",
-  espera: "border-[#bcd6dd] bg-[#e8f0f2] text-[var(--mar)]",
-  listo: "border-[#b7e0c2] bg-[#e9f6ec] text-[#1c6b33]",
-  alto: "border-[#f0b8b3] bg-[#fff2f0] text-[#82231b]",
+  falta: "border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] text-[var(--advertencia)]",
+  espera: "border-[var(--marca)] bg-[var(--marca-tenue)] text-[var(--mar)]",
+  listo: "border-[var(--exito-borde)] bg-[var(--exito-tenue)] text-[var(--exito)]",
+  alto: "border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] text-[var(--peligro)]",
 } as const;
 
 export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente: boolean }) {
@@ -74,7 +74,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
         {data.documentos.length > 1 ? (
           <button
             type="button"
-            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2] disabled:opacity-60"
+            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)] disabled:opacity-60"
             onClick={() => descargarTodos.mutate()}
             disabled={descargarTodos.isPending}
             title="Un solo archivo con todo el expediente, para mandarlo completo"
@@ -105,7 +105,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
       {descargarTodos.error ? <AvisoError error={descargarTodos.error} /> : null}
 
       {requisitos.length > 0 ? (
-        <ul className="divide-y overflow-hidden rounded-lg border bg-white">
+        <ul className="divide-y overflow-hidden rounded-lg border bg-[var(--superficie)]">
           {requisitos.map((requisito) => {
             const estado = estadoRequisito[requisito.status] ?? {
               etiqueta: requisito.status,
@@ -140,7 +140,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                 {requisito.document_id ? (
                   <button
                     type="button"
-                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
                     onClick={() => void abrir(requisito.document_id as string)}
                     disabled={descargar.isPending}
                   >
@@ -161,13 +161,13 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
           })}
         </ul>
       ) : (
-        <p className="rounded-lg border bg-white px-4 py-8 text-center text-sm text-[var(--texto-secundario)]">
+        <p className="rounded-lg border bg-[var(--superficie)] px-4 py-8 text-center text-sm text-[var(--texto-secundario)]">
           Esta carga no tiene documentos pendientes.
         </p>
       )}
 
       {data.documentos.length > 0 ? (
-        <details className="rounded-lg border bg-white">
+        <details className="rounded-lg border bg-[var(--superficie)]">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
             Todos los archivos ({data.documentos.length})
           </summary>
@@ -188,7 +188,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                   {descargable ? (
                     <button
                       type="button"
-                      className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+                      className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
                       onClick={() => void abrir(documento.id)}
                       disabled={descargar.isPending}
                     >
@@ -200,7 +200,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                       className={clases(
                         "flex shrink-0 items-center gap-1.5 text-xs",
                         documento.scan_status === "INFECTED"
-                          ? "text-[#82231b]"
+                          ? "text-[var(--peligro)]"
                           : "text-[var(--texto-secundario)]",
                       )}
                     >

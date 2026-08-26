@@ -78,7 +78,7 @@ function FormularioLogin() {
           />
           <button
             type="button"
-            className="absolute right-1.5 top-[29px] grid size-9 place-items-center rounded-md text-[var(--texto-secundario)] hover:bg-[#edf1f2]"
+            className="absolute right-1.5 top-[29px] grid size-9 place-items-center rounded-md text-[var(--texto-secundario)] hover:bg-[var(--hover)]"
             onClick={() => setMostrarPassword((valor) => !valor)}
             title={mostrarPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
             aria-label={mostrarPassword ? "Ocultar contraseña" : "Mostrar contraseña"}

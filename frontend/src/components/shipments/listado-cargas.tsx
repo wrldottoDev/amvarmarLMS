@@ -47,10 +47,10 @@ export function ListadoCargas({
 
   return (
     <>
-      <div className="hidden overflow-hidden rounded-lg border bg-white md:block">
+      <div className="hidden overflow-hidden rounded-lg border bg-[var(--superficie)] md:block">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
-            <thead className="border-b bg-[#f8f9fa] text-xs font-bold uppercase text-[var(--texto-secundario)]">
+            <thead className="border-b bg-[var(--hover)] text-xs font-bold uppercase text-[var(--texto-secundario)]">
               <tr>
                 {columnas.map((clave) => (
                   <th
@@ -72,7 +72,7 @@ export function ListadoCargas({
               {cargas.map((carga) => (
                 <tr
                   key={carga.id}
-                  className={clases("group hover:bg-[#f8fafb]", carga.hidden_at && "opacity-55")}
+                  className={clases("group hover:bg-[var(--hover)]", carga.hidden_at && "opacity-55")}
                 >
                   {columnas.map((clave) => (
                     <td
@@ -88,7 +88,7 @@ export function ListadoCargas({
                   <td className="px-3 py-3.5">
                     <Link
                       href={`/shipments/${carga.id}`}
-                      className="grid size-9 place-items-center rounded-md text-[var(--mar)] opacity-60 hover:bg-[#e8f0f2] group-hover:opacity-100"
+                      className="grid size-9 place-items-center rounded-md text-[var(--mar)] opacity-60 hover:bg-[var(--marca-tenue)] group-hover:opacity-100"
                       title="Ver carga"
                       aria-label={`Ver carga ${referencia(carga)}`}
                     >
@@ -110,7 +110,7 @@ export function ListadoCargas({
             <Link
               href={`/shipments/${carga.id}`}
               className={clases(
-                "flex items-center gap-3 rounded-lg border bg-white px-4 py-3.5",
+                "flex items-center gap-3 rounded-lg border bg-[var(--superficie)] px-4 py-3.5",
                 carga.hidden_at && "opacity-55",
               )}
             >

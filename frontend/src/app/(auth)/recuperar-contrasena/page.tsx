@@ -43,7 +43,7 @@ export default function PaginaRecuperarPassword() {
       <p className="mt-2 text-sm text-[var(--texto-secundario)]">Ingresá el correo asociado a tu cuenta.</p>
 
       {mensaje ? (
-        <div className="mt-7 rounded-md border border-[#a8d4c2] bg-[#edf8f3] px-4 py-4 text-sm text-[#14593f]" role="status">
+        <div className="mt-7 rounded-md border border-[var(--exito-borde)] bg-[var(--exito-tenue)] px-4 py-4 text-sm text-[var(--exito)]" role="status">
           {mensaje}
         </div>
       ) : (

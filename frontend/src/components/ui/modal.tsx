@@ -26,9 +26,9 @@ export function Modal({
   if (!abierto) return null;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#11181c]/50 p-4" onMouseDown={cerrar}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--texto)]/50 p-4" onMouseDown={cerrar}>
       <section
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border bg-white shadow-2xl"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border bg-[var(--superficie)] shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="titulo-modal"
@@ -40,7 +40,7 @@ export function Modal({
           </h2>
           <button
             type="button"
-            className="grid size-9 place-items-center rounded-md text-[var(--texto-secundario)] hover:bg-[#edf1f2]"
+            className="grid size-9 place-items-center rounded-md text-[var(--texto-secundario)] hover:bg-[var(--hover)]"
             onClick={cerrar}
             title="Cerrar"
             aria-label="Cerrar"

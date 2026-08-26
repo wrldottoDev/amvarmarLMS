@@ -422,3 +422,25 @@ async def proximos_movimientos(
             )
         ).all()
     )
+
+
+async def bultos(session: AsyncSession, shipment_id: UUID) -> list[Any]:
+    """Las piezas declaradas de una carga.
+
+    Consulta aparte y no un JOIN en el detalle: son varias filas por carga y
+    traerlas mezcladas obligaría a desduplicar el resto de las columnas.
+    El permiso ya se comprobó al leer la carga.
+    """
+    return list(
+        (
+            await session.execute(
+                text("""
+                    SELECT id, package_type, quantity, description, weight_kg
+                    FROM shipment_packages
+                    WHERE shipment_id = :s
+                    ORDER BY created_at, id
+                """),
+                {"s": shipment_id},
+            )
+        ).all()
+    )

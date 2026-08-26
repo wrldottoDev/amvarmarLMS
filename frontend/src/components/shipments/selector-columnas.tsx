@@ -46,7 +46,7 @@ export function SelectorColumnas() {
     <div className="relative" ref={contenedor}>
       <button
         type="button"
-        className="flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+        className="flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
         onClick={() => setAbierto((v) => !v)}
         aria-expanded={abierto}
       >
@@ -58,7 +58,7 @@ export function SelectorColumnas() {
       </button>
 
       {abierto ? (
-        <div className="absolute right-0 z-30 mt-2 w-64 rounded-md border bg-white p-1.5 shadow-xl">
+        <div className="absolute right-0 z-30 mt-2 w-64 rounded-md border bg-[var(--superficie)] p-1.5 shadow-xl">
           <p className="px-2 py-1.5 text-xs text-[var(--texto-secundario)]">
             Se guarda para vos, no cambia lo que ven los demás.
           </p>
@@ -69,7 +69,7 @@ export function SelectorColumnas() {
                 <label
                   className={clases(
                     "flex items-center gap-2 rounded px-2 py-2 text-sm",
-                    columna.fija ? "opacity-50" : "cursor-pointer hover:bg-[#edf1f2]",
+                    columna.fija ? "opacity-50" : "cursor-pointer hover:bg-[var(--hover)]",
                   )}
                   title={columna.fija ? "Sin esta columna el listado no se puede usar" : undefined}
                 >
@@ -88,7 +88,7 @@ export function SelectorColumnas() {
 
           <button
             type="button"
-            className="mt-1 flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-[var(--mar)] hover:bg-[#edf1f2]"
+            className="mt-1 flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-[var(--mar)] hover:bg-[var(--hover)]"
             onClick={() => guardar.mutate(data.disponibles.map((c) => c.clave))}
           >
             <RotateCcw className="size-3.5" aria-hidden="true" />

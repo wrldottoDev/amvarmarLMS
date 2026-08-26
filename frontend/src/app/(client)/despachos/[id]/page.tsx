@@ -71,7 +71,7 @@ export default function PaginaDetalleDespacho() {
         <InsigniaDespacho estado={data.status} />
       </header>
 
-      <div className="rounded-md border bg-white px-4 py-5">
+      <div className="rounded-md border bg-[var(--superficie)] px-4 py-5">
         <PasosDespacho estado={data.status} />
         <p className="mt-4 text-center text-sm text-[var(--texto-secundario)]">
           {explicacionDespacho[data.status] ?? ""}
@@ -79,7 +79,7 @@ export default function PaginaDetalleDespacho() {
       </div>
 
       {data.rejected_reason ? (
-        <div className="rounded-md border border-[#f0b8b3] bg-[#fff2f0] px-4 py-3 text-sm text-[#82231b]">
+        <div className="rounded-md border border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] px-4 py-3 text-sm text-[var(--peligro)]">
           <strong className="block">Motivo</strong>
           <p className="mt-0.5">{data.rejected_reason}</p>
         </div>
@@ -88,7 +88,7 @@ export default function PaginaDetalleDespacho() {
       {fallo ? <AvisoError error={fallo} /> : null}
 
       {!esCliente ? (
-        <div className="flex flex-wrap gap-2 rounded-md border bg-white px-4 py-4">
+        <div className="flex flex-wrap gap-2 rounded-md border bg-[var(--superficie)] px-4 py-4">
           {data.status === "PENDING" ? (
             <>
               <Boton onClick={() => aprobar.mutate(undefined)} cargando={aprobar.isPending}>
@@ -126,7 +126,7 @@ export default function PaginaDetalleDespacho() {
       ) : null}
 
       {puedeCancelarCliente ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-white px-4 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-[var(--superficie)] px-4 py-4">
           <p className="text-sm text-[var(--texto-secundario)]">
             Todavía podés cancelar esta solicitud.
           </p>
@@ -139,7 +139,7 @@ export default function PaginaDetalleDespacho() {
 
       <DocumentosDespacho dispatchId={id} esCliente={esCliente} />
 
-      <dl className="grid gap-px overflow-hidden rounded-md border bg-[#e4eaec] sm:grid-cols-2">
+      <dl className="grid gap-px overflow-hidden rounded-md border bg-[var(--borde)] sm:grid-cols-2">
         {[
           { termino: "Solicitado", valor: formatearFechaHora(data.requested_at) },
           { termino: "Aprobado", valor: formatearFechaHora(data.approved_at) },
@@ -147,7 +147,7 @@ export default function PaginaDetalleDespacho() {
           { termino: "Dirección de entrega", valor: data.delivery_address || "La habitual" },
           { termino: "Instrucciones", valor: data.instructions || "Sin instrucciones" },
         ].map((dato) => (
-          <div key={dato.termino} className="bg-white px-4 py-3">
+          <div key={dato.termino} className="bg-[var(--superficie)] px-4 py-3">
             <dt className="text-xs text-[var(--texto-secundario)]">{dato.termino}</dt>
             <dd className="mt-0.5 text-sm">{dato.valor}</dd>
           </div>
@@ -164,7 +164,7 @@ export default function PaginaDetalleDespacho() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setCancelando(false)}
             >
               No, volver
@@ -201,7 +201,7 @@ export default function PaginaDetalleDespacho() {
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setRechazando(false)}
             >
               Volver

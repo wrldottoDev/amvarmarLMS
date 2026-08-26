@@ -58,7 +58,7 @@ export default function PaginaDespachos() {
               "rounded-full border px-3.5 py-1.5 text-sm font-medium",
               estado === filtro.valor
                 ? "border-[var(--mar)] bg-[var(--mar)] text-white"
-                : "border-[#d6dfe2] bg-white text-[var(--texto-secundario)] hover:bg-[#edf1f2]",
+                : "border-[var(--borde)] bg-[var(--superficie)] text-[var(--texto-secundario)] hover:bg-[var(--hover)]",
             )}
           >
             {filtro.etiqueta}
@@ -75,7 +75,7 @@ export default function PaginaDespachos() {
             <li key={despacho.id}>
               <Link
                 href={`/despachos/${despacho.id}`}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-white px-4 py-4 hover:border-[var(--mar)]"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-[var(--superficie)] px-4 py-4 hover:border-[var(--mar)]"
               >
                 <div className="min-w-0">
                   <strong className="block text-sm">{despacho.dispatch_number}</strong>
@@ -94,7 +94,7 @@ export default function PaginaDespachos() {
       ) : null}
 
       {data && data.items.length === 0 ? (
-        <div className="rounded-md border bg-white px-6 py-16 text-center">
+        <div className="rounded-md border bg-[var(--superficie)] px-6 py-16 text-center">
           <PackageCheck
             className="mx-auto size-8 text-[var(--texto-secundario)]"
             aria-hidden="true"

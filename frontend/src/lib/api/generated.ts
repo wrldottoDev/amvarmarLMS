@@ -1179,6 +1179,33 @@ export interface components {
             /** Uses Warehouse Receipt */
             uses_warehouse_receipt: boolean;
         };
+        /** BultoRequest */
+        BultoRequest: {
+            /** Package Type */
+            package_type: string;
+            /** Quantity */
+            quantity: number;
+            /** Description */
+            description?: string | null;
+            /** Weight Kg */
+            weight_kg?: number | string | null;
+        };
+        /** BultoResponse */
+        BultoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Package Type */
+            package_type: string;
+            /** Quantity */
+            quantity: number;
+            /** Description */
+            description: string | null;
+            /** Weight Kg */
+            weight_kg: string | null;
+        };
         /** CambiarContrasenaRequest */
         CambiarContrasenaRequest: {
             /** Actual */
@@ -1349,6 +1376,12 @@ export interface components {
             po?: string | null;
             /** Container */
             container?: string | null;
+            /** Wr */
+            wr?: string | null;
+            /** Packages */
+            packages?: components["schemas"]["BultoRequest"][];
+            /** Initial Status */
+            initial_status?: string | null;
         };
         /** CrearEmpresaRequest */
         CrearEmpresaRequest: {
@@ -2000,6 +2033,8 @@ export interface components {
             dispatched_at: string | null;
             /** Delivered At */
             delivered_at: string | null;
+            /** Packages */
+            packages: components["schemas"]["BultoResponse"][];
         };
         /**
          * ShipmentResumenResponse

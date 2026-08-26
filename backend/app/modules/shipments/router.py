@@ -118,6 +118,25 @@ class CrearCargaRequest(BaseModel):
     tracking: str | None = Field(default=None, max_length=120)
     po: str | None = Field(default=None, max_length=120)
     container: str | None = Field(default=None, max_length=120)
+    # El Warehouse Receipt, cuando la carga sale de una bodega que lo emite.
+    wr: str | None = Field(default=None, max_length=120)
+
+    # Las piezas del sistema viejo: la sección "Tipos de carga" del formulario
+    # de alta. Van en el mismo cuerpo y no en una llamada aparte porque si la
+    # segunda falla queda una carga sin su desglose y nadie se entera.
+    packages: list["BultoRequest"] = Field(default_factory=list, max_length=50)
+
+    # En qué estado nace. Se omite para la prealerta de siempre.
+    initial_status: str | None = Field(
+        default=None, pattern="^(PRE_ALERT|IN_TRANSIT|RECEIVED|STORED)$"
+    )
+
+
+class BultoRequest(BaseModel):
+    package_type: str = Field(pattern="^(PALLET|BOX|DRUM|BUNDLE|OTHER)$")
+    quantity: int = Field(ge=1, le=100000)
+    description: str | None = Field(default=None, max_length=255)
+    weight_kg: Decimal | None = Field(default=None, ge=0)
 
 
 class CargaCreadaResponse(BaseModel):
@@ -240,6 +259,17 @@ async def crear_carga(
                 tracking=datos.tracking,
                 po=datos.po,
                 container=datos.container,
+                wr=datos.wr,
+                initial_status=datos.initial_status,
+                packages=tuple(
+                    gestion.DatosDeBulto(
+                        package_type=b.package_type,
+                        quantity=b.quantity,
+                        description=b.description,
+                        weight_kg=b.weight_kg,
+                    )
+                    for b in datos.packages
+                ),
             ),
             actor_user_id=actor.user_id,
             permisos=permisos,
@@ -847,6 +877,14 @@ async def listar_shipments(
     )
 
 
+class BultoResponse(BaseModel):
+    id: UUID
+    package_type: str
+    quantity: int
+    description: str | None
+    weight_kg: Decimal | None
+
+
 class ShipmentDetalleResponse(ShipmentResumenResponse):
     row_version: int
     description: str | None
@@ -855,6 +893,9 @@ class ShipmentDetalleResponse(ShipmentResumenResponse):
     stored_at: datetime | None
     dispatched_at: datetime | None
     delivered_at: datetime | None
+    # Las piezas del sistema viejo. La migración trajo 242 y hasta ahora no
+    # había forma de verlas.
+    packages: list[BultoResponse]
 
 
 @router.get("/{shipment_id}", response_model=ShipmentDetalleResponse)
@@ -873,6 +914,16 @@ async def obtener_shipment(
         stored_at=fila.stored_at,
         dispatched_at=fila.dispatched_at,
         delivered_at=fila.delivered_at,
+        packages=[
+            BultoResponse(
+                id=b.id,
+                package_type=b.package_type,
+                quantity=b.quantity,
+                description=b.description,
+                weight_kg=b.weight_kg,
+            )
+            for b in await queries.bultos(db, shipment_id)
+        ],
     )
 
 

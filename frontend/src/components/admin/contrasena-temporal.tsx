@@ -19,16 +19,16 @@ export type EstadoInvitacion = "enviada" | "fallo" | "no-aplica";
 
 const TONO = {
   enviada: {
-    caja: "border-[#b7e0c2] bg-[#e9f6ec]",
-    texto: "text-[#1c6b33]",
+    caja: "border-[var(--exito-borde)] bg-[var(--exito-tenue)]",
+    texto: "text-[var(--exito)]",
   },
   fallo: {
-    caja: "border-[#e6c07a] bg-[#fdf4e3]",
-    texto: "text-[#8a5a12]",
+    caja: "border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)]",
+    texto: "text-[var(--advertencia)]",
   },
   "no-aplica": {
-    caja: "border-[#b7e0c2] bg-[#e9f6ec]",
-    texto: "text-[#1c6b33]",
+    caja: "border-[var(--exito-borde)] bg-[var(--exito-tenue)]",
+    texto: "text-[var(--exito)]",
   },
 } as const;
 
@@ -85,12 +85,12 @@ export function ContrasenaTemporal({
       {verContrasena ? (
         <>
           <div className="flex items-center gap-2">
-            <code className="flex-1 overflow-x-auto rounded border bg-white px-3 py-2 font-mono text-sm">
+            <code className="flex-1 overflow-x-auto rounded border bg-[var(--superficie)] px-3 py-2 font-mono text-sm">
               {contrasena}
             </code>
             <button
               type="button"
-              className="flex h-10 shrink-0 items-center gap-1.5 rounded-md border bg-white px-3 text-sm font-medium hover:bg-[#f0f3f4]"
+              className="flex h-10 shrink-0 items-center gap-1.5 rounded-md border bg-[var(--superficie)] px-3 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => void copiar()}
             >
               {copiado ? (

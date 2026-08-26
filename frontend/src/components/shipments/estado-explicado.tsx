@@ -31,7 +31,7 @@ export function EstadoExplicado({
   const siguiente = queHacerAhora[estado];
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-[#f4f9fa] px-4 py-3.5">
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-[var(--marca-tenue)] px-4 py-3.5">
       <Info className="size-5 shrink-0 text-[var(--mar)]" aria-hidden="true" />
       <p className="min-w-0 flex-1 text-sm">
         {significado}

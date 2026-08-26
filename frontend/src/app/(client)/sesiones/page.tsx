@@ -63,17 +63,17 @@ export default function PaginaSesiones() {
       {sesiones.data?.length === 0 ? (
         <EstadoVacio titulo="No hay sesiones activas" descripcion="No se encontraron dispositivos con acceso vigente." />
       ) : (
-        <div className="divide-y rounded-lg border bg-white">
+        <div className="divide-y rounded-lg border bg-[var(--superficie)]">
           {sesiones.data?.map((sesion) => (
             <article key={sesion.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)]">
+              <span className="grid size-11 shrink-0 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)]">
                 <IconoDispositivo tipo={sesion.client_type} />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="truncate text-sm font-semibold">{sesion.device_name ?? "Dispositivo sin nombre"}</h2>
                   {sesion.es_sesion_actual ? (
-                    <span className="inline-flex items-center gap-1 rounded bg-[#edf8f3] px-2 py-1 text-[11px] font-bold text-[var(--exito)]">
+                    <span className="inline-flex items-center gap-1 rounded bg-[var(--exito-tenue)] px-2 py-1 text-[11px] font-bold text-[var(--exito)]">
                       <ShieldCheck className="size-3" aria-hidden="true" /> Actual
                     </span>
                   ) : null}
@@ -86,7 +86,7 @@ export default function PaginaSesiones() {
               {!sesion.es_sesion_actual ? (
                 <button
                   type="button"
-                  className="grid size-10 place-items-center self-end rounded-md text-[var(--peligro)] hover:bg-[#fff2f0] sm:self-auto"
+                  className="grid size-10 place-items-center self-end rounded-md text-[var(--peligro)] hover:bg-[var(--peligro-tenue)] sm:self-auto"
                   onClick={() => revocar.mutate(sesion)}
                   disabled={revocar.isPending}
                   title="Revocar sesión"

@@ -81,7 +81,7 @@ export default function PaginaNuevoDespacho() {
       {disponibles.isPending ? <CargandoPagina /> : null}
 
       {disponibles.data && cargas.length === 0 ? (
-        <div className="rounded-md border bg-white px-6 py-14 text-center">
+        <div className="rounded-md border bg-[var(--superficie)] px-6 py-14 text-center">
           <PackageOpen
             className="mx-auto size-8 text-[var(--texto-secundario)]"
             aria-hidden="true"
@@ -93,7 +93,7 @@ export default function PaginaNuevoDespacho() {
           </p>
           <Link
             href="/shipments"
-            className="mt-4 inline-flex h-10 items-center rounded-md border px-4 text-sm font-semibold hover:bg-[#edf1f2]"
+            className="mt-4 inline-flex h-10 items-center rounded-md border px-4 text-sm font-semibold hover:bg-[var(--hover)]"
           >
             Ver mis cargas
           </Link>
@@ -102,7 +102,7 @@ export default function PaginaNuevoDespacho() {
 
       {cargas.length > 0 ? (
         <>
-          <div className="rounded-md border bg-white">
+          <div className="rounded-md border bg-[var(--superficie)]">
             <div className="flex items-center justify-between border-b px-4 py-3">
               <div>
                 <strong className="block text-sm">1. ¿Qué cargas querés despachar?</strong>
@@ -133,7 +133,7 @@ export default function PaginaNuevoDespacho() {
                     <label
                       className={clases(
                         "flex cursor-pointer items-center gap-3 px-4 py-3.5",
-                        elegida ? "bg-[#f0f7fa]" : "hover:bg-[#f7f9fa]",
+                        elegida ? "bg-[var(--marca-tenue)]" : "hover:bg-[var(--hover)]",
                       )}
                     >
                       <input
@@ -153,7 +153,7 @@ export default function PaginaNuevoDespacho() {
                       </span>
                       {carga.open_requirements_count ? (
                         <span
-                          className="flex items-center gap-1 rounded-full border border-[#f2d9a0] bg-[#fff6e5] px-2 py-0.5 text-[11px] font-semibold text-[#8a5b00]"
+                          className="flex items-center gap-1 rounded-full border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-2 py-0.5 text-[11px] font-semibold text-[var(--advertencia)]"
                           title="Operaciones no puede aprobar el despacho hasta tener estos documentos."
                         >
                           <AlertTriangle className="size-3" aria-hidden="true" />
@@ -167,7 +167,7 @@ export default function PaginaNuevoDespacho() {
             </ul>
           </div>
 
-          <div className="rounded-md border bg-white px-4 py-4">
+          <div className="rounded-md border bg-[var(--superficie)] px-4 py-4">
             <strong className="block text-sm">2. ¿Cómo querés que salga?</strong>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               {metodos.map((opcion) => (
@@ -176,8 +176,8 @@ export default function PaginaNuevoDespacho() {
                   className={clases(
                     "cursor-pointer rounded-md border px-3 py-3",
                     metodo === opcion.valor
-                      ? "border-[var(--mar)] bg-[#f0f7fa] ring-1 ring-[var(--mar)]"
-                      : "hover:bg-[#f7f9fa]",
+                      ? "border-[var(--mar)] bg-[var(--marca-tenue)] ring-1 ring-[var(--mar)]"
+                      : "hover:bg-[var(--hover)]",
                   )}
                 >
                   <span className="flex items-center gap-2">
@@ -198,7 +198,7 @@ export default function PaginaNuevoDespacho() {
             </div>
           </div>
 
-          <div className="rounded-md border bg-white px-4 py-4">
+          <div className="rounded-md border bg-[var(--superficie)] px-4 py-4">
             <strong className="block text-sm">3. ¿Algo más que debamos saber?</strong>
             <span className="text-xs text-[var(--texto-secundario)]">Los dos son opcionales.</span>
 
@@ -225,7 +225,7 @@ export default function PaginaNuevoDespacho() {
             </label>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-white px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-[var(--superficie)] px-4 py-4">
             <p className="text-sm">
               {seleccionadas.length === 0 ? (
                 <span className="text-[var(--texto-secundario)]">
@@ -263,7 +263,7 @@ export default function PaginaNuevoDespacho() {
 
           {/* ADR-0013: el cliente solo cancela antes de la aprobación. Se dice
               acá, cuando todavía puede echarse atrás, y no después. */}
-          <div className="flex gap-2 rounded-md border border-[#f2d9a0] bg-[#fff6e5] px-3 py-2.5 text-[#8a5b00]">
+          <div className="flex gap-2 rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-3 py-2.5 text-[var(--advertencia)]">
             <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <p>
               Podés cancelarla mientras Operaciones no la haya aprobado. Después ya no, porque
@@ -276,7 +276,7 @@ export default function PaginaNuevoDespacho() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setConfirmando(false)}
             >
               Volver

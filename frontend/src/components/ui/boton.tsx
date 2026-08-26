@@ -11,9 +11,9 @@ interface PropiedadesBoton extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantes: Record<Variante, string> = {
   primario: "border-transparent bg-[var(--mar)] text-white hover:bg-[var(--mar-oscuro)]",
-  secundario: "border-[var(--borde)] bg-white text-[var(--texto)] hover:bg-[#f0f3f4]",
-  peligro: "border-transparent bg-[var(--peligro)] text-white hover:bg-[#8f1b13]",
-  texto: "border-transparent bg-transparent text-[var(--mar)] hover:bg-[#e8f0f2]",
+  secundario: "border-[var(--borde)] bg-[var(--superficie)] text-[var(--texto)] hover:bg-[var(--hover)]",
+  peligro: "border-transparent bg-[var(--peligro)] text-white hover:bg-[var(--peligro)]",
+  texto: "border-transparent bg-transparent text-[var(--mar)] hover:bg-[var(--marca-tenue)]",
 };
 
 export function Boton({

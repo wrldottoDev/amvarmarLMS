@@ -60,7 +60,7 @@ function FormularioReset() {
       <h1 className="text-2xl font-bold">Nueva contraseña</h1>
 
       {mensaje ? (
-        <div className="mt-7 grid gap-4 rounded-md border border-[#a8d4c2] bg-[#edf8f3] px-4 py-4 text-sm text-[#14593f]" role="status">
+        <div className="mt-7 grid gap-4 rounded-md border border-[var(--exito-borde)] bg-[var(--exito-tenue)] px-4 py-4 text-sm text-[var(--exito)]" role="status">
           <p>{mensaje}</p>
           <Link className="font-semibold underline" href="/login">Iniciar sesión</Link>
         </div>

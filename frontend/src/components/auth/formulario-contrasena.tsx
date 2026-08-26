@@ -88,7 +88,7 @@ export function FormularioContrasena({ alTerminar }: { alTerminar?: () => void }
       {cambiar.error ? <AvisoError error={cambiar.error} /> : null}
 
       {listo ? (
-        <p className="rounded-md border border-[#b7e0c2] bg-[#e9f6ec] px-3 py-2.5 text-sm text-[#1c6b33]">
+        <p className="rounded-md border border-[var(--exito-borde)] bg-[var(--exito-tenue)] px-3 py-2.5 text-sm text-[var(--exito)]">
           Contraseña actualizada. Las demás sesiones se cerraron.
         </p>
       ) : null}

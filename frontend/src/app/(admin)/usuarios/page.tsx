@@ -114,7 +114,7 @@ function Contenido() {
       {isPending ? <CargandoPagina /> : null}
 
       {data && data.length > 0 ? (
-        <ul className="divide-y overflow-hidden rounded-md border bg-white">
+        <ul className="divide-y overflow-hidden rounded-md border bg-[var(--superficie)]">
           {data.map((usuario) => (
             <li
               key={usuario.id}
@@ -123,7 +123,7 @@ function Contenido() {
                 usuario.status !== "ACTIVE" && "opacity-70",
               )}
             >
-              <span className="grid size-9 shrink-0 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)]">
+              <span className="grid size-9 shrink-0 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)]">
                 <UserRound className="size-4" aria-hidden="true" />
               </span>
 
@@ -137,7 +137,7 @@ function Contenido() {
                 </span>
               </span>
 
-              <span className="shrink-0 rounded-full border bg-[#f4f7f8] px-2.5 py-0.5 text-xs font-medium">
+              <span className="shrink-0 rounded-full border bg-[var(--hover)] px-2.5 py-0.5 text-xs font-medium">
                 {etiquetaRol[usuario.role_code ?? ""] ?? usuario.role_code ?? "Sin rol"}
               </span>
 
@@ -146,7 +146,7 @@ function Contenido() {
               </span>
 
               {usuario.status !== "ACTIVE" ? (
-                <span className="shrink-0 rounded-full border border-[#f0b8b3] bg-[#fff2f0] px-2.5 py-0.5 text-xs font-semibold text-[#82231b]">
+                <span className="shrink-0 rounded-full border border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] px-2.5 py-0.5 text-xs font-semibold text-[var(--peligro)]">
                   {etiquetaEstadoCuenta[usuario.status] ?? usuario.status}
                 </span>
               ) : null}
@@ -154,7 +154,7 @@ function Contenido() {
               <span className="flex shrink-0 gap-2">
                 <button
                   type="button"
-                  className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2]"
+                  className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
                   title="Genera una contraseña temporal y cierra sus sesiones abiertas"
                   onClick={async () => {
                     const resultado = await restablecer.mutateAsync(usuario.id);
@@ -175,7 +175,7 @@ function Contenido() {
                 {usuario.status === "ACTIVE" ? (
                   <button
                     type="button"
-                    className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium text-[var(--peligro)] hover:bg-[#fff2f0]"
+                    className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium text-[var(--peligro)] hover:bg-[var(--peligro-tenue)]"
                     onClick={() =>
                       setADesactivar({
                         id: usuario.id,
@@ -194,7 +194,7 @@ function Contenido() {
       ) : null}
 
       {data && data.length === 0 ? (
-        <div className="rounded-md border bg-white px-6 py-16 text-center">
+        <div className="rounded-md border bg-[var(--superficie)] px-6 py-16 text-center">
           <UserRound className="mx-auto size-8 text-[var(--texto-secundario)]" aria-hidden="true" />
           <p className="mt-3 text-sm font-medium">No hay usuarios que mostrar.</p>
         </div>
@@ -255,8 +255,8 @@ function Contenido() {
                   className={clases(
                     "flex cursor-pointer gap-2 rounded-md border px-3 py-2.5",
                     rol === opcion.codigo
-                      ? "border-[var(--mar)] bg-[#f0f7fa]"
-                      : "hover:bg-[#f7f9fa]",
+                      ? "border-[var(--mar)] bg-[var(--marca-tenue)]"
+                      : "hover:bg-[var(--hover)]",
                   )}
                 >
                   <input
@@ -278,7 +278,7 @@ function Contenido() {
           </fieldset>
 
           {esInterno ? (
-            <p className="rounded-md border border-[#bcd6dd] bg-[#e8f0f2] px-3 py-2.5 text-sm text-[var(--mar)]">
+            <p className="rounded-md border border-[var(--marca)] bg-[var(--marca-tenue)] px-3 py-2.5 text-sm text-[var(--mar)]">
               El personal interno no pertenece a ninguna empresa: ve todas.
             </p>
           ) : (
@@ -304,7 +304,7 @@ function Contenido() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setCreando(false)}
             >
               Cancelar
@@ -336,7 +336,7 @@ function Contenido() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[#edf1f2]"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setADesactivar(null)}
             >
               No, volver

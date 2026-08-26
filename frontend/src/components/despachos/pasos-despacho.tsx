@@ -35,8 +35,8 @@ export function PasosDespacho({ estado }: { estado: string }) {
                 className={clases(
                   "grid size-7 place-items-center rounded-full border-2 text-xs font-bold",
                   completado && "border-[var(--mar)] bg-[var(--mar)] text-white",
-                  activo && "border-[var(--mar)] bg-white text-[var(--mar)]",
-                  !completado && !activo && "border-[#d6dfe2] bg-white text-[#9aa9ae]",
+                  activo && "border-[var(--mar)] bg-[var(--superficie)] text-[var(--mar)]",
+                  !completado && !activo && "border-[var(--borde)] bg-[var(--superficie)] text-[var(--texto-secundario)]",
                 )}
                 aria-current={activo ? "step" : undefined}
               >
@@ -55,7 +55,7 @@ export function PasosDespacho({ estado }: { estado: string }) {
               <span
                 className={clases(
                   "mb-5 h-0.5 w-full flex-1",
-                  indice < actual ? "bg-[var(--mar)]" : "bg-[#d6dfe2]",
+                  indice < actual ? "bg-[var(--mar)]" : "bg-[var(--borde)]",
                 )}
                 aria-hidden="true"
               />

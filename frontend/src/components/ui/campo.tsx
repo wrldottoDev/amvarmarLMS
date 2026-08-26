@@ -17,12 +17,12 @@ export function Campo({ etiqueta, error, ayuda, className, id, ...propiedades }:
     .join(" ");
 
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-[#334047]" htmlFor={campoId}>
+    <label className="grid gap-1.5 text-sm font-medium text-[var(--texto)]" htmlFor={campoId}>
       {etiqueta}
       <input
         id={campoId}
         className={clases(
-          "h-11 w-full rounded-md border bg-white px-3 text-[var(--texto)] shadow-sm outline-none placeholder:text-[#8b969b] focus:border-[var(--mar)]",
+          "h-11 w-full rounded-md border bg-[var(--superficie)] px-3 text-[var(--texto)] shadow-sm outline-none placeholder:text-[var(--texto-secundario)] focus:border-[var(--mar)]",
           error && "border-[var(--peligro)]",
           className,
         )}
@@ -52,12 +52,12 @@ interface PropiedadesArea extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 export function AreaTexto({ etiqueta, error, className, id, ...propiedades }: PropiedadesArea) {
   const campoId = id ?? propiedades.name;
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-[#334047]" htmlFor={campoId}>
+    <label className="grid gap-1.5 text-sm font-medium text-[var(--texto)]" htmlFor={campoId}>
       {etiqueta}
       <textarea
         id={campoId}
         className={clases(
-          "min-h-24 w-full resize-y rounded-md border bg-white px-3 py-2.5 text-[var(--texto)] shadow-sm outline-none placeholder:text-[#8b969b] focus:border-[var(--mar)]",
+          "min-h-24 w-full resize-y rounded-md border bg-[var(--superficie)] px-3 py-2.5 text-[var(--texto)] shadow-sm outline-none placeholder:text-[var(--texto-secundario)] focus:border-[var(--mar)]",
           error && "border-[var(--peligro)]",
           className,
         )}
