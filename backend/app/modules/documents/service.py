@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflicto, RecursoNoEncontrado
 from app.core.observability import metrics
 from app.infrastructure.storage import s3
-from app.modules.documents.models import ScanStatus, UploadStatus
+from app.modules.documents.models import UploadStatus
 from app.modules.documents.validation import (
     ArchivoInvalido,
     FormatoNoPermitido,
@@ -48,13 +48,9 @@ _FORMATOS_IMAGEN = frozenset({"JPG", "JPEG", "PNG", "WEBP", "HEIC"})
 
 
 class DocumentoNoDisponible(Conflicto):
-    """Existe pero todavía no se puede descargar: falta procesarlo o escanearlo."""
+    """Existe pero todavía no se puede descargar: la subida no terminó."""
 
     code = "DOCUMENTO_NO_DISPONIBLE"
-
-
-class DocumentoEnCuarentena(Conflicto):
-    code = "DOCUMENTO_EN_CUARENTENA"
 
 
 @dataclass(frozen=True)
@@ -159,12 +155,12 @@ async def preparar_subida(
             INSERT INTO documents (
                 id, company_id, uploaded_by, storage_provider, storage_key,
                 original_name, safe_name, media_type, size_bytes, sha256,
-                upload_status, scan_status
+                upload_status
             )
             VALUES (
                 :id, :company, :actor, 's3', :key,
                 :original, :safe, 'application/octet-stream', 1, :hash_vacio,
-                :upload_status, :scan_status
+                :upload_status
             )
         """),
         {
@@ -178,7 +174,6 @@ async def preparar_subida(
             # CHECK de la tabla exigen valores, y usar ceros los violaría.
             "hash_vacio": "0" * 64,
             "upload_status": UploadStatus.UPLOADING.value,
-            "scan_status": ScanStatus.PENDING.value,
         },
     )
 
@@ -208,6 +203,11 @@ class DocumentoCompletado:
     media_type: str
     size_bytes: int
     sha256: str
+    # El estado real con el que quedó. Lo devuelve el servicio y no lo escribe
+    # el router: cuando el router lo tenía a mano, siguió respondiendo
+    # "PROCESSING" después de que el pipeline dejara de usar ese estado, y la
+    # API mintió sobre si el documento se podía descargar.
+    upload_status: str
 
 
 async def completar(
@@ -287,11 +287,10 @@ async def completar(
             "size": objeto.size_bytes,
             "sha256": sha256,
             "safe_name": resultado.safe_name,
-            # PROCESSING, no READY: el antivirus (Paso 3.2) corre antes de que
-            # el documento sea descargable. Optimizar o servir contenido no
-            # escaneado expondría las librerías de procesamiento a bytes
-            # hostiles (ADR-0009).
-            "estado": UploadStatus.PROCESSING.value,
+            # READY: el documento queda descargable en cuanto termina la subida.
+            # Antes pasaba por PROCESSING esperando al antivirus, que se retiró
+            # por decisión de AMVARMAR (ver ADR-0009).
+            "estado": UploadStatus.READY.value,
             "id": document_id,
         },
     )
@@ -303,6 +302,7 @@ async def completar(
         media_type=resultado.media_type,
         size_bytes=objeto.size_bytes,
         sha256=sha256,
+        upload_status=UploadStatus.READY.value,
     )
 
 
@@ -373,8 +373,7 @@ async def preparar_descarga(
         parametros["empresas"] = company_ids
 
     consulta = f"""
-        SELECT d.storage_key, d.original_name, d.media_type,
-               d.upload_status, d.scan_status
+        SELECT d.storage_key, d.original_name, d.media_type, d.upload_status
         FROM documents d
         WHERE {" AND ".join(condiciones)}
     """  # noqa: S608
@@ -384,18 +383,6 @@ async def preparar_descarga(
     if fila is None:
         # Ajeno e inexistente son indistinguibles desde afuera.
         raise RecursoNoEncontrado("Documento no encontrado.")
-
-    if fila.scan_status == ScanStatus.INFECTED:
-        raise DocumentoEnCuarentena(
-            "El archivo fue puesto en cuarentena por el análisis de seguridad."
-        )
-
-    if fila.scan_status != ScanStatus.CLEAN:
-        # Fail closed: PENDING y FAILED no se descargan. Si el escáner está
-        # caído, el documento espera; no pasa por defecto.
-        raise DocumentoNoDisponible(
-            "El archivo todavía se está verificando. Intentá en unos minutos."
-        )
 
     if fila.upload_status != UploadStatus.READY:
         raise DocumentoNoDisponible("El archivo todavía se está procesando.")
@@ -443,7 +430,6 @@ class DocumentoDeCarga:
     media_type: str
     size_bytes: int
     upload_status: str
-    scan_status: str
     created_at: datetime
 
 
@@ -518,7 +504,7 @@ async def expediente(
         await session.execute(
             text("""
                 SELECT d.id, dt.code, dt.label, d.original_name, d.media_type,
-                       d.size_bytes, d.upload_status, d.scan_status, d.created_at
+                       d.size_bytes, d.upload_status, d.created_at
                 FROM shipment_documents sd
                 JOIN documents d ON d.id = sd.document_id
                 JOIN document_types dt ON dt.id = sd.document_type_id
@@ -554,7 +540,6 @@ async def expediente(
                 media_type=f.media_type,
                 size_bytes=f.size_bytes,
                 upload_status=f.upload_status,
-                scan_status=f.scan_status,
                 created_at=f.created_at,
             )
             for f in documentos
@@ -593,13 +578,12 @@ async def paquete_de_documentos(
     trabajo que la máquina puede hacer.
 
     **ADR-0009 prohibió los ZIP en la SUBIDA**, no en la descarga. Son cosas
-    distintas: un ZIP que entra puede esconder cualquier cosa y el antivirus no
-    lo abre; uno que sale lo armamos nosotros con archivos que ya escaneamos.
+    distintas: uno que entra puede esconder cualquier cosa; uno que sale lo
+    armamos nosotros.
 
-    Solo entran los archivos limpios y disponibles. Un documento infectado o sin
-    escanear se omite, y su ausencia se anota dentro del propio ZIP: entregarlo
-    sería exactamente lo que el escaneo existe para impedir, y omitirlo en
-    silencio haría creer que la carga no lo tenía.
+    Solo entran los archivos cuya subida terminó. Si alguno quedó a medias se
+    omite y su ausencia se anota dentro del propio ZIP: omitirlo en silencio
+    haría creer que la carga no lo tenía.
     """
     condiciones = ["s.id = :shipment_id", "s.deleted_at IS NULL"]
     parametros: dict[str, Any] = {"shipment_id": shipment_id}
@@ -621,7 +605,7 @@ async def paquete_de_documentos(
     filas = (
         await session.execute(
             text("""
-                SELECT d.id, d.storage_key, d.original_name, d.scan_status, d.upload_status,
+                SELECT d.id, d.storage_key, d.original_name, d.upload_status,
                        dt.code AS tipo
                 FROM shipment_documents sd
                 JOIN documents d ON d.id = sd.document_id
@@ -643,7 +627,7 @@ async def paquete_de_documentos(
         usados: set[str] = set()
 
         for fila in filas:
-            if fila.scan_status != ScanStatus.CLEAN or fila.upload_status != UploadStatus.READY:
+            if fila.upload_status != UploadStatus.READY:
                 omitidos.append(f"{fila.original_name}: {_motivo_omision(fila)}")
                 continue
 
@@ -658,18 +642,13 @@ async def paquete_de_documentos(
                 "DOCUMENTOS-NO-INCLUIDOS.txt",
                 "Estos documentos existen pero no se pudieron incluir:\n\n"
                 + "\n".join(f"- {linea}" for linea in omitidos)
-                + "\n\nUn archivo no verificado no se entrega. Consulte el "
-                "expediente en el sistema para ver su estado.\n",
+                + "\n\nConsulte el expediente en el sistema para ver su estado.\n",
             )
 
     return f"{carga}-documentos.zip", buffer.getvalue()
 
 
 def _motivo_omision(fila: Any) -> str:
-    if fila.scan_status == ScanStatus.INFECTED:
-        return "el antivirus detectó una amenaza"
-    if fila.scan_status == ScanStatus.PENDING:
-        return "todavía se está revisando"
     if fila.upload_status != UploadStatus.READY:
         return "la subida no se completó"
     return "no está disponible"
@@ -702,7 +681,6 @@ class DocumentoDeDespacho:
     media_type: str
     size_bytes: int
     upload_status: str
-    scan_status: str
     created_at: datetime
 
 
@@ -750,7 +728,7 @@ async def documentos_de_despacho(
         await session.execute(
             text("""
                 SELECT d.id, dt.code, dt.label, d.original_name, d.media_type,
-                       d.size_bytes, d.upload_status, d.scan_status, d.created_at
+                       d.size_bytes, d.upload_status, d.created_at
                 FROM dispatch_documents dd
                 JOIN documents d ON d.id = dd.document_id
                 JOIN document_types dt ON dt.id = dd.document_type_id
@@ -770,7 +748,6 @@ async def documentos_de_despacho(
             media_type=f.media_type,
             size_bytes=f.size_bytes,
             upload_status=f.upload_status,
-            scan_status=f.scan_status,
             created_at=f.created_at,
         )
         for f in filas
@@ -853,7 +830,7 @@ async def paquete_de_bls(
     filas = (
         await session.execute(
             text("""
-                SELECT d.storage_key, d.original_name, d.scan_status, d.upload_status
+                SELECT d.storage_key, d.original_name, d.upload_status
                 FROM dispatch_documents dd
                 JOIN documents d ON d.id = dd.document_id
                 JOIN document_types dt ON dt.id = dd.document_type_id
@@ -874,7 +851,7 @@ async def paquete_de_bls(
 
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as paquete:
         for fila in filas:
-            if fila.scan_status != ScanStatus.CLEAN or fila.upload_status != UploadStatus.READY:
+            if fila.upload_status != UploadStatus.READY:
                 omitidos.append(f"{fila.original_name}: {_motivo_omision(fila)}")
                 continue
             contenido = await s3.leer_completo(fila.storage_key)

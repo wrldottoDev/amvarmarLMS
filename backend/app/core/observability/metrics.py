@@ -55,11 +55,6 @@ upload_rechazado_total = Counter(
     registry=REGISTRO,
 )
 
-documento_infectado_total = Counter(
-    "amvarmar_documento_infectado_total",
-    "Documentos que el antivirus marcó como infectados.",
-    registry=REGISTRO,
-)
 
 # --- Outbox y notificaciones ---
 
@@ -105,9 +100,9 @@ notificacion_fallida = Gauge(
     registry=REGISTRO,
 )
 
-documento_sin_escanear = Gauge(
-    "amvarmar_documento_sin_escanear",
-    "Documentos subidos que siguen esperando el antivirus.",
+documento_subida_incompleta = Gauge(
+    "amvarmar_documento_subida_incompleta",
+    "Documentos cuya subida quedó a medias y no son descargables.",
     registry=REGISTRO,
 )
 
@@ -133,7 +128,7 @@ _CONSULTA = """
         (SELECT count(*) FROM notification_deliveries
           WHERE status = 'FAILED' AND channel = 'EMAIL')              AS correos_fallidos,
         (SELECT count(*) FROM documents
-          WHERE scan_status = 'PENDING' AND deleted_at IS NULL)       AS sin_escanear
+          WHERE upload_status <> 'READY' AND deleted_at IS NULL)      AS subidas_a_medias
 """
 
 
@@ -170,7 +165,7 @@ async def refrescar_indicadores(*, forzar: bool = False, engine: AsyncEngine | N
     outbox_agotado.set(fila.agotados)
     outbox_antiguedad_segundos.set(float(fila.antiguedad))
     notificacion_fallida.labels(canal="EMAIL").set(fila.correos_fallidos)
-    documento_sin_escanear.set(fila.sin_escanear)
+    documento_subida_incompleta.set(fila.subidas_a_medias)
     _ultimo_refresco = ahora
 
 

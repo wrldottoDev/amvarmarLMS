@@ -295,25 +295,8 @@ class TestFlujoCompleto:
         cuerpo = completar.json()
         assert cuerpo["media_type"] == "application/pdf"
         assert cuerpo["size_bytes"] == len(contenido)
-        # Todavía no descargable: falta el antivirus (Paso 3.2).
-        assert cuerpo["upload_status"] == "PROCESSING"
-        assert cuerpo["scan_status"] == "PENDING"
-
-        sin_escanear = await cliente.get(
-            f"/api/v1/documents/{presign['document_id']}/download", headers=cabeceras
-        )
-        assert sin_escanear.status_code == 409
-        assert sin_escanear.json()["error"]["code"] == "DOCUMENTO_NO_DISPONIBLE"
-
-        # Simular que el antivirus lo aprobó.
-        await db_directa.execute(
-            text("""
-                UPDATE documents SET scan_status = 'CLEAN', upload_status = 'READY'
-                WHERE id = :id
-            """),
-            {"id": uuid.UUID(presign["document_id"])},
-        )
-        await db_directa.commit()
+        # Descargable apenas termina la subida: el antivirus se retiró.
+        assert cuerpo["upload_status"] == "READY"
 
         descarga = await cliente.get(
             f"/api/v1/documents/{presign['document_id']}/download", headers=cabeceras
@@ -615,8 +598,7 @@ class TestDescargaMasiva:
     """El "descargar todos" del sistema viejo.
 
     ADR-0009 prohibió los ZIP en la SUBIDA, no en la descarga: uno que entra
-    puede esconder cualquier cosa y el antivirus no lo abre; uno que sale lo
-    armamos nosotros con archivos que ya escaneamos.
+    puede esconder cualquier cosa; uno que sale lo armamos nosotros.
     """
 
     async def _documento_listo(
@@ -642,7 +624,7 @@ class TestDescargaMasiva:
         # El antivirus corre aparte; acá se simula su veredicto.
         await db_directa.execute(
             text("""
-                UPDATE documents SET scan_status = 'CLEAN', upload_status = 'READY'
+                UPDATE documents SET upload_status = 'READY'
                 WHERE id = :id
             """),
             {"id": uuid.UUID(presign["document_id"])},
@@ -675,10 +657,10 @@ class TestDescargaMasiva:
             # tenga que adivinar qué es cada archivo.
             assert all(n.startswith("COMMERCIAL_INVOICE/") for n in nombres)
 
-    async def test_no_incluye_lo_que_no_esta_escaneado(
+    async def test_no_incluye_lo_que_quedo_a_medio_subir(
         self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
     ) -> None:
-        """Es exactamente lo que el escaneo existe para impedir.
+        """Un archivo truncado dentro del ZIP es peor que su ausencia.
 
         Y la ausencia se anota dentro del propio ZIP: omitirlo en silencio haría
         creer que la carga no tenía ese documento.
@@ -687,10 +669,10 @@ class TestDescargaMasiva:
         import zipfile
 
         limpio = await self._documento_listo(cliente, entorno, db_directa, "bueno.pdf")
-        infectado = await self._documento_listo(cliente, entorno, db_directa, "malo.pdf")
+        incompleto = await self._documento_listo(cliente, entorno, db_directa, "malo.pdf")
         await db_directa.execute(
-            text("UPDATE documents SET scan_status = 'INFECTED' WHERE id = :id"),
-            {"id": uuid.UUID(infectado)},
+            text("UPDATE documents SET upload_status = 'UPLOADING' WHERE id = :id"),
+            {"id": uuid.UUID(incompleto)},
         )
         await db_directa.commit()
         cabeceras = await _autenticar(cliente, entorno["email"])
@@ -706,7 +688,7 @@ class TestDescargaMasiva:
 
             aviso = paquete.read("DOCUMENTOS-NO-INCLUIDOS.txt").decode()
             assert "malo.pdf" in aviso
-            assert "amenaza" in aviso
+            assert "subida no se completó" in aviso
         assert limpio
 
     async def test_dos_archivos_con_el_mismo_nombre_no_se_pisan(
@@ -838,7 +820,7 @@ class TestDocumentosDeDespacho:
             )
             await db_directa.execute(
                 text("""
-                    UPDATE documents SET scan_status='CLEAN', upload_status='READY'
+                    UPDATE documents SET upload_status='READY'
                     WHERE id = :id
                 """),
                 {"id": uuid.UUID(presign["document_id"])},

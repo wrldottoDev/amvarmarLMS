@@ -126,10 +126,6 @@ script termina con código 1 si queda alguna, así que sirve en un pipeline.
 
 Dos cosas que hace a propósito:
 
-- **No marca nada como limpio.** Los archivos quedan pendientes de antivirus y
-  por lo tanto no descargables (Paso 3.2). Darlos por buenos porque vienen del
-  sistema viejo sería confiar en que ahí nunca entró nada malo. El worker de
-  escaneo los va tomando por lotes.
 - **No borra el original.** El servidor viejo sigue siendo la copia de
   referencia hasta que el cutover termine.
 

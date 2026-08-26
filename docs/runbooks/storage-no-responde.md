@@ -1,22 +1,20 @@
-# El storage no responde / escaneos atascados
+# El storage no responde
 
-**Alerta:** `EscaneoAtascado`
+**Alerta:** `StorageNoResponde`
 
 ## Qué significa
 
-Hay documentos subidos esperando el antivirus. Como el sistema es **fail
-closed**, un documento sin escanear no se puede descargar: además de la cola,
-hay clientes que no pueden ver sus archivos.
+MinIO/S3 no devuelve los objetos. Los efectos se ven en dos lados: las subidas
+quedan a medias —el documento existe en la base pero el objeto no— y las
+descargas fallan aunque el documento figure como disponible.
 
-Dos causas posibles y se distinguen rápido: o ClamAV está caído, o el storage no
-devuelve los bytes que hay que escanear.
+El antivirus ya no participa: se retiró por decisión de AMVARMAR (ver la
+enmienda de ADR-0009), así que un documento es descargable en cuanto termina de
+subirse.
 
 ## Diagnóstico
 
 ```bash
-# ¿ClamAV responde? Debe contestar PONG.
-echo "PING" | nc "$CLAMAV_HOST" 3310
-
 # ¿El storage responde?
 curl -fsS "$S3_ENDPOINT_URL/minio/health/live"
 
@@ -25,29 +23,31 @@ celery -A app.workers.app.celery_app inspect active
 ```
 
 ```sql
--- Cuántos y desde cuándo
-SELECT scan_status, count(*), min(created_at) AS mas_viejo
+-- Subidas que quedaron a medias, y desde cuándo
+SELECT upload_status, count(*), min(created_at) AS mas_viejo
 FROM documents WHERE deleted_at IS NULL GROUP BY 1;
 ```
 
+Una cifra alta y creciente en `UPLOADING` es la señal: el cliente pidió la URL
+firmada, subió el archivo y el paso de cierre no pudo leer los bytes.
+
 ## Qué hacer
 
-**ClamAV caído** — levantarlo y esperar. Cargar la base de firmas toma cerca de
-un minuto; el health check (`clamdcheck.sh`) comprueba que ya cargó, no solo que
-el proceso exista. Los documentos pendientes se escanean solos en la siguiente
-pasada, sin reencolar nada a mano.
+**Storage caído** — levantarlo. No hace falta reencolar nada: los documentos en
+`UPLOADING` se cierran cuando el cliente reintenta la subida.
 
-**Storage caído** — resolverlo primero. El worker deja los documentos pendientes
-y reintenta; no marca nada como limpio.
+**Storage vivo pero las subidas siguen fallando** — mirar los logs del backend
+buscando `documento_ilegible`. Un objeto concreto que falla siempre puede estar
+corrupto en el bucket; el registro tiene su `storage_key`.
 
-**Los dos vivos pero la cola no baja** — mirar los logs del worker buscando
-`escaner_no_disponible` y `documento_ilegible`. Un documento concreto que falla
-siempre puede estar corrupto en el bucket.
+**Documentos viejos en `UPLOADING`** — son subidas que el cliente abandonó a
+mitad de camino. Se pueden pedir de nuevo desde el expediente; no se arreglan
+solas.
 
 ## Qué NO hacer
 
-- **Nunca marcar documentos como `CLEAN` a mano para vaciar la cola.** Es
-  exactamente lo que el diseño fail closed impide. Un archivo no verificado que
-  se marca limpio queda descargable para todos los clientes de esa empresa.
+- **Nunca marcar documentos como `READY` a mano para vaciar la cola.** Un
+  documento `READY` cuyo objeto no está completo se descarga truncado, que es
+  peor que no descargarse: parece un archivo válido y no lo es.
 - **No borrar los documentos pendientes.** Son archivos que un cliente subió y
   espera encontrar.

@@ -74,28 +74,14 @@ class DocumentType(Base, TimestampMixin):
 class UploadStatus(StrEnum):
     """Estado técnico del pipeline de subida (ADR-0009).
 
-    Distinto de `scan_status` (seguridad) y del estado del requisito que el
-    documento satisface (negocio, en `shipment_requirements`). Son tres ejes:
-    un archivo puede estar `READY` y `CLEAN` y aun así tener su requisito en
-    `REJECTED` porque Operaciones no lo aceptó.
+    Distinto del estado del requisito que el documento satisface (negocio, en
+    `shipment_requirements`): un archivo puede estar `READY` y aun así tener su
+    requisito en `REJECTED` porque Operaciones no lo aceptó.
     """
 
     UPLOADING = "UPLOADING"
     PROCESSING = "PROCESSING"
     READY = "READY"
-    FAILED = "FAILED"
-
-
-class ScanStatus(StrEnum):
-    """Resultado del antivirus (Paso 3.2).
-
-    `CLEAN` es lo único que habilita la descarga. `PENDING` no se descarga:
-    fail closed — si el scanner está caído, el documento espera, no pasa.
-    """
-
-    PENDING = "PENDING"
-    CLEAN = "CLEAN"
-    INFECTED = "INFECTED"
     FAILED = "FAILED"
 
 
@@ -127,8 +113,6 @@ class Document(Base):
     sha256: Mapped[str] = mapped_column(String(64))
 
     upload_status: Mapped[str] = mapped_column(String(20))
-    scan_status: Mapped[str] = mapped_column(String(20))
-    scanned_at: Mapped[datetime | None]
 
     # ADR-0007: los archivos NO se eliminan. A los 6 meses se recomprimen y se
     # archivan; estas columnas dejan trazabilidad de cuánto se redujo.
@@ -147,10 +131,6 @@ class Document(Base):
         CheckConstraint(
             "upload_status IN ('UPLOADING', 'PROCESSING', 'READY', 'FAILED')",
             name="upload_status_valido",
-        ),
-        CheckConstraint(
-            "scan_status IN ('PENDING', 'CLEAN', 'INFECTED', 'FAILED')",
-            name="scan_status_valido",
         ),
         CheckConstraint("size_bytes > 0", name="archivo_no_vacio"),
         CheckConstraint("length(sha256) = 64", name="sha256_completo"),

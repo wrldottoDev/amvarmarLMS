@@ -23,8 +23,8 @@ Las piezas principales son:
 - **API:** FastAPI asíncrono. Es la autoridad de autenticación, permisos y reglas de negocio.
 - **Persistencia:** PostgreSQL con SQLAlchemy y migraciones Alembic.
 - **Coordinación:** Redis para caché de permisos, rate limiting y broker de Celery.
-- **Archivos:** MinIO/S3 privado, URLs firmadas y ClamAV.
-- **Trabajo asíncrono:** Celery procesa antivirus y transactional outbox.
+- **Archivos:** MinIO/S3 privado con URLs firmadas que vencen.
+- **Trabajo asíncrono:** Celery procesa el transactional outbox.
 - **Notificaciones:** bandeja in-app y correo mediante SMTP/Mailpit.
 - **Operación:** Prometheus, Alertmanager, Grafana, respaldos y ensayos de restauración.
 
@@ -42,7 +42,6 @@ flowchart LR
     O --> W[Worker Celery]
     W --> M[Correo y bandeja]
     S --> X[MinIO / S3]
-    W --> V[ClamAV]
     R --> D[(Redis)]
 ```
 
@@ -118,12 +117,13 @@ un requisito documental abierto sin que el requisito reemplace su estado.
 ### Documentos
 
 - `document_types`: catálogo y formatos aceptados por tipo.
-- `documents`: metadata del objeto privado y estados de subida/antivirus.
+- `documents`: metadata del objeto privado y estado de la subida.
 - `shipment_documents`: relación muchos-a-muchos entre carga y archivo.
 - `system_settings`: límites configurables, entre otros ajustes.
 
-Un documento atraviesa `UPLOADING -> PROCESSING -> READY`. Por separado, el antivirus atraviesa
-`PENDING -> CLEAN|INFECTED|FAILED`; y el requisito documental tiene su propio estado de negocio.
+Un documento atraviesa `UPLOADING -> READY`. El requisito documental que ese archivo satisface tiene
+su propio estado de negocio, que es otro eje: un documento puede estar `READY` y su requisito `REJECTED`
+porque Operaciones no lo aceptó.
 
 ### Despachos
 
@@ -171,9 +171,8 @@ misma transacción.
 
 1. `presign` reserva metadata y devuelve una URL S3 firmada.
 2. El navegador sube el archivo directamente a MinIO/S3.
-3. `complete` valida objeto, bytes, MIME, tamaño y SHA-256.
-4. El worker de antivirus lee el objeto y consulta ClamAV.
-5. Solo `READY + CLEAN` permite solicitar una URL firmada de descarga.
+3. `complete` valida objeto, bytes, MIME, tamaño y SHA-256, y lo deja `READY`.
+4. Solo un documento `READY` permite solicitar una URL firmada de descarga.
 
 ### Despacho
 
@@ -222,7 +221,7 @@ Cada archivo de `docs/adr/` congela una decisión que prevalece sobre la arquite
 | `0006-definicion-delivered.md` | Evidencia exigida para DELIVERED. |
 | `0007-retencion.md` | Retención, archivado y legal hold. |
 | `0008-canales-notificacion.md` | Eventos y canales obligatorios. |
-| `0009-limites-archivo.md` | Tamaños, formatos, ZIP y antivirus. |
+| `0009-limites-archivo.md` | Tamaños, formatos y ZIP. Su enmienda retira el antivirus. |
 | `0010-app-movil.md` | Apps nativas posteriores al cutover. |
 | `0011-modelo-identidad.md` | Membership para clientes y roles globales para staff. |
 | `0012-asistente-virtual.md` | AMVI, herramientas y confirmación de escrituras. |
@@ -330,18 +329,16 @@ No existen aún páginas frontend para esta API administrativa.
 | `modules/shipments/router.py` | Contrato HTTP para CRUD, transiciones, requisitos y lecturas. |
 | `modules/shipments/dashboard_router.py` | Dashboards cliente/operaciones reutilizando `queries.py`. |
 
-### Documentos y antivirus
+### Documentos
 
 | Archivo | Función y relaciones |
 | --- | --- |
 | `modules/documents/models.py` | Tipos, documentos, vínculos y system settings. |
-| `modules/documents/catalog.py` | Seis tipos aprobados, formatos y estado antes del cual son obligatorios. |
+| `modules/documents/catalog.py` | Siete tipos aprobados, formatos y estado antes del cual son obligatorios. |
 | `modules/documents/validation.py` | Sanea nombres y valida extensión, MIME real y tamaño. |
 | `modules/documents/service.py` | Presign/complete/download y expediente documental. |
 | `modules/documents/router.py` | Autoriza empresa y expone las operaciones documentales. |
 | `infrastructure/storage/s3.py` | Cliente boto3, bucket privado y URLs firmadas. |
-| `infrastructure/antivirus/clamav.py` | Protocolo INSTREAM contra clamd y veredictos fail-closed. |
-| `workers/tasks/scan.py` | Escanea lotes pendientes, marca CLEAN/INFECTED y audita. |
 
 ### Despachos
 
@@ -495,7 +492,7 @@ Los `__init__.py` están vacíos salvo el de security; marcan paquetes Python y 
 
 | Archivo | Función |
 | --- | --- |
-| `infra/docker/docker-compose.yml` | PostgreSQL nuevo, Redis, MinIO, ClamAV, Mailpit; perfiles legacy y observabilidad. |
+| `infra/docker/docker-compose.yml` | PostgreSQL nuevo, Redis, MinIO, Mailpit; perfiles legacy y observabilidad. |
 | `infra/backup/respaldar.sh` | pg_dump custom, SHA-256, retención y métricas Pushgateway. |
 | `infra/backup/ensayar_restauracion.sh` | Restaura el último dump, compara tablas y mide RTO. |
 | `infra/backup/traer_legacy.sh` | Copia por SSH y restaura el sistema viejo en una base separada. |
@@ -539,7 +536,6 @@ propias de PostgreSQL.
 | `security/test_auth_sessions.py` | Rotación, revocación, reuse y carreras. |
 | `security/test_auditoria.py` | Redacción e idempotencia. |
 | `security/test_documentos_upload.py` | MIME, nombres hostiles, límites y acceso privado. |
-| `security/test_antivirus.py` | Protocolo ClamAV, cuarentena y fail-closed. |
 | `security/test_copilot_tools.py` | Herramientas filtradas por permisos. |
 | `migration/test_correcciones_legacy.py` | Diagnóstico, correcciones, idempotencia y reversión. |
 | `migration/legacy_schema.sql` | Esquema mínimo Django usado en esas pruebas. |
@@ -590,5 +586,5 @@ Estos puntos describen el árbol leído; no se corrigieron como parte de esta gu
 - Nuevo permiso: ADR-0004 + `rbac/catalog.py` + seed + matriz de pruebas.
 - Nuevo estado de carga: ADR-0001 + `shipments/catalog.py` + seed + pruebas.
 - Efecto externo: outbox + handler idempotente; nunca correo directo desde el modelo.
-- Archivo: acceso privado S3, validación de bytes y antivirus antes de descarga.
+- Archivo: acceso privado S3, validación del tipo real por los bytes y URLs firmadas que vencen.
 

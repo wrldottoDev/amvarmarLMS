@@ -38,16 +38,17 @@ export const estadoRequisito: Record<
 };
 
 /**
- * El antivirus corre después de subir (Paso 3.2), así que un documento recién
- * subido no se puede descargar todavía. Decirlo evita que parezca un error.
+ * Por qué un documento todavía no se puede abrir.
+ *
+ * Solo queda el estado de la subida: el antivirus se retiró por decisión de
+ * AMVARMAR y un documento es descargable en cuanto terminó de subirse.
  */
-export const estadoEscaneo: Record<string, string> = {
-  PENDING: "Revisando el archivo…",
-  CLEAN: "",
-  INFECTED: "El archivo tiene un problema de seguridad y no se puede abrir.",
-  FAILED: "No se pudo revisar el archivo.",
+export const estadoSubida: Record<string, string> = {
+  UPLOADING: "Subiendo el archivo…",
+  READY: "",
+  FAILED: "La subida no se completó. Volvé a cargar el archivo.",
 };
 
-export function sePuedeDescargar(escaneo: string, subida: string) {
-  return escaneo === "CLEAN" && subida === "READY";
+export function sePuedeDescargar(subida: string) {
+  return subida === "READY";
 }

@@ -163,3 +163,31 @@ el archivo).
 - Checklist de infraestructura de Paso 3.1 gana un ítem explícito: cifrado en reposo del bucket (SSE-S3/KMS).
 - Whitelist de extensiones (macros excluidas) reemplaza cualquier intento de detección de macros por contenido
   — más barato y más confiable.
+
+## Enmienda — se retira el antivirus (2026-08-25)
+
+**Aprobado por:** AMVARMAR (decisión de negocio).
+
+Este ADR describía un pipeline de dos ejes: `upload_status` para el proceso
+técnico y `scan_status` para el veredicto del antivirus, con la regla de que
+solo un documento `CLEAN` era descargable (fail closed).
+
+AMVARMAR decidió no usar antivirus sobre los documentos. **El eje `scan_status`
+se retira entero**, no se deja apagado: una columna que nadie consulta parece
+protección y no la es, y quien leyera el código después creería que los archivos
+se revisan.
+
+**Qué queda:** `upload_status`. Un documento es descargable cuando terminó de
+subirse (`READY`). El resto de este ADR sigue vigente — límites de tamaño,
+formatos permitidos, la prohibición de ZIP en la subida y la verificación del
+tipo real por los bytes, no por la extensión.
+
+**Qué se pierde.** Un archivo subido desde una cuenta de cliente comprometida
+llega intacto a quien lo descargue. Las defensas que siguen en pie son la
+verificación de tipo por contenido, el límite de tamaño, las URL firmadas que
+vencen y el aislamiento por empresa; ninguna de ellas mira lo que el archivo
+hace al abrirse.
+
+El sistema anterior tampoco tenía antivirus, así que esto no es un retroceso
+respecto de lo que hay hoy en producción.
+

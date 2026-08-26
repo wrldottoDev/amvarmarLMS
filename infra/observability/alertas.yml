@@ -119,24 +119,18 @@ groups:
           resumen: "Tasa alta de logins fallidos: posible fuerza bruta"
           runbook: "docs/runbooks/fallos-de-login.md"
 
-      - alert: DocumentoInfectado
-        expr: increase(amvarmar_documento_infectado_total[1h]) > 0
-        for: 1m
-        labels:
-          severidad: critica
-        annotations:
-          resumen: "El antivirus detectó un documento infectado"
-          runbook: "docs/runbooks/documento-infectado.md"
-
-      - alert: EscaneoAtascado
-        # Fail closed: un documento sin escanear no es descargable, así que
-        # esto además significa clientes que no pueden ver sus archivos.
-        expr: amvarmar_documento_sin_escanear > 50
+  - name: documentos
+    rules:
+      - alert: SubidasAtascadas
+        # Una subida a medias es un documento que el cliente cree haber
+        # entregado y que nadie puede abrir. Unas pocas son normales —alguien
+        # cerró la pestaña—; una pila creciente es el storage.
+        expr: amvarmar_documento_subida_incompleta > 50
         for: 15m
         labels:
           severidad: aviso
         annotations:
-          resumen: "Documentos acumulados esperando el antivirus"
+          resumen: "Documentos con la subida sin completar"
           runbook: "docs/runbooks/storage-no-responde.md"
 
   - name: respaldos

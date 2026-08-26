@@ -57,9 +57,9 @@ async def documento_legacy(db_directa: AsyncSession, storage_de_prueba: str, tmp
                 INSERT INTO documents
                     (company_id, uploaded_by, storage_provider, storage_key,
                      original_name, safe_name, media_type, size_bytes, sha256,
-                     upload_status, scan_status)
+                     upload_status)
                 VALUES (:c, :u, 'legacy', :ruta, 'factura.pdf', 'factura.pdf',
-                        'application/octet-stream', :tam, :hash, 'UPLOADING', 'PENDING')
+                        'application/octet-stream', :tam, :hash, 'UPLOADING')
                 RETURNING id
             """),
             {
@@ -103,7 +103,7 @@ class TestSubida:
             await db_directa.execute(
                 text("""
                     SELECT storage_provider, storage_key, sha256, size_bytes,
-                           media_type, upload_status, scan_status
+                           media_type, upload_status
                     FROM documents WHERE id = :id
                 """),
                 {"id": documento_legacy["id"]},
@@ -116,23 +116,26 @@ class TestSubida:
         assert fila.size_bytes == len(documento_legacy["contenido"])
         assert fila.media_type == "application/pdf"
 
-    async def test_no_los_marca_como_limpios(
+    async def test_quedan_descargables(
         self, db_directa: AsyncSession, documento_legacy: dict
     ) -> None:
-        """Darlos por buenos porque vienen del sistema viejo sería confiar en
-        que ahí nunca entró nada malo. Quedan pendientes de antivirus, y por lo
-        tanto no descargables (Paso 3.2)."""
+        """Sin antivirus, un archivo migrado se puede abrir apenas se sube.
+
+        Antes quedaban pendientes de escaneo y por lo tanto invisibles. El
+        antivirus se retiró por decisión de AMVARMAR (enmienda de ADR-0009), así
+        que dejarlos sin marcar los volvería inaccesibles para siempre: el
+        worker que los movía ya no existe.
+        """
         await migrate_files.subir(db_directa, media_root=documento_legacy["media"], seco=False)
 
-        fila = (
+        estado = (
             await db_directa.execute(
-                text("SELECT upload_status, scan_status FROM documents WHERE id = :id"),
+                text("SELECT upload_status FROM documents WHERE id = :id"),
                 {"id": documento_legacy["id"]},
             )
-        ).one()
+        ).scalar_one()
 
-        assert fila.scan_status == "PENDING"
-        assert fila.upload_status != "READY"
+        assert estado == "READY"
 
     async def test_el_objeto_existe_de_verdad_en_el_storage(
         self, db_directa: AsyncSession, documento_legacy: dict
@@ -185,10 +188,10 @@ class TestSubida:
                 INSERT INTO documents
                     (company_id, uploaded_by, storage_provider, storage_key,
                      original_name, safe_name, media_type, size_bytes, sha256,
-                     upload_status, scan_status)
+                     upload_status)
                 VALUES (:c, :u, 'legacy', 'warehouse_docs/2026/01/no-existe.pdf',
                         'no-existe.pdf', 'no-existe.pdf', 'application/pdf', 10,
-                        :hash, 'UPLOADING', 'PENDING')
+                        :hash, 'UPLOADING')
             """),
             {"c": documento_legacy["empresa"], "u": documento_legacy["usuario"], "hash": "0" * 64},
         )

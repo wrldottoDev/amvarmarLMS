@@ -49,28 +49,6 @@ services:
       timeout: 3s
       retries: 10
 
-  clamav:
-    # La imagen `clamav` (sin `_base`) ya trae las firmas: `clamav_base` las
-    # descarga al arrancar y tarda varios minutos.
-    image: clamav/clamav:latest
-    # Las imágenes oficiales de ClamAV solo se publican para amd64. En Apple
-    # Silicon corre emulado (más lento); en los servidores amd64 es nativo.
-    platform: linux/amd64
-    restart: unless-stopped
-    ports:
-      - "3310:3310"
-    volumes:
-      - clamav-db:/var/lib/clamav
-    healthcheck:
-      # `clamdcheck` verifica que el demonio ya cargó la base de firmas, no
-      # solo que el proceso exista.
-      test: ["CMD", "clamdcheck.sh"]
-      interval: 30s
-      timeout: 10s
-      # Cargar las firmas en memoria toma cerca de un minuto la primera vez.
-      start_period: 180s
-      retries: 5
-
   # El worker de Celery no se define acá: corre desde el backend con
   # `celery -A app.workers.app.celery_app worker`. Levantarlo en compose
   # obligaría a construir la imagen del backend en cada `up`, que en desarrollo
@@ -168,6 +146,5 @@ volumes:
   pgdata-legacy:
   prometheus-data:
   grafana-data:
-  clamav-db:
   redis-data:
   minio-data:

@@ -64,9 +64,9 @@ jobs:
           JWT_SIGNING_KEY: clave-de-firma-solo-para-ci-no-usar-en-produccion
           REFRESH_FINGERPRINT_KEY: clave-de-fingerprint-solo-para-ci-no-usar
           FCM_TOKEN_ENCRYPTION_KEY: clave-de-cifrado-solo-para-ci-no-usar
-        # Se excluyen los `slow`: son los que corren contra ClamAV real, que
-        # tarda cerca de un minuto en cargar sus firmas. La lógica que cubren
-        # también se prueba con un escáner falso en cada corrida.
+        # Se excluyen los `slow`: levantan contenedores propios (Mailpit, un
+        # PostgreSQL con forma de legacy) y tardan de más para la vuelta rápida.
+        # Corren igual en la suite completa antes de desplegar.
         run: pytest -q -m "not slow" --cov=app --cov-report=term-missing
 
   migraciones:

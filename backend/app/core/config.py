@@ -54,10 +54,7 @@ class Settings(BaseSettings):
     s3_bucket: str = "amvarmar-documentos"
 
     # --- Antivirus (Paso 3.2) ---
-    clamav_host: str = "localhost"
-    clamav_port: int = 3310
     # Un archivo de 250 MB tarda; el timeout es por operación, no por byte.
-    clamav_timeout_seconds: int = 120
 
     # --- Asistente virtual (ADR-0012) ---
     # El identificador del modelo NUNCA se escribe en el código: los proveedores

@@ -10,7 +10,7 @@ import {
   useDocumentosDeDespacho,
   useSubirDocumentoDeDespacho,
 } from "@/features/documentos/consultas";
-import { estadoEscaneo, sePuedeDescargar } from "@/features/documentos/vocabulario";
+import { estadoSubida, sePuedeDescargar } from "@/features/documentos/vocabulario";
 import { useTiposDeDocumento } from "@/features/documentos/tipos";
 import { clases, formatearFecha } from "@/lib/utilidades";
 
@@ -82,7 +82,7 @@ export function DocumentosDespacho({
       {documentos.length > 0 ? (
         <ul className="divide-y overflow-hidden rounded-lg border bg-[var(--superficie)]">
           {documentos.map((documento) => {
-            const descargable = sePuedeDescargar(documento.scan_status, documento.upload_status);
+            const descargable = sePuedeDescargar(documento.upload_status);
             return (
               <li key={documento.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <span className="min-w-0 flex-1">
@@ -106,7 +106,7 @@ export function DocumentosDespacho({
                 ) : (
                   <span className="flex shrink-0 items-center gap-1.5 text-xs text-[var(--texto-secundario)]">
                     <Clock className="size-3.5" aria-hidden="true" />
-                    {estadoEscaneo[documento.scan_status] || "No disponible todavía"}
+                    {estadoSubida[documento.upload_status] || "No disponible todavía"}
                   </span>
                 )}
               </li>

@@ -14,9 +14,6 @@ más probable que raro.
 
 Lo que NO hace:
 
-- **No marca nada como limpio.** Los archivos quedan pendientes de antivirus y
-  por lo tanto no descargables (Paso 3.2, fail closed). Darlos por buenos porque
-  vienen del sistema viejo sería confiar en que ahí nunca entró nada malo.
 - **No borra el original.** El servidor viejo sigue siendo la copia de
   referencia hasta que el cutover termine.
 """
@@ -173,11 +170,7 @@ async def subir(
                     SET storage_provider = 's3', storage_key = :clave,
                         sha256 = :hash, size_bytes = :tamano, media_type = :tipo,
                         safe_name = :seguro,
-                        -- PROCESSING, no READY: el antivirus corre después
-                        -- (Paso 3.2). Darlos por limpios porque vienen del
-                        -- sistema viejo sería confiar en que ahí nunca entró
-                        -- nada malo.
-                        upload_status = 'PROCESSING', scan_status = 'PENDING'
+                        upload_status = 'READY'
                     WHERE id = :id
                 """),
                 {

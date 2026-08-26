@@ -185,7 +185,7 @@ puede entrar y el resto no importa.
 Solo después de que las cinco pasen.
 
 ```bash
-sudo systemctl start amvarmar-worker    # outbox y antivirus
+sudo systemctl start amvarmar-worker    # outbox
 ```
 
 **Verificar:** crear una carga desde la interfaz, moverla de estado, y que

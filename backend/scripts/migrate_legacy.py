@@ -866,9 +866,9 @@ class Migrador:
                         INSERT INTO documents
                             (id, company_id, uploaded_by, storage_provider, storage_key,
                              original_name, safe_name, media_type, size_bytes, sha256,
-                             upload_status, scan_status, created_at)
+                             upload_status, created_at)
                         VALUES (:id, :c, :u, 'legacy', :ruta, :nombre, :nombre,
-                                :tipo, :tam, :hash, 'UPLOADING', 'PENDING', :subido)
+                                :tipo, :tam, :hash, 'UPLOADING', :subido)
                     """),
                     {
                         "id": nuevo,
@@ -1046,9 +1046,9 @@ class Migrador:
                     INSERT INTO documents
                         (id, company_id, uploaded_by, storage_provider, storage_key,
                          original_name, safe_name, media_type, size_bytes, sha256,
-                         upload_status, scan_status, created_at)
+                         upload_status, created_at)
                     VALUES (:id, :c, :u, 'legacy', :ruta, :nombre, :nombre,
-                            :tipo, :tam, :hash, 'UPLOADING', 'PENDING', :subido)
+                            :tipo, :tam, :hash, 'UPLOADING', :subido)
                 """),
                 {
                     "id": nuevo,

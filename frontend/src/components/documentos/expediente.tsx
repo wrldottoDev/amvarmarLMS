@@ -10,7 +10,7 @@ import {
   useSubirDocumento,
 } from "@/features/documentos/consultas";
 import {
-  estadoEscaneo,
+  estadoSubida,
   estadoRequisito,
   sePuedeDescargar,
 } from "@/features/documentos/vocabulario";
@@ -173,8 +173,8 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
           </summary>
           <ul className="divide-y border-t">
             {data.documentos.map((documento) => {
-              const aviso = estadoEscaneo[documento.scan_status] ?? "";
-              const descargable = sePuedeDescargar(documento.scan_status, documento.upload_status);
+              const aviso = estadoSubida[documento.upload_status] ?? "";
+              const descargable = sePuedeDescargar(documento.upload_status);
               return (
                 <li key={documento.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
                   <span className="min-w-0 flex-1">
@@ -199,12 +199,12 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                     <span
                       className={clases(
                         "flex shrink-0 items-center gap-1.5 text-xs",
-                        documento.scan_status === "INFECTED"
+                        documento.upload_status === "FAILED"
                           ? "text-[var(--peligro)]"
                           : "text-[var(--texto-secundario)]",
                       )}
                     >
-                      {documento.scan_status === "INFECTED" ? (
+                      {documento.upload_status === "FAILED" ? (
                         <AlertTriangle className="size-3.5" aria-hidden="true" />
                       ) : (
                         <Clock className="size-3.5" aria-hidden="true" />

@@ -1297,8 +1297,6 @@ export interface components {
             sha256: string;
             /** Upload Status */
             upload_status: string;
-            /** Scan Status */
-            scan_status: string;
         };
         /** ContrasenaTemporalResponse */
         ContrasenaTemporalResponse: {
@@ -1510,8 +1508,6 @@ export interface components {
             size_bytes: number;
             /** Upload Status */
             upload_status: string;
-            /** Scan Status */
-            scan_status: string;
             /**
              * Created At
              * Format: date-time
@@ -1537,8 +1533,6 @@ export interface components {
             size_bytes: number;
             /** Upload Status */
             upload_status: string;
-            /** Scan Status */
-            scan_status: string;
             /**
              * Created At
              * Format: date-time

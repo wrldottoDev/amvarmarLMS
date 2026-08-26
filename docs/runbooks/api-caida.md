@@ -37,5 +37,5 @@ aceptar tráfico a medio configurar. El error del log dice cuál falta.
 ## Qué NO hacer
 
 - **No quitar variables de entorno obligatorias** para que arranque. Arranca sin
-  clave de firma, sin storage o sin antivirus, y cada una de esas ausencias es
+  clave de firma o sin storage, y cada una de esas ausencias es
   un fallo peor que estar caído.

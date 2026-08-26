@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.storage import s3
 from app.modules.documents import service
-from app.modules.documents.models import ScanStatus, UploadStatus
+from app.modules.documents.models import UploadStatus
 from app.modules.documents.validation import (
     ArchivoDemasiadoGrande,
     ArchivoInvalido,
@@ -270,14 +270,11 @@ class TestFlujoEnDosTiempos:
 
         fila = (
             await session.execute(
-                text(
-                    "SELECT upload_status, scan_status, storage_key FROM documents WHERE id = :id"
-                ),
+                text("SELECT upload_status, storage_key FROM documents WHERE id = :id"),
                 {"id": subida.document_id},
             )
         ).one()
         assert fila.upload_status == UploadStatus.UPLOADING
-        assert fila.scan_status == ScanStatus.PENDING
         # La clave lleva la empresa y un sufijo aleatorio: no es adivinable a
         # partir del id del documento.
         assert str(ctx["empresa"]) in fila.storage_key
@@ -358,8 +355,8 @@ class TestFlujoEnDosTiempos:
                 {"id": subida.document_id},
             )
         ).scalar_one()
-        # PROCESSING, no READY: el antivirus corre antes (ADR-0009).
-        assert estado == UploadStatus.PROCESSING
+        # READY apenas termina la subida: el antivirus se retiró (ADR-0009).
+        assert estado == UploadStatus.READY
 
     async def test_un_ejecutable_subido_como_pdf_se_rechaza_y_se_borra(
         self, session: AsyncSession, storage_de_prueba: str
@@ -413,7 +410,7 @@ class TestFlujoEnDosTiempos:
 
 class TestDescarga:
     async def _documento_listo(
-        self, session: AsyncSession, ctx: dict, bucket: str, *, scan: str
+        self, session: AsyncSession, ctx: dict, bucket: str, *, subida_estado: str = "READY"
     ) -> uuid.UUID:
         subida = await service.preparar_subida(
             session,
@@ -426,31 +423,25 @@ class TestDescarga:
         s3._cliente().put_object(Bucket=bucket, Key=subida.storage_key, Body=pdf_real())
         await service.completar(session, document_id=subida.document_id, company_id=ctx["empresa"])
         await session.execute(
-            text("""
-                UPDATE documents SET scan_status = :s, upload_status = 'READY'
-                WHERE id = :id
-            """),
-            {"s": scan, "id": subida.document_id},
+            text("UPDATE documents SET upload_status = :estado WHERE id = :id"),
+            {"estado": subida_estado, "id": subida.document_id},
         )
         return subida.document_id
 
-    async def test_un_documento_pendiente_de_escaneo_no_se_descarga(
+    async def test_un_documento_a_medio_subir_no_se_descarga(
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
-        """Caso 7 del gate. Fail closed: si el escáner no terminó, espera."""
+        """Sin antivirus, el único portero que queda es el estado de la subida.
+
+        Entregar un objeto cuya subida no terminó daría un archivo truncado, o
+        directamente un 404 del storage disfrazado de descarga.
+        """
         ctx = await _entorno(session)
-        doc = await self._documento_listo(session, ctx, storage_de_prueba, scan=ScanStatus.PENDING)
+        doc = await self._documento_listo(
+            session, ctx, storage_de_prueba, subida_estado="UPLOADING"
+        )
 
         with pytest.raises(service.DocumentoNoDisponible):
-            await service.preparar_descarga(session, document_id=doc, company_ids=[ctx["empresa"]])
-
-    async def test_un_documento_infectado_no_se_descarga(
-        self, session: AsyncSession, storage_de_prueba: str
-    ) -> None:
-        ctx = await _entorno(session)
-        doc = await self._documento_listo(session, ctx, storage_de_prueba, scan=ScanStatus.INFECTED)
-
-        with pytest.raises(service.DocumentoEnCuarentena):
             await service.preparar_descarga(session, document_id=doc, company_ids=[ctx["empresa"]])
 
     async def test_un_documento_de_otra_empresa_da_404(
@@ -460,7 +451,7 @@ class TestDescarga:
         from app.core.errors import RecursoNoEncontrado
 
         ctx = await _entorno(session)
-        doc = await self._documento_listo(session, ctx, storage_de_prueba, scan=ScanStatus.CLEAN)
+        doc = await self._documento_listo(session, ctx, storage_de_prueba)
 
         with pytest.raises(RecursoNoEncontrado):
             await service.preparar_descarga(
@@ -471,7 +462,7 @@ class TestDescarga:
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        doc = await self._documento_listo(session, ctx, storage_de_prueba, scan=ScanStatus.CLEAN)
+        doc = await self._documento_listo(session, ctx, storage_de_prueba)
 
         descarga = await service.preparar_descarga(
             session, document_id=doc, company_ids=[ctx["empresa"]]
@@ -486,7 +477,7 @@ class TestDescarga:
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        doc = await self._documento_listo(session, ctx, storage_de_prueba, scan=ScanStatus.CLEAN)
+        doc = await self._documento_listo(session, ctx, storage_de_prueba)
 
         # `None` = alcance global.
         descarga = await service.preparar_descarga(session, document_id=doc, company_ids=None)
@@ -546,7 +537,7 @@ class TestBucketPrivado:
         await service.completar(session, document_id=subida.document_id, company_id=ctx["empresa"])
         await session.execute(
             text("""
-                UPDATE documents SET scan_status = 'CLEAN', upload_status = 'READY'
+                UPDATE documents SET upload_status = 'READY'
                 WHERE id = :id
             """),
             {"id": subida.document_id},
