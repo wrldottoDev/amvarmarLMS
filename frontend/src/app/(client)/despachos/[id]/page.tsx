@@ -4,6 +4,7 @@ import { ArrowLeft, Ban, Check, PackageCheck, Truck, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { DocumentosDespacho } from "@/components/despachos/documentos-despacho";
 import { InsigniaDespacho } from "@/components/despachos/insignia-despacho";
 import { PasosDespacho } from "@/components/despachos/pasos-despacho";
 import { AvisoError } from "@/components/ui/aviso-error";
@@ -135,6 +136,8 @@ export default function PaginaDetalleDespacho() {
           </Boton>
         </div>
       ) : null}
+
+      <DocumentosDespacho dispatchId={id} esCliente={esCliente} />
 
       <dl className="grid gap-px overflow-hidden rounded-md border bg-[#e4eaec] sm:grid-cols-2">
         {[

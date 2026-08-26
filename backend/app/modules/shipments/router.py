@@ -25,6 +25,7 @@ from app.modules.shipments.models import (
     RequirementType,
     ShipmentStatus,
 )
+from app.modules.users import columnas
 
 router = APIRouter(prefix="/api/v1/shipments", tags=["shipments"])
 
@@ -100,10 +101,23 @@ class CrearCargaRequest(BaseModel):
     transport_mode: str | None = Field(default=None, max_length=20)
     estimated_arrival_at: datetime | None = None
     weight_kg: Decimal | None = Field(default=None, ge=0)
+    weight_lb: Decimal | None = Field(default=None, ge=0)
     volumetric_weight_kg: Decimal | None = Field(default=None, ge=0)
     volume_m3: Decimal | None = Field(default=None, ge=0)
+    foots_cft: Decimal | None = Field(default=None, ge=0)
+    shipper: str | None = Field(default=None, max_length=180)
+    carrier: str | None = Field(default=None, max_length=180)
     permit_review_required: bool = False
     assigned_to: UUID | None = None
+
+    # Identificadores comerciales. La factura es obligatoria cuando el origen no
+    # emite Warehouse Receipt: el servicio lo comprueba y responde 422 con el
+    # motivo, en vez de dejar una carga que solo se puede buscar por su número
+    # interno.
+    invoice: str | None = Field(default=None, max_length=120)
+    tracking: str | None = Field(default=None, max_length=120)
+    po: str | None = Field(default=None, max_length=120)
+    container: str | None = Field(default=None, max_length=120)
 
 
 class CargaCreadaResponse(BaseModel):
@@ -130,8 +144,12 @@ class ActualizarCargaRequest(BaseModel):
     transport_mode: str | None = Field(default=None, max_length=20)
     estimated_arrival_at: datetime | None = None
     weight_kg: Decimal | None = Field(default=None, ge=0)
+    weight_lb: Decimal | None = Field(default=None, ge=0)
     volumetric_weight_kg: Decimal | None = Field(default=None, ge=0)
     volume_m3: Decimal | None = None
+    foots_cft: Decimal | None = Field(default=None, ge=0)
+    shipper: str | None = Field(default=None, max_length=180)
+    carrier: str | None = Field(default=None, max_length=180)
     permit_review_required: bool | None = None
     assigned_to: UUID | None = None
 
@@ -210,10 +228,18 @@ async def crear_carga(
                 transport_mode=datos.transport_mode,
                 estimated_arrival_at=datos.estimated_arrival_at,
                 weight_kg=datos.weight_kg,
+                weight_lb=datos.weight_lb,
                 volumetric_weight_kg=datos.volumetric_weight_kg,
                 volume_m3=datos.volume_m3,
+                foots_cft=datos.foots_cft,
+                shipper=datos.shipper,
+                carrier=datos.carrier,
                 permit_review_required=datos.permit_review_required,
                 assigned_to=datos.assigned_to,
+                invoice=datos.invoice,
+                tracking=datos.tracking,
+                po=datos.po,
+                container=datos.container,
             ),
             actor_user_id=actor.user_id,
             permisos=permisos,
@@ -278,6 +304,197 @@ async def actualizar_carga(
     await db.commit()
 
     return CargaActualizadaResponse(id=shipment_id, row_version=nueva_version)
+
+
+class CargaEnRevisionResponse(BaseModel):
+    id: UUID
+    shipment_number: str
+    company_name: str
+    current_status_code: str
+    legacy_status: str | None
+    motivo: str | None
+    created_at: datetime
+
+
+class ResolverRevisionRequest(BaseModel):
+    # Obligatoria: una marca quitada sin explicación no se puede auditar.
+    nota: str = Field(min_length=3, max_length=2000)
+
+
+@router.get("/revision-legacy", response_model=list[CargaEnRevisionResponse])
+async def listar_en_revision(
+    actor: ActorDep, db: SesionDb, redis: RedisDep, limit: Annotated[int, Query(le=200)] = 100
+) -> list[CargaEnRevisionResponse]:
+    """Cargas que la migración no supo traducir con certeza (ADR-0002)."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    try:
+        cargas = await gestion.listar_en_revision(db, permisos=permisos, limite=limit)
+    except service.SinPermisoParaTransicion as error:
+        raise SinPermiso("No tiene permiso para revisar cargas migradas.") from error
+
+    return [CargaEnRevisionResponse(**vars(c)) for c in cargas]
+
+
+@router.post("/{shipment_id}/revision-legacy/resolver", status_code=status.HTTP_204_NO_CONTENT)
+async def resolver_revision(
+    shipment_id: UUID,
+    datos: ResolverRevisionRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> None:
+    """Quita la marca de revisión. NO cambia el estado.
+
+    Si además hay que corregir el estado, eso va por una transición: valida el
+    catálogo, exige permiso y deja su propio evento.
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    try:
+        await gestion.resolver_revision(
+            db,
+            shipment_id=shipment_id,
+            nota=datos.nota,
+            actor_user_id=actor.user_id,
+            permisos=permisos,
+        )
+    except service.SinPermisoParaTransicion as error:
+        raise RecursoNoEncontrado("Carga no encontrada.") from error
+
+    await registrar(
+        db,
+        action="shipment.legacy_review.resolved",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor.user_id,
+        reason=datos.nota,
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+
+class ColumnaResponse(BaseModel):
+    clave: str
+    etiqueta: str
+    fija: bool
+
+
+class PreferenciaColumnasResponse(BaseModel):
+    disponibles: list[ColumnaResponse]
+    visibles: list[str]
+
+
+class GuardarColumnasRequest(BaseModel):
+    visibles: list[str]
+
+
+@router.get("/preferencias/columnas", response_model=PreferenciaColumnasResponse)
+async def obtener_columnas(actor: ActorDep, db: SesionDb) -> PreferenciaColumnasResponse:
+    """Qué columnas ve esta persona en el listado de cargas.
+
+    Con trece columnas posibles no es un lujo: quien factura mira CFTS y peso,
+    quien rastrea mira tracking y WR, y obligar a los dos a la misma vista hace
+    que ninguno la tenga cómoda.
+    """
+    return PreferenciaColumnasResponse(
+        disponibles=[
+            ColumnaResponse(clave=c.clave, etiqueta=c.etiqueta, fija=c.fija)
+            for c in columnas.COLUMNAS_CARGAS
+        ],
+        visibles=await columnas.obtener(db, user_id=actor.user_id, vista="shipments"),
+    )
+
+
+@router.put("/preferencias/columnas", response_model=PreferenciaColumnasResponse)
+async def guardar_columnas(
+    datos: GuardarColumnasRequest, actor: ActorDep, db: SesionDb
+) -> PreferenciaColumnasResponse:
+    visibles = await columnas.guardar(
+        db, user_id=actor.user_id, vista="shipments", columnas=datos.visibles
+    )
+    await db.commit()
+    return PreferenciaColumnasResponse(
+        disponibles=[
+            ColumnaResponse(clave=c.clave, etiqueta=c.etiqueta, fija=c.fija)
+            for c in columnas.COLUMNAS_CARGAS
+        ],
+        visibles=visibles,
+    )
+
+
+class OcultarRequest(BaseModel):
+    # Obligatorio: una carga que desaparece sin explicación es indistinguible de
+    # una que se perdió.
+    motivo: str = Field(min_length=3, max_length=2000)
+
+
+@router.post("/{shipment_id}/ocultar", status_code=status.HTTP_204_NO_CONTENT)
+async def ocultar_carga(
+    shipment_id: UUID,
+    datos: OcultarRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> None:
+    """Saca la carga de los listados. Reemplaza al "eliminar" del sistema viejo.
+
+    No borra nada: sus documentos, su línea de tiempo y su auditoría siguen
+    existiendo, y se puede recuperar (ADR-0007).
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    try:
+        await gestion.ocultar(
+            db,
+            shipment_id=shipment_id,
+            motivo=datos.motivo,
+            actor_user_id=actor.user_id,
+            permisos=permisos,
+        )
+    except service.SinPermisoParaTransicion as error:
+        raise RecursoNoEncontrado("Carga no encontrada.") from error
+
+    await registrar(
+        db,
+        action="shipment.hidden",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor.user_id,
+        reason=datos.motivo,
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+
+@router.post("/{shipment_id}/recuperar", status_code=status.HTTP_204_NO_CONTENT)
+async def recuperar_carga(
+    shipment_id: UUID,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> None:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    try:
+        await gestion.recuperar(
+            db, shipment_id=shipment_id, actor_user_id=actor.user_id, permisos=permisos
+        )
+    except service.SinPermisoParaTransicion as error:
+        raise RecursoNoEncontrado("Carga no encontrada.") from error
+
+    await registrar(
+        db,
+        action="shipment.restored",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor.user_id,
+        ip_address=_ip(request),
+    )
+    await db.commit()
 
 
 @router.post("/{shipment_id}/transitions", response_model=TransitionResponse)
@@ -492,6 +709,21 @@ class ShipmentResumenResponse(BaseModel):
     status: str
     open_requirements_count: int
     client_action_required_count: int
+    # Identificadores comerciales. El sistema viejo los tenía como columnas del
+    # listado y se busca por ellos todos los días.
+    wr: str | None = None
+    tracking: str | None = None
+    po: str | None = None
+    container: str | None = None
+    shipper: str | None = None
+    carrier: str | None = None
+    foots_cft: Decimal | None = None
+    # Los dos pesos, no uno calculado del otro: en el sistema viejo se anotaban
+    # por separado y no siempre convierten exacto.
+    weight_kg: Decimal | None = None
+    weight_lb: Decimal | None = None
+    hidden_at: datetime | None = None
+
     # Referencia comercial principal. Puede faltar: el WR es opcional y la
     # factura no siempre existe todavía.
     invoice: str | None
@@ -540,6 +772,16 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         open_requirements_count=fila.requisitos_abiertos,
         client_action_required_count=fila.requisitos_del_cliente,
         invoice=fila.factura,
+        wr=fila.wr,
+        tracking=fila.tracking,
+        po=fila.po,
+        container=fila.contenedor,
+        shipper=fila.shipper,
+        carrier=fila.carrier,
+        foots_cft=fila.foots_cft,
+        weight_kg=fila.weight_kg,
+        weight_lb=fila.weight_lb,
+        hidden_at=fila.hidden_at,
         origin=UbicacionResponse(
             location_code=fila.origen_codigo,
             name=fila.origen_nombre,
@@ -569,6 +811,7 @@ async def listar_shipments(
     cursor: str | None = None,
     status_filtro: Annotated[list[ShipmentStatus] | None, Query(alias="status")] = None,
     company_id: UUID | None = None,
+    incluir_ocultas: bool = False,
     eta_from: datetime | None = None,
     eta_to: datetime | None = None,
     q: Annotated[str | None, Query(max_length=180)] = None,
@@ -591,6 +834,7 @@ async def listar_shipments(
             eta_hasta=eta_to,
             texto=q,
             incluir_archivadas=archived,
+            incluir_ocultas=incluir_ocultas,
         ),
         limite=normalizar_limite(limit),
         cursor=Cursor.decodificar(cursor) if cursor else None,

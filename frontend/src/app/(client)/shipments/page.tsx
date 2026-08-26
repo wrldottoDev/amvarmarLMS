@@ -5,6 +5,7 @@ import { Boxes, Download, PackagePlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { FiltrosCargas, filtrosIniciales, type FiltrosCarga } from "@/components/shipments/filtros-cargas";
 import { ListadoCargas } from "@/components/shipments/listado-cargas";
+import { SelectorColumnas } from "@/components/shipments/selector-columnas";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
@@ -20,12 +21,14 @@ function finalDia(valor: string) {
   return valor ? new Date(`${valor}T23:59:59.999`).toISOString() : undefined;
 }
 
-export default function PaginaCargas() {
+export default function PaginaCargas({ inventario = false }: { inventario?: boolean }) {
   const [filtros, setFiltros] = useState<FiltrosCarga>(filtrosIniciales);
+  const [verOcultas, setVerOcultas] = useState(false);
   const { usuario } = useSesion();
+  const esCliente = Boolean(usuario?.empresa);
 
   const consulta = useInfiniteQuery({
-    queryKey: ["cargas", filtros],
+    queryKey: ["cargas", filtros, inventario, verOcultas],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) =>
       exigirDatos(
@@ -34,7 +37,11 @@ export default function PaginaCargas() {
             query: {
               limit: 25,
               cursor: pageParam,
-              status: filtros.estados.length ? filtros.estados : undefined,
+              // La vista Inventario ignora el filtro de estado a propósito:
+              // es "todo lo que existe", que es como se usaba en el sistema
+              // viejo para buscar algo sin saber en qué punto estaba.
+              status: !inventario && filtros.estados.length ? filtros.estados : undefined,
+              incluir_ocultas: verOcultas || undefined,
               eta_from: inicioDia(filtros.etaDesde),
               eta_to: finalDia(filtros.etaHasta),
               q: filtros.q || undefined,
@@ -53,9 +60,15 @@ export default function PaginaCargas() {
     <div className="space-y-6">
       <header className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase text-[var(--marca)]">Seguimiento</p>
-          <h1 className="mt-1 text-2xl font-bold">Cargas</h1>
-          <p className="mt-1 text-sm text-[var(--texto-secundario)]">{cargas.length} cargadas en esta vista</p>
+          <p className="text-xs font-bold uppercase text-[var(--marca)]">
+            {inventario ? "Inventario" : "Seguimiento"}
+          </p>
+          <h1 className="mt-1 text-2xl font-bold">{inventario ? "Inventario" : "Cargas"}</h1>
+          <p className="mt-1 text-sm text-[var(--texto-secundario)]">
+            {inventario
+              ? "Todas las cargas, sin filtrar por estado."
+              : `${cargas.length} cargadas en esta vista`}
+          </p>
         </div>
         {usuario?.empresa ? (
           <span className="hidden size-11 place-items-center rounded-md bg-[#e8f0f2] text-[var(--mar)] sm:grid">
@@ -74,7 +87,28 @@ export default function PaginaCargas() {
         )}
       </header>
 
-      <FiltrosCargas aplicar={setFiltros} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex-1">
+          <FiltrosCargas aplicar={setFiltros} />
+        </div>
+        <div className="flex items-center gap-2">
+          {esCliente ? null : (
+            <label
+              className="flex h-10 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm"
+              title="Las cargas ocultas no se borraron: siguen con sus documentos y su historial"
+            >
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--mar)]"
+                checked={verOcultas}
+                onChange={(evento) => setVerOcultas(evento.target.checked)}
+              />
+              Ver ocultas
+            </label>
+          )}
+          <SelectorColumnas />
+        </div>
+      </div>
 
       {consulta.isLoading ? <CargandoPagina texto="Cargando cargas" /> : null}
       {consulta.error ? <AvisoError error={consulta.error} /> : null}
@@ -85,7 +119,9 @@ export default function PaginaCargas() {
         </div>
       ) : null}
 
-      {cargas.length ? <ListadoCargas cargas={cargas} esCliente={Boolean(usuario?.empresa)} /> : null}
+      {cargas.length ? (
+        <ListadoCargas cargas={cargas} esCliente={esCliente} empresaVisible={!esCliente} />
+      ) : null}
 
       {consulta.hasNextPage ? (
         <div className="flex justify-center pt-2">

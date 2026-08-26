@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import {
   formatearTamano,
   useDescargar,
+  useDescargarTodos,
   useExpediente,
   useSubirDocumento,
 } from "@/features/documentos/consultas";
@@ -28,6 +29,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
   const { data, isPending, error } = useExpediente(cargaId);
   const subir = useSubirDocumento(cargaId);
   const descargar = useDescargar();
+  const descargarTodos = useDescargarTodos(cargaId);
   const [subiendo, setSubiendo] = useState<string | null>(null);
 
   if (isPending) return null;
@@ -61,11 +63,26 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
 
   return (
     <section aria-labelledby="documentos-carga" className="space-y-4">
-      <div className="flex items-center gap-2">
-        <FileText className="size-5 text-[var(--marca)]" aria-hidden="true" />
-        <h2 id="documentos-carga" className="text-base font-bold">
-          Documentos
-        </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FileText className="size-5 text-[var(--marca)]" aria-hidden="true" />
+          <h2 id="documentos-carga" className="text-base font-bold">
+            Documentos
+          </h2>
+        </div>
+
+        {data.documentos.length > 1 ? (
+          <button
+            type="button"
+            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[#edf1f2] disabled:opacity-60"
+            onClick={() => descargarTodos.mutate()}
+            disabled={descargarTodos.isPending}
+            title="Un solo archivo con todo el expediente, para mandarlo completo"
+          >
+            <Download className="size-4" aria-hidden="true" />
+            {descargarTodos.isPending ? "Preparando…" : "Descargar todos"}
+          </button>
+        ) : null}
       </div>
 
       {esCliente ? (
@@ -85,6 +102,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
 
       {subir.error ? <AvisoError error={subir.error} /> : null}
       {descargar.error ? <AvisoError error={descargar.error} /> : null}
+      {descargarTodos.error ? <AvisoError error={descargarTodos.error} /> : null}
 
       {requisitos.length > 0 ? (
         <ul className="divide-y overflow-hidden rounded-lg border bg-white">

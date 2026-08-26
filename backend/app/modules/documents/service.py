@@ -9,8 +9,10 @@ verifica sobre lo ya almacenado y no sobre lo que el cliente declaró.
 """
 
 import hashlib
+import io
 import json
 import secrets
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -58,6 +60,9 @@ class DocumentoEnCuarentena(Conflicto):
 @dataclass(frozen=True)
 class SubidaPreparada:
     document_id: UUID
+    # La carga a la que quedó ligado el documento. Al subir desde un despacho
+    # quien llama no la conoce, y la necesita para cerrar la subida.
+    shipment_id: UUID
     storage_key: str
     upload_url: str
     expira_en: datetime
@@ -189,6 +194,7 @@ async def preparar_subida(
 
     return SubidaPreparada(
         document_id=document_id,
+        shipment_id=shipment_id,
         storage_key=storage_key,
         upload_url=url,
         expira_en=datetime.now(UTC).replace(microsecond=0),
@@ -569,3 +575,317 @@ async def tipos_de_documento(session: AsyncSession) -> list[Any]:
             )
         ).all()
     )
+
+
+@dataclass(frozen=True)
+class ArchivoParaZip:
+    nombre: str
+    contenido: bytes
+
+
+async def paquete_de_documentos(
+    session: AsyncSession, *, shipment_id: UUID, company_ids: list[UUID] | None
+) -> tuple[str, bytes]:
+    """Arma un ZIP con los documentos descargables de una carga.
+
+    El sistema viejo tenía "descargar todos" y se usa cuando hay que mandarle el
+    expediente completo a un agente aduanal: bajar ocho archivos uno por uno es
+    trabajo que la máquina puede hacer.
+
+    **ADR-0009 prohibió los ZIP en la SUBIDA**, no en la descarga. Son cosas
+    distintas: un ZIP que entra puede esconder cualquier cosa y el antivirus no
+    lo abre; uno que sale lo armamos nosotros con archivos que ya escaneamos.
+
+    Solo entran los archivos limpios y disponibles. Un documento infectado o sin
+    escanear se omite, y su ausencia se anota dentro del propio ZIP: entregarlo
+    sería exactamente lo que el escaneo existe para impedir, y omitirlo en
+    silencio haría creer que la carga no lo tenía.
+    """
+    condiciones = ["s.id = :shipment_id", "s.deleted_at IS NULL"]
+    parametros: dict[str, Any] = {"shipment_id": shipment_id}
+
+    if company_ids is not None:
+        condiciones.append("s.company_id = ANY(:empresas)")
+        parametros["empresas"] = company_ids
+
+    carga = (
+        await session.execute(
+            text(f"SELECT s.shipment_number FROM shipments s WHERE {' AND '.join(condiciones)}"),  # noqa: S608
+            parametros,
+        )
+    ).scalar_one_or_none()
+
+    if carga is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    filas = (
+        await session.execute(
+            text("""
+                SELECT d.id, d.storage_key, d.original_name, d.scan_status, d.upload_status,
+                       dt.code AS tipo
+                FROM shipment_documents sd
+                JOIN documents d ON d.id = sd.document_id
+                JOIN document_types dt ON dt.id = sd.document_type_id
+                WHERE sd.shipment_id = :s AND d.deleted_at IS NULL
+                ORDER BY dt.code, d.created_at
+            """),
+            {"s": shipment_id},
+        )
+    ).all()
+
+    if not filas:
+        raise RecursoNoEncontrado("Esta carga no tiene documentos.")
+
+    omitidos: list[str] = []
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as paquete:
+        usados: set[str] = set()
+
+        for fila in filas:
+            if fila.scan_status != ScanStatus.CLEAN or fila.upload_status != UploadStatus.READY:
+                omitidos.append(f"{fila.original_name}: {_motivo_omision(fila)}")
+                continue
+
+            contenido = await s3.leer_completo(fila.storage_key)
+            # El mismo nombre dos veces dentro de un ZIP hace que uno pise al
+            # otro al extraer.
+            nombre = _nombre_unico(f"{fila.tipo}/{fila.original_name}", usados)
+            paquete.writestr(nombre, contenido)
+
+        if omitidos:
+            paquete.writestr(
+                "DOCUMENTOS-NO-INCLUIDOS.txt",
+                "Estos documentos existen pero no se pudieron incluir:\n\n"
+                + "\n".join(f"- {linea}" for linea in omitidos)
+                + "\n\nUn archivo no verificado no se entrega. Consulte el "
+                "expediente en el sistema para ver su estado.\n",
+            )
+
+    return f"{carga}-documentos.zip", buffer.getvalue()
+
+
+def _motivo_omision(fila: Any) -> str:
+    if fila.scan_status == ScanStatus.INFECTED:
+        return "el antivirus detectó una amenaza"
+    if fila.scan_status == ScanStatus.PENDING:
+        return "todavía se está revisando"
+    if fila.upload_status != UploadStatus.READY:
+        return "la subida no se completó"
+    return "no está disponible"
+
+
+def _nombre_unico(nombre: str, usados: set[str]) -> str:
+    if nombre not in usados:
+        usados.add(nombre)
+        return nombre
+
+    raiz, punto, extension = nombre.rpartition(".")
+    base = raiz if punto else nombre
+    sufijo = extension if punto else ""
+
+    contador = 2
+    while True:
+        candidato = f"{base}-{contador}{'.' + sufijo if sufijo else ''}"
+        if candidato not in usados:
+            usados.add(candidato)
+            return candidato
+        contador += 1
+
+
+@dataclass(frozen=True)
+class DocumentoDeDespacho:
+    id: UUID
+    document_type_code: str
+    document_type_label: str
+    original_name: str
+    media_type: str
+    size_bytes: int
+    upload_status: str
+    scan_status: str
+    created_at: datetime
+
+
+async def _despacho_visible(
+    session: AsyncSession, *, dispatch_id: UUID, company_ids: list[UUID] | None
+) -> UUID:
+    """Devuelve la empresa del despacho, o 404 si el actor no lo puede ver.
+
+    El filtro va en el WHERE: traer la fila y descartarla después ya la habría
+    expuesto al proceso.
+    """
+    condiciones = ["d.id = :dispatch_id"]
+    parametros: dict[str, Any] = {"dispatch_id": dispatch_id}
+
+    if company_ids is not None:
+        condiciones.append("d.company_id = ANY(:empresas)")
+        parametros["empresas"] = company_ids
+
+    empresa = (
+        await session.execute(
+            text(f"SELECT d.company_id FROM dispatch_requests d WHERE {' AND '.join(condiciones)}"),  # noqa: S608
+            parametros,
+        )
+    ).scalar_one_or_none()
+
+    if empresa is None:
+        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+
+    resultado: UUID = empresa
+    return resultado
+
+
+async def documentos_de_despacho(
+    session: AsyncSession, *, dispatch_id: UUID, company_ids: list[UUID] | None
+) -> list[DocumentoDeDespacho]:
+    """El BL y las facturas que cuelgan de la solicitud, no de una carga suelta.
+
+    En el sistema viejo eran dos pantallas distintas porque eran dos tablas
+    distintas. Acá es una sola lista: para quien la mira, son los papeles del
+    despacho.
+    """
+    await _despacho_visible(session, dispatch_id=dispatch_id, company_ids=company_ids)
+
+    filas = (
+        await session.execute(
+            text("""
+                SELECT d.id, dt.code, dt.label, d.original_name, d.media_type,
+                       d.size_bytes, d.upload_status, d.scan_status, d.created_at
+                FROM dispatch_documents dd
+                JOIN documents d ON d.id = dd.document_id
+                JOIN document_types dt ON dt.id = dd.document_type_id
+                WHERE dd.dispatch_request_id = :d AND d.deleted_at IS NULL
+                ORDER BY dt.code, d.created_at DESC
+            """),
+            {"d": dispatch_id},
+        )
+    ).all()
+
+    return [
+        DocumentoDeDespacho(
+            id=f.id,
+            document_type_code=f.code,
+            document_type_label=f.label,
+            original_name=f.original_name,
+            media_type=f.media_type,
+            size_bytes=f.size_bytes,
+            upload_status=f.upload_status,
+            scan_status=f.scan_status,
+            created_at=f.created_at,
+        )
+        for f in filas
+    ]
+
+
+async def preparar_subida_de_despacho(
+    session: AsyncSession,
+    *,
+    dispatch_id: UUID,
+    document_type_id: UUID,
+    original_name: str,
+    company_ids: list[UUID] | None,
+    actor_user_id: UUID,
+) -> SubidaPreparada:
+    """Igual que la subida de una carga, colgando del despacho.
+
+    Reusa `preparar_subida` para no tener dos caminos que validen distinto: el
+    formato, el tamaño y el escaneo tienen que comportarse igual vengan de donde
+    vengan.
+    """
+    empresa = await _despacho_visible(session, dispatch_id=dispatch_id, company_ids=company_ids)
+
+    # Se apoya en la primera carga del despacho para reutilizar el flujo de
+    # subida, y después se agrega el enlace con la solicitud.
+    carga = (
+        await session.execute(
+            text("""
+                SELECT shipment_id FROM dispatch_request_shipments
+                WHERE dispatch_request_id = :d
+                ORDER BY added_at LIMIT 1
+            """),
+            {"d": dispatch_id},
+        )
+    ).scalar_one_or_none()
+
+    if carga is None:
+        raise Conflicto(
+            "La solicitud no tiene cargas asociadas, así que no se le puede adjuntar un documento.",
+            code="DESPACHO_SIN_CARGAS",
+        )
+
+    preparada = await preparar_subida(
+        session,
+        shipment_id=carga,
+        document_type_id=document_type_id,
+        original_name=original_name,
+        company_id=empresa,
+        actor_user_id=actor_user_id,
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO dispatch_documents (dispatch_request_id, document_id, document_type_id)
+            VALUES (:d, :doc, :t) ON CONFLICT DO NOTHING
+        """),
+        {"d": dispatch_id, "doc": preparada.document_id, "t": document_type_id},
+    )
+
+    return preparada
+
+
+async def paquete_de_bls(
+    session: AsyncSession, *, dispatch_id: UUID, company_ids: list[UUID] | None
+) -> tuple[str, bytes]:
+    """Los Bills of Lading de un despacho en un ZIP.
+
+    Existía en el sistema viejo: un despacho puede llevar varios BL y el cliente
+    los necesita todos juntos para su agente.
+    """
+    await _despacho_visible(session, dispatch_id=dispatch_id, company_ids=company_ids)
+
+    numero = (
+        await session.execute(
+            text("SELECT dispatch_number FROM dispatch_requests WHERE id = :d"),
+            {"d": dispatch_id},
+        )
+    ).scalar_one()
+
+    filas = (
+        await session.execute(
+            text("""
+                SELECT d.storage_key, d.original_name, d.scan_status, d.upload_status
+                FROM dispatch_documents dd
+                JOIN documents d ON d.id = dd.document_id
+                JOIN document_types dt ON dt.id = dd.document_type_id
+                WHERE dd.dispatch_request_id = :d AND dt.code = 'BL'
+                  AND d.deleted_at IS NULL
+                ORDER BY d.created_at
+            """),
+            {"d": dispatch_id},
+        )
+    ).all()
+
+    if not filas:
+        raise RecursoNoEncontrado("Esta solicitud todavía no tiene Bills of Lading.")
+
+    buffer = io.BytesIO()
+    omitidos: list[str] = []
+    usados: set[str] = set()
+
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as paquete:
+        for fila in filas:
+            if fila.scan_status != ScanStatus.CLEAN or fila.upload_status != UploadStatus.READY:
+                omitidos.append(f"{fila.original_name}: {_motivo_omision(fila)}")
+                continue
+            contenido = await s3.leer_completo(fila.storage_key)
+            paquete.writestr(_nombre_unico(fila.original_name, usados), contenido)
+
+        if omitidos:
+            paquete.writestr(
+                "DOCUMENTOS-NO-INCLUIDOS.txt",
+                "Estos Bills of Lading existen pero no se pudieron incluir:\n\n"
+                + "\n".join(f"- {linea}" for linea in omitidos)
+                + "\n",
+            )
+
+    return f"{numero}-bls.zip", buffer.getvalue()

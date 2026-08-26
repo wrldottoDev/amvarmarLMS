@@ -90,6 +90,25 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
         "bucket": storage_de_prueba,
     }
 
+    # Los despachos van primero: sus enlaces referencian cargas y documentos.
+    await db_directa.execute(
+        text("""
+            DELETE FROM dispatch_documents WHERE dispatch_request_id IN
+                (SELECT id FROM dispatch_requests WHERE company_id = ANY(:c))
+        """),
+        {"c": [empresa, ajena]},
+    )
+    await db_directa.execute(
+        text("""
+            DELETE FROM dispatch_request_shipments WHERE dispatch_request_id IN
+                (SELECT id FROM dispatch_requests WHERE company_id = ANY(:c))
+        """),
+        {"c": [empresa, ajena]},
+    )
+    await db_directa.execute(
+        text("DELETE FROM dispatch_requests WHERE company_id = ANY(:c)"),
+        {"c": [empresa, ajena]},
+    )
     await db_directa.execute(
         text("DELETE FROM shipment_requirements WHERE shipment_id = ANY(:s)"),
         {"s": [propia, de_otra]},
@@ -590,3 +609,280 @@ async def _abrir_requisito(session: AsyncSession, entorno: dict) -> None:
         {"s": entorno["carga"], "t": entorno["tipo_factura"], "u": entorno["user_id"]},
     )
     await session.commit()
+
+
+class TestDescargaMasiva:
+    """El "descargar todos" del sistema viejo.
+
+    ADR-0009 prohibió los ZIP en la SUBIDA, no en la descarga: uno que entra
+    puede esconder cualquier cosa y el antivirus no lo abre; uno que sale lo
+    armamos nosotros con archivos que ya escaneamos.
+    """
+
+    async def _documento_listo(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession, nombre: str
+    ) -> str:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        presign = (
+            await cliente.post(
+                f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+                headers=cabeceras,
+                json={"document_type_id": str(entorno["tipo_factura"]), "original_name": nombre},
+            )
+        ).json()
+
+        async with httpx.AsyncClient() as directo:
+            await directo.put(presign["upload_url"], content=pdf_real())
+
+        await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/complete",
+            headers=cabeceras,
+            json={"document_id": presign["document_id"]},
+        )
+        # El antivirus corre aparte; acá se simula su veredicto.
+        await db_directa.execute(
+            text("""
+                UPDATE documents SET scan_status = 'CLEAN', upload_status = 'READY'
+                WHERE id = :id
+            """),
+            {"id": uuid.UUID(presign["document_id"])},
+        )
+        await db_directa.commit()
+        return presign["document_id"]
+
+    async def test_devuelve_un_zip_con_los_documentos(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        import io
+        import zipfile
+
+        await self._documento_listo(cliente, entorno, db_directa, "factura.pdf")
+        await self._documento_listo(cliente, entorno, db_directa, "packing.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        )
+
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/zip"
+        assert ".zip" in r.headers["content-disposition"]
+
+        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+            nombres = paquete.namelist()
+            assert len(nombres) == 2
+            # Van agrupados por tipo de documento, para que el agente aduanal no
+            # tenga que adivinar qué es cada archivo.
+            assert all(n.startswith("COMMERCIAL_INVOICE/") for n in nombres)
+
+    async def test_no_incluye_lo_que_no_esta_escaneado(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """Es exactamente lo que el escaneo existe para impedir.
+
+        Y la ausencia se anota dentro del propio ZIP: omitirlo en silencio haría
+        creer que la carga no tenía ese documento.
+        """
+        import io
+        import zipfile
+
+        limpio = await self._documento_listo(cliente, entorno, db_directa, "bueno.pdf")
+        infectado = await self._documento_listo(cliente, entorno, db_directa, "malo.pdf")
+        await db_directa.execute(
+            text("UPDATE documents SET scan_status = 'INFECTED' WHERE id = :id"),
+            {"id": uuid.UUID(infectado)},
+        )
+        await db_directa.commit()
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        )
+
+        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+            nombres = paquete.namelist()
+            assert not any("malo.pdf" in n for n in nombres)
+            assert any("bueno.pdf" in n for n in nombres)
+
+            aviso = paquete.read("DOCUMENTOS-NO-INCLUIDOS.txt").decode()
+            assert "malo.pdf" in aviso
+            assert "amenaza" in aviso
+        assert limpio
+
+    async def test_dos_archivos_con_el_mismo_nombre_no_se_pisan(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """Dentro de un ZIP, el mismo nombre dos veces hace que uno desaparezca
+        al extraer."""
+        import io
+        import zipfile
+
+        await self._documento_listo(cliente, entorno, db_directa, "factura.pdf")
+        await self._documento_listo(cliente, entorno, db_directa, "factura.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        )
+
+        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+            nombres = paquete.namelist()
+            assert len(nombres) == 2
+            assert len(set(nombres)) == 2
+
+    async def test_no_devuelve_los_de_otra_empresa(
+        self, cliente: httpx.AsyncClient, entorno: dict
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga_ajena']}/documents/download-all",
+            headers=cabeceras,
+        )
+
+        assert r.status_code == 404
+
+    async def test_una_carga_sin_documentos_lo_dice(
+        self, cliente: httpx.AsyncClient, entorno: dict
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        )
+
+        assert r.status_code == 404
+
+
+class TestDocumentosDeDespacho:
+    """El BL y las facturas cuelgan de la solicitud, no de una carga suelta.
+
+    En el sistema viejo eran dos pantallas distintas porque eran dos tablas
+    distintas. Para quien las mira son los papeles del despacho.
+    """
+
+    async def _despacho(self, db_directa: AsyncSession, entorno: dict) -> uuid.UUID:
+        despacho = (
+            await db_directa.execute(
+                text("""
+                    INSERT INTO dispatch_requests
+                        (dispatch_number, company_id, requested_by, method, status, requested_at)
+                    VALUES (siguiente_dispatch_number(), :c, :u, 'SEA', 'APPROVED', now())
+                    RETURNING id
+                """),
+                {"c": entorno["empresa"], "u": entorno["user_id"]},
+            )
+        ).scalar_one()
+        await db_directa.execute(
+            text("""
+                INSERT INTO dispatch_request_shipments (dispatch_request_id, shipment_id)
+                VALUES (:d, :s)
+            """),
+            {"d": despacho, "s": entorno["carga"]},
+        )
+        await db_directa.commit()
+        return despacho
+
+    async def test_adjuntar_y_listar(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        despacho = await self._despacho(db_directa, entorno)
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        tipo_bl = (
+            await db_directa.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
+        ).scalar_one()
+
+        presign = await cliente.post(
+            f"/api/v1/dispatch-requests/{despacho}/documents/presign",
+            headers=cabeceras,
+            json={"document_type_id": str(tipo_bl), "original_name": "bl.pdf"},
+        )
+        assert presign.status_code == 201
+
+        listado = await cliente.get(
+            f"/api/v1/dispatch-requests/{despacho}/documents", headers=cabeceras
+        )
+
+        assert listado.status_code == 200
+        documentos = listado.json()
+        assert len(documentos) == 1
+        assert documentos[0]["document_type_code"] == "BL"
+
+    async def test_descargar_los_bls_juntos(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """Un despacho puede llevar varios y el cliente los necesita juntos."""
+        import io
+        import zipfile
+
+        despacho = await self._despacho(db_directa, entorno)
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        tipo_bl = (
+            await db_directa.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
+        ).scalar_one()
+
+        for nombre in ("bl-uno.pdf", "bl-dos.pdf"):
+            presign = (
+                await cliente.post(
+                    f"/api/v1/dispatch-requests/{despacho}/documents/presign",
+                    headers=cabeceras,
+                    json={"document_type_id": str(tipo_bl), "original_name": nombre},
+                )
+            ).json()
+            async with httpx.AsyncClient() as directo:
+                await directo.put(presign["upload_url"], content=pdf_real())
+            await cliente.post(
+                f"/api/v1/shipments/{entorno['carga']}/documents/complete",
+                headers=cabeceras,
+                json={"document_id": presign["document_id"]},
+            )
+            await db_directa.execute(
+                text("""
+                    UPDATE documents SET scan_status='CLEAN', upload_status='READY'
+                    WHERE id = :id
+                """),
+                {"id": uuid.UUID(presign["document_id"])},
+            )
+        await db_directa.commit()
+
+        r = await cliente.get(
+            f"/api/v1/dispatch-requests/{despacho}/documents/bls", headers=cabeceras
+        )
+
+        assert r.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+            assert len(paquete.namelist()) == 2
+
+    async def test_sin_bls_lo_dice(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        despacho = await self._despacho(db_directa, entorno)
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(
+            f"/api/v1/dispatch-requests/{despacho}/documents/bls", headers=cabeceras
+        )
+
+        assert r.status_code == 404
+
+    async def test_no_devuelve_los_de_otra_empresa(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        ajeno = (
+            await db_directa.execute(
+                text("""
+                    INSERT INTO dispatch_requests
+                        (dispatch_number, company_id, requested_by, method, status, requested_at)
+                    SELECT siguiente_dispatch_number(), c.id, :u, 'SEA', 'PENDING', now()
+                    FROM companies c WHERE c.id <> :propia LIMIT 1
+                    RETURNING id
+                """),
+                {"u": entorno["user_id"], "propia": entorno["empresa"]},
+            )
+        ).scalar_one()
+        await db_directa.commit()
+        cabeceras = await _autenticar(cliente, entorno["email"])
+
+        r = await cliente.get(f"/api/v1/dispatch-requests/{ajeno}/documents", headers=cabeceras)
+
+        assert r.status_code == 404

@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
-from app.modules.shipments.models import EventType, ShipmentStatus
+from app.modules.shipments.models import EventType, ReferenceType, ShipmentStatus
+from app.modules.shipments.policies import validar_identificador_comercial
 from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
 
 
@@ -64,10 +65,20 @@ class DatosDeCarga:
     transport_mode: str | None = None
     estimated_arrival_at: datetime | None = None
     weight_kg: Decimal | None = None
+    weight_lb: Decimal | None = None
     volumetric_weight_kg: Decimal | None = None
     volume_m3: Decimal | None = None
+    foots_cft: Decimal | None = None
+    shipper: str | None = None
+    carrier: str | None = None
     permit_review_required: bool = False
     assigned_to: UUID | None = None
+    # Identificadores comerciales. Se guardan como referencias de la carga, no
+    # como columnas: una carga puede tener varias facturas o varios trackings.
+    invoice: str | None = None
+    tracking: str | None = None
+    po: str | None = None
+    container: str | None = None
 
 
 @dataclass(frozen=True)
@@ -121,12 +132,13 @@ async def crear(
                          origin_location_id, origin_facility_id,
                          destination_location_id, destination_address,
                          description, transport_mode, estimated_arrival_at,
-                         weight_kg, volumetric_weight_kg, volume_m3,
-                         permit_review_required)
+                         weight_kg, weight_lb, volumetric_weight_kg, volume_m3,
+                         foots_cft, shipper, carrier, permit_review_required)
                     VALUES (:company, :actor, :asignado, :estado,
                             :origen, :bodega, :destino, :direccion,
                             :descripcion, :modo, :eta,
-                            :peso, :peso_vol, :volumen, :permiso)
+                            :peso, :peso_lb, :peso_vol, :volumen,
+                            :cft, :shipper, :carrier, :permiso)
                     RETURNING id, shipment_number, row_version
                 """),
                 {
@@ -142,8 +154,12 @@ async def crear(
                     "modo": datos.transport_mode,
                     "eta": datos.estimated_arrival_at,
                     "peso": datos.weight_kg,
+                    "peso_lb": datos.weight_lb,
                     "peso_vol": datos.volumetric_weight_kg,
                     "volumen": datos.volume_m3,
+                    "cft": datos.foots_cft,
+                    "shipper": datos.shipper,
+                    "carrier": datos.carrier,
                     "permiso": datos.permit_review_required,
                 },
             )
@@ -154,6 +170,18 @@ async def crear(
         raise DatosInvalidos(
             "Alguno de los datos referenciados no existe (ubicación, bodega o responsable)."
         ) from error
+
+    await _guardar_referencias(session, fila.id, datos)
+
+    # La regla del negocio: lo de Miami lleva WR, lo demás lleva factura. Se
+    # comprueba DESPUÉS de guardar las referencias, porque la factura llega
+    # como una de ellas.
+    await validar_identificador_comercial(
+        session,
+        shipment_id=fila.id,
+        origin_facility_id=datos.origin_facility_id,
+        invoice=datos.invoice,
+    )
 
     await session.execute(
         text("""
@@ -178,6 +206,33 @@ async def crear(
     )
 
 
+async def _guardar_referencias(
+    session: AsyncSession, shipment_id: UUID, datos: DatosDeCarga
+) -> None:
+    """Factura, tracking, PO y contenedor, como referencias de la carga.
+
+    No son columnas porque una carga puede traer varias facturas o varios
+    números de rastreo, y en el sistema viejo eso obligaba a meterlos separados
+    por comas en un campo de texto.
+    """
+    for tipo, valor in (
+        (ReferenceType.INVOICE, datos.invoice),
+        (ReferenceType.TRACKING, datos.tracking),
+        (ReferenceType.PO, datos.po),
+        (ReferenceType.CONTAINER, datos.container),
+    ):
+        limpio = (valor or "").strip()
+        if not limpio:
+            continue
+        await session.execute(
+            text("""
+                INSERT INTO shipment_references (shipment_id, reference_type, value)
+                VALUES (:s, :t, :v) ON CONFLICT DO NOTHING
+            """),
+            {"s": shipment_id, "t": tipo.value, "v": limpio[:120]},
+        )
+
+
 # Campos que un PATCH puede tocar. `current_status_code`, `company_id` y
 # `shipment_number` quedan fuera a propósito: el estado lo mueve el motor de
 # transiciones, y cambiar de empresa o de número reescribiría la identidad de la
@@ -191,8 +246,12 @@ _EDITABLES_CAMPOS: dict[str, str] = {
     "transport_mode": "modo",
     "estimated_arrival_at": "eta",
     "weight_kg": "peso",
+    "weight_lb": "peso_lb",
     "volumetric_weight_kg": "peso_vol",
     "volume_m3": "volumen",
+    "foots_cft": "cft",
+    "shipper": "shipper",
+    "carrier": "carrier",
     "permit_review_required": "permiso",
     "assigned_to": "asignado",
 }
@@ -283,3 +342,251 @@ async def actualizar(
     )
 
     return nueva_version
+
+
+# --- Revisión de lo migrado (ADR-0002 / Paso 5.7) ---
+
+
+@dataclass(frozen=True)
+class CargaEnRevision:
+    id: UUID
+    shipment_number: str
+    company_name: str
+    current_status_code: str
+    legacy_status: str | None
+    motivo: str | None
+    created_at: datetime
+
+
+async def listar_en_revision(
+    session: AsyncSession, *, permisos: PermisosEfectivos, limite: int = 100
+) -> list[CargaEnRevision]:
+    """Cargas que la migración no supo traducir con certeza.
+
+    ADR-0002: cuando el legacy no daba datos para decidir el estado, se marcó en
+    vez de inventarlo. Alguien de la operación tiene que mirarlas y decidir; sin
+    esta lista quedan como deuda invisible que nadie recuerda.
+    """
+    if not any(p.code == Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE for p in permisos.permisos):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE)
+
+    filas = (
+        await session.execute(
+            text("""
+                SELECT s.id, s.shipment_number, c.legal_name, s.current_status_code,
+                       s.legacy_status, s.created_at,
+                       (SELECT m.nota FROM legacy_id_map m
+                         WHERE m.new_uuid = s.id AND m.new_table = 'shipments'
+                         LIMIT 1) AS motivo
+                FROM shipments s
+                JOIN companies c ON c.id = s.company_id
+                WHERE s.legacy_review_required AND s.deleted_at IS NULL
+                ORDER BY s.created_at DESC
+                LIMIT :limite
+            """),
+            {"limite": limite},
+        )
+    ).all()
+
+    return [
+        CargaEnRevision(
+            id=f.id,
+            shipment_number=f.shipment_number,
+            company_name=f.legal_name,
+            current_status_code=f.current_status_code,
+            legacy_status=f.legacy_status,
+            motivo=f.motivo,
+            created_at=f.created_at,
+        )
+        for f in filas
+    ]
+
+
+async def resolver_revision(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    nota: str,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+) -> None:
+    """Da por revisada una carga migrada.
+
+    NO cambia el estado: si además hay que corregirlo, eso se hace con una
+    transición, que valida el catálogo y deja su propio evento. Acá solo se
+    quita la marca, con constancia de quién la revisó y qué concluyó.
+
+    `legacy_status` no se toca nunca (ADR-0002): es el rastro de lo que decía el
+    sistema viejo y sigue sirviendo para auditar la traducción años después.
+    """
+    if not nota.strip():
+        raise DatosInvalidos(
+            "Indique qué se verificó. Una marca quitada sin explicación no se "
+            "puede auditar después."
+        )
+
+    carga = (
+        await session.execute(
+            text("""
+                SELECT company_id, legacy_review_required
+                FROM shipments WHERE id = :id AND deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"id": shipment_id},
+        )
+    ).one_or_none()
+
+    if carga is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    if not permisos.permite(Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE, company_id=carga.company_id):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE)
+
+    if not carga.legacy_review_required:
+        raise NoSePuedeEditar("Esta carga no está marcada para revisión.")
+
+    await session.execute(
+        text("""
+            UPDATE shipments
+            SET legacy_review_required = false, updated_at = now()
+            WHERE id = :id
+        """),
+        {"id": shipment_id},
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_events
+                (shipment_id, event_type, title, description, occurred_at, actor_user_id)
+            VALUES (:s, :tipo, :titulo, :descripcion, now(), :actor)
+        """),
+        {
+            "s": shipment_id,
+            "tipo": EventType.CORRECTION.value,
+            "titulo": "Revisión de migración resuelta",
+            "descripcion": nota.strip(),
+            "actor": actor_user_id,
+        },
+    )
+
+
+# --- Ocultar y recuperar (el "eliminar" del sistema viejo) ---
+
+
+async def ocultar(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    motivo: str,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+) -> None:
+    """Saca la carga de los listados sin borrarla.
+
+    El sistema viejo la eliminaba de verdad. Acá no: sus documentos, su línea de
+    tiempo y su auditoría siguen existiendo y apuntando a ella, y borrarla
+    dejaría todo eso huérfano (ADR-0007). Se puede recuperar.
+
+    El motivo es obligatorio: una carga que desaparece sin explicación es
+    indistinguible de una que se perdió.
+    """
+    if not motivo.strip():
+        raise DatosInvalidos("Indique por qué se oculta esta carga.")
+
+    carga = (
+        await session.execute(
+            text("""
+                SELECT company_id, hidden_at FROM shipments
+                WHERE id = :id AND deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"id": shipment_id},
+        )
+    ).one_or_none()
+
+    if carga is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    if not permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=carga.company_id):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_UPDATE)
+
+    if carga.hidden_at is not None:
+        raise NoSePuedeEditar("Esta carga ya está oculta.")
+
+    await session.execute(
+        text("""
+            UPDATE shipments
+            SET hidden_at = now(), hidden_by = :actor, hidden_reason = :motivo,
+                row_version = row_version + 1, updated_at = now()
+            WHERE id = :id
+        """),
+        {"actor": actor_user_id, "motivo": motivo.strip(), "id": shipment_id},
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_events
+                (shipment_id, event_type, title, description, occurred_at, actor_user_id)
+            VALUES (:s, :tipo, :titulo, :descripcion, now(), :actor)
+        """),
+        {
+            "s": shipment_id,
+            "tipo": EventType.NOTE.value,
+            "titulo": "Carga ocultada",
+            "descripcion": motivo.strip(),
+            "actor": actor_user_id,
+        },
+    )
+
+
+async def recuperar(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+) -> None:
+    """Devuelve una carga oculta a los listados."""
+    carga = (
+        await session.execute(
+            text("""
+                SELECT company_id, hidden_at FROM shipments
+                WHERE id = :id AND deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"id": shipment_id},
+        )
+    ).one_or_none()
+
+    if carga is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    if not permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=carga.company_id):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_UPDATE)
+
+    if carga.hidden_at is None:
+        raise NoSePuedeEditar("Esta carga no está oculta.")
+
+    await session.execute(
+        text("""
+            UPDATE shipments
+            SET hidden_at = NULL, hidden_by = NULL, hidden_reason = NULL,
+                row_version = row_version + 1, updated_at = now()
+            WHERE id = :id
+        """),
+        {"id": shipment_id},
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_events
+                (shipment_id, event_type, title, occurred_at, actor_user_id)
+            VALUES (:s, :tipo, :titulo, now(), :actor)
+        """),
+        {
+            "s": shipment_id,
+            "tipo": EventType.NOTE.value,
+            "titulo": "Carga recuperada",
+            "actor": actor_user_id,
+        },
+    )

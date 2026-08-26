@@ -208,6 +208,19 @@ class Shipment(Base, TimestampMixin):
     dispatched_at: Mapped[datetime | None]
     delivered_at: Mapped[datetime | None]
 
+    # Datos comerciales que el sistema viejo manejaba como campos propios y
+    # mostraba como columnas del listado. Se conservan así —y no dentro de la
+    # descripción— porque con ellos se busca, se ordena y se cobra.
+    shipper: Mapped[str | None] = mapped_column(String(180))
+    carrier: Mapped[str | None] = mapped_column(String(180))
+    # Pies cúbicos (CFTS en el sistema viejo). Se usa para cubicaje.
+    foots_cft: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+
+    # El legacy pedía kilos y libras por separado, no uno calculado del otro:
+    # quien recibe la carga anota lo que dice la báscula o el documento, y los
+    # dos números no siempre convierten exacto. Convertirlos acá inventaría una
+    # precisión que nadie midió.
+    weight_lb: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
     weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
     volumetric_weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
     volume_m3: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
@@ -225,6 +238,13 @@ class Shipment(Base, TimestampMixin):
     # crudo del sistema viejo y no se borra nunca.
     legacy_review_required: Mapped[bool] = mapped_column(server_default=text("false"))
     legacy_status: Mapped[str | None] = mapped_column(String(20))
+
+    # Ocultar una carga (equivale al "eliminar" del sistema viejo). No borra:
+    # sus documentos, su línea de tiempo y su auditoría siguen existiendo, y se
+    # puede recuperar. Quién la ocultó y por qué quedan registrados.
+    hidden_at: Mapped[datetime | None]
+    hidden_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    hidden_reason: Mapped[str | None] = mapped_column(Text)
 
     # ADR-0007: retención. El job de archivado de Fase 4 consulta estos campos;
     # se crean ya para no necesitar una migración retroactiva.
@@ -253,34 +273,43 @@ class Shipment(Base, TimestampMixin):
             "legal_hold = false OR legal_hold_reason IS NOT NULL",
             name="legal_hold_exige_motivo",
         ),
-        # Índices parciales: excluyen borradas y archivadas, que son la mayoría
-        # del volumen con el tiempo y nunca aparecen en consultas operativas.
+        # Índices parciales: excluyen borradas, archivadas y ocultas. Son la
+        # mayoría del volumen con el tiempo y nunca aparecen en consultas
+        # operativas; el predicado tiene que coincidir con el del WHERE o
+        # PostgreSQL no puede usar el índice.
         Index(
             "ix_shipments_empresa_estado",
             "company_id",
             "current_status_code",
             text("updated_at DESC"),
-            postgresql_where=text("deleted_at IS NULL AND archived_at IS NULL"),
+            postgresql_where=text(
+                "deleted_at IS NULL AND archived_at IS NULL AND hidden_at IS NULL"
+            ),
         ),
         Index(
             "ix_shipments_empresa_eta",
             "company_id",
             "estimated_arrival_at",
             postgresql_where=text(
-                "estimated_arrival_at IS NOT NULL AND deleted_at IS NULL AND archived_at IS NULL"
+                "estimated_arrival_at IS NOT NULL AND deleted_at IS NULL "
+                "AND archived_at IS NULL AND hidden_at IS NULL"
             ),
         ),
         Index(
             "ix_shipments_asignado",
             "assigned_to",
             "current_status_code",
-            postgresql_where=text("deleted_at IS NULL AND archived_at IS NULL"),
+            postgresql_where=text(
+                "deleted_at IS NULL AND archived_at IS NULL AND hidden_at IS NULL"
+            ),
         ),
         Index(
             "ix_shipments_empresa_creacion",
             "company_id",
             text("created_at DESC"),
-            postgresql_where=text("deleted_at IS NULL AND archived_at IS NULL"),
+            postgresql_where=text(
+                "deleted_at IS NULL AND archived_at IS NULL AND hidden_at IS NULL"
+            ),
         ),
         # Para el job de archivado de Fase 4.
         Index(

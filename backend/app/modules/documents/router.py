@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -43,6 +43,9 @@ class PresignRequest(BaseModel):
 
 
 class PresignResponse(BaseModel):
+    # `shipment_id` va en la respuesta porque al adjuntar un documento a un
+    # despacho quien llama no sabe a qué carga quedó ligado, y lo necesita para
+    # llamar a `complete`.
     """El cliente sube con `PUT` a `upload_url` y después llama a `complete`.
 
     `storage_key` NO se devuelve: es detalle interno y exponerlo daría una pista
@@ -50,6 +53,7 @@ class PresignResponse(BaseModel):
     """
 
     document_id: UUID
+    shipment_id: UUID
     upload_url: str
     expires_in_seconds: int
     max_bytes: int
@@ -161,6 +165,7 @@ async def preparar_subida(
 
     return PresignResponse(
         document_id=subida.document_id,
+        shipment_id=shipment_id,
         upload_url=subida.upload_url,
         expires_in_seconds=TTL_SUBIDA_SEGUNDOS,
         max_bytes=subida.max_bytes,
@@ -367,4 +372,193 @@ async def expediente_de_carga(
             )
             for t in tipos
         ],
+    )
+
+
+@router.get("/shipments/{shipment_id}/documents/download-all")
+async def descargar_todos(
+    shipment_id: UUID,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> Response:
+    """Todos los documentos de una carga en un ZIP.
+
+    Existía en el sistema viejo y se usa para mandarle el expediente completo a
+    un agente aduanal. Bajar ocho archivos uno por uno es trabajo que la máquina
+    puede hacer.
+
+    A diferencia de la descarga individual, el archivo pasa por la aplicación:
+    hay que leer cada objeto para comprimirlo, y no se puede firmar una URL de
+    algo que todavía no existe. Por eso se audita: es la única vía por la que
+    salen varios documentos de una sola vez.
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    nombre, contenido = await service.paquete_de_documentos(
+        db,
+        shipment_id=shipment_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+
+    await registrar(
+        db,
+        action="shipment.documents.bulk_download",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor.user_id,
+        outcome=Outcome.SUCCESS,
+        after_data={"bytes": len(contenido)},
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+
+    return Response(
+        content=contenido,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+    )
+
+
+class DocumentoDespachoResponse(BaseModel):
+    id: UUID
+    document_type_code: str
+    document_type_label: str
+    original_name: str
+    media_type: str
+    size_bytes: int
+    upload_status: str
+    scan_status: str
+    created_at: datetime
+
+
+@router.get(
+    "/dispatch-requests/{dispatch_id}/documents",
+    response_model=list[DocumentoDespachoResponse],
+)
+async def documentos_de_despacho(
+    dispatch_id: UUID, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> list[DocumentoDespachoResponse]:
+    """El BL y las facturas que cuelgan de la solicitud, no de una carga suelta."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+
+    documentos = await service.documentos_de_despacho(
+        db,
+        dispatch_id=dispatch_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+    return [DocumentoDespachoResponse(**vars(d)) for d in documentos]
+
+
+@router.post(
+    "/dispatch-requests/{dispatch_id}/documents/presign",
+    response_model=PresignResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def presign_documento_de_despacho(
+    dispatch_id: UUID,
+    datos: PresignRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> PresignResponse:
+    """Adjunta un BL o una factura a la solicitud.
+
+    Pasa por el mismo flujo de dos tiempos que cualquier documento: el formato,
+    el tamaño y el escaneo se comportan igual venga de donde venga.
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+
+    # Mismo criterio que al subir a una carga: cualquiera de los dos permisos
+    # habilita. El alcance sobre la empresa lo comprueba el servicio, que es
+    # quien conoce a qué empresa pertenece este despacho.
+    if not any(
+        p.code in (Perm.DOCUMENTS_UPLOAD_CLIENT, Perm.DOCUMENTS_UPLOAD_INTERNAL)
+        for p in permisos.permisos
+    ):
+        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+
+    preparada = await service.preparar_subida_de_despacho(
+        db,
+        dispatch_id=dispatch_id,
+        document_type_id=datos.document_type_id,
+        original_name=datos.original_name,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+        actor_user_id=actor.user_id,
+    )
+
+    await registrar(
+        db,
+        action="dispatch.document.presigned",
+        resource_type="dispatch_request",
+        resource_id=dispatch_id,
+        actor_user_id=actor.user_id,
+        after_data={"document_id": str(preparada.document_id)},
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+
+    return PresignResponse(
+        document_id=preparada.document_id,
+        shipment_id=preparada.shipment_id,
+        upload_url=preparada.upload_url,
+        expires_in_seconds=TTL_SUBIDA_SEGUNDOS,
+        max_bytes=preparada.max_bytes,
+    )
+
+
+@router.get("/dispatch-requests/{dispatch_id}/documents/bls")
+async def descargar_bls(
+    dispatch_id: UUID,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> Response:
+    """Todos los Bills of Lading del despacho en un ZIP.
+
+    Un despacho puede llevar varios y el cliente los necesita juntos para su
+    agente aduanal.
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+
+    nombre, contenido = await service.paquete_de_bls(
+        db,
+        dispatch_id=dispatch_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+
+    await registrar(
+        db,
+        action="dispatch.documents.bulk_download",
+        resource_type="dispatch_request",
+        resource_id=dispatch_id,
+        actor_user_id=actor.user_id,
+        outcome=Outcome.SUCCESS,
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+
+    return Response(
+        content=contenido,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
     )

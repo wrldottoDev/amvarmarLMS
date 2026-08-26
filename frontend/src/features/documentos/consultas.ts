@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ErrorApi, exigirDatos } from "@/lib/api/client";
+import { api, convertirErrorApi, ErrorApi, exigirDatos } from "@/lib/api/client";
 import type { Expediente } from "@/lib/api/tipos";
 
 export const claveExpediente = (cargaId: string) => ["expediente", cargaId] as const;
@@ -90,4 +90,122 @@ export function formatearTamano(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Descarga todos los documentos de una carga en un ZIP.
+ *
+ * A diferencia de la descarga individual, el archivo viene por la aplicación y
+ * no por una URL firmada: hay que leer cada objeto para comprimirlo, y no se
+ * puede firmar algo que todavía no existe.
+ */
+export function useDescargarTodos(cargaId: string) {
+  return useMutation({
+    mutationFn: async () => {
+      const respuesta = await api.GET("/api/v1/shipments/{shipment_id}/documents/download-all", {
+        params: { path: { shipment_id: cargaId } },
+        parseAs: "blob",
+      });
+
+      if (respuesta.error) {
+        throw convertirErrorApi(respuesta.error, respuesta.response);
+      }
+
+      const nombre =
+        respuesta.response.headers
+          .get("content-disposition")
+          ?.match(/filename="?([^"]+)"?/)?.[1] ?? "documentos.zip";
+
+      // Se descarga creando un enlace temporal: no hay forma de que el
+      // navegador guarde un blob sin uno.
+      const url = URL.createObjectURL(respuesta.data as Blob);
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      enlace.download = nombre;
+      enlace.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+}
+
+// --- Documentos que cuelgan del despacho, no de una carga suelta ---
+
+export const claveDocsDespacho = (id: string) => ["despacho", id, "documentos"] as const;
+
+export function useDocumentosDeDespacho(dispatchId: string) {
+  return useQuery({
+    queryKey: claveDocsDespacho(dispatchId),
+    queryFn: async () =>
+      exigirDatos(
+        await api.GET("/api/v1/dispatch-requests/{dispatch_id}/documents", {
+          params: { path: { dispatch_id: dispatchId } },
+        }),
+      ),
+    enabled: Boolean(dispatchId),
+  });
+}
+
+export function useSubirDocumentoDeDespacho(dispatchId: string) {
+  const cliente = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ archivo, tipoId }: { archivo: File; tipoId: string }) => {
+      const reserva = exigirDatos(
+        await api.POST("/api/v1/dispatch-requests/{dispatch_id}/documents/presign", {
+          params: { path: { dispatch_id: dispatchId } },
+          body: { document_type_id: tipoId, original_name: archivo.name },
+        }),
+      );
+
+      if (archivo.size > reserva.max_bytes) {
+        throw new ErrorApi(
+          `El archivo pesa ${formatearTamano(archivo.size)} y el máximo es ${formatearTamano(reserva.max_bytes)}.`,
+          { status: 413, code: "ARCHIVO_MUY_GRANDE" },
+        );
+      }
+
+      const subida = await fetch(reserva.upload_url, { method: "PUT", body: archivo });
+      if (!subida.ok) {
+        throw new ErrorApi("No se pudo subir el archivo al almacenamiento.", {
+          status: subida.status,
+          code: "SUBIDA_FALLIDA",
+        });
+      }
+
+      // `complete` es el de la carga: el documento vive ahí y el despacho solo
+      // lo referencia. Un segundo endpoint duplicaría la verificación de bytes.
+      return exigirDatos(
+        await api.POST("/api/v1/shipments/{shipment_id}/documents/complete", {
+          params: { path: { shipment_id: reserva.shipment_id } },
+          body: { document_id: reserva.document_id },
+        }),
+      );
+    },
+    onSuccess: () => cliente.invalidateQueries({ queryKey: claveDocsDespacho(dispatchId) }),
+  });
+}
+
+export function useDescargarBls(dispatchId: string) {
+  return useMutation({
+    mutationFn: async () => {
+      const respuesta = await api.GET("/api/v1/dispatch-requests/{dispatch_id}/documents/bls", {
+        params: { path: { dispatch_id: dispatchId } },
+        parseAs: "blob",
+      });
+
+      if (respuesta.error) throw convertirErrorApi(respuesta.error, respuesta.response);
+
+      const nombre =
+        respuesta.response.headers
+          .get("content-disposition")
+          ?.match(/filename="?([^"]+)"?/)?.[1] ?? "bls.zip";
+
+      const url = URL.createObjectURL(respuesta.data as Blob);
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      enlace.download = nombre;
+      enlace.click();
+      URL.revokeObjectURL(url);
+    },
+  });
 }

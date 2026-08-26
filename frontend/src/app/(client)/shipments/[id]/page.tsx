@@ -45,6 +45,23 @@ export default function PaginaDetalleCarga() {
   const carga = consulta.data;
   const pendientes = usuario?.empresa ? carga.client_action_required_count : carga.open_requirements_count;
 
+  // Peso y volumen en una sola línea: son la misma pregunta —cuánto ocupa— y
+  // separarlos en tres filas medio vacías no ayuda a leerlo.
+  const medidas = [
+    carga.weight_kg ? `${carga.weight_kg} kg` : null,
+    carga.weight_lb ? `${carga.weight_lb} lb` : null,
+    carga.foots_cft ? `${carga.foots_cft} CFT` : null,
+  ].filter(Boolean);
+
+  const tieneDatosComerciales = Boolean(
+    carga.shipper ||
+      carga.carrier ||
+      carga.container ||
+      carga.tracking ||
+      carga.po ||
+      medidas.length > 0,
+  );
+
   return (
     <div className="space-y-8">
       <header className="border-b pb-6">
@@ -113,6 +130,34 @@ export default function PaginaDetalleCarga() {
             </div>
           </dl>
           {carga.description ? <p className="mt-4 text-sm leading-6 text-[var(--texto-secundario)]">{carga.description}</p> : null}
+
+          {/*
+            Los datos comerciales viven en su propio bloque y solo aparecen si hay
+            alguno. Muchas cargas —sobre todo las migradas— no traen ninguno, y una
+            rejilla de seis "No registrado" no dice nada y entierra lo que sí importa.
+          */}
+          {tieneDatosComerciales ? (
+            <>
+              <h3 className="mt-7 border-b pb-3 text-sm font-bold uppercase tracking-wide text-[var(--texto-secundario)]">
+                Datos comerciales
+              </h3>
+              <dl className="grid grid-cols-2 divide-x border-b">
+                <div className="pr-5">
+                  <Dato etiqueta="Shipper" valor={carga.shipper} />
+                  <Dato etiqueta="Carrier" valor={carga.carrier} />
+                  <Dato etiqueta="Contenedor" valor={carga.container} />
+                </div>
+                <div className="pl-5">
+                  <Dato etiqueta="Tracking" valor={carga.tracking} />
+                  <Dato etiqueta="Orden de compra" valor={carga.po} />
+                  <Dato
+                    etiqueta="Peso y volumen"
+                    valor={medidas.length > 0 ? medidas.join(" · ") : null}
+                  />
+                </div>
+              </dl>
+            </>
+          ) : null}
         </div>
 
         <div>

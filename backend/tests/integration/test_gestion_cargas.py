@@ -6,6 +6,7 @@ datos, nunca se mueve el estado.
 """
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from scripts.seed_rbac import sembrar as sembrar_rbac
@@ -17,6 +18,7 @@ from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import gestion
 from app.modules.shipments.models import ShipmentStatus
+from app.modules.shipments.policies import IdentificadorFaltante
 from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
 
 pytestmark = pytest.mark.integration
@@ -88,6 +90,9 @@ async def _permisos(session, redis, user_id):
 
 
 def _datos(entorno, **extra) -> gestion.DatosDeCarga:
+    # Lleva factura porque el origen por defecto no emite Warehouse Receipt: la
+    # regla del negocio es que lo de Miami va por WR y todo lo demás por factura.
+    extra.setdefault("invoice", f"INV-{uuid.uuid4().hex[:8].upper()}")
     return gestion.DatosDeCarga(
         company_id=entorno["empresa"],
         origin_location_id=entorno["origen"],
@@ -128,6 +133,113 @@ class TestCrear:
         ).one()
         assert evento.event_type == "CREATED"
         assert evento.title == "Carga creada"
+
+    async def test_sin_factura_y_sin_bodega_wr_se_rechaza(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """La regla del negocio: lo de Miami lleva WR, lo demás lleva factura.
+
+        Sin ninguno de los dos, la carga solo se puede encontrar por su número
+        interno — un dato que el cliente no conoce y que no aparece en ningún
+        papel del embarque.
+        """
+        with pytest.raises(IdentificadorFaltante):
+            await gestion.crear(
+                session,
+                datos=gestion.DatosDeCarga(
+                    company_id=entorno["empresa"],
+                    origin_location_id=entorno["origen"],
+                    destination_location_id=entorno["destino"],
+                ),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_desde_una_bodega_que_emite_wr_no_hace_falta_factura(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """El WR lo emite la bodega al recibir, así que puede no existir todavía
+        al dar de alta. Se exige al almacenar, no acá."""
+        bodega = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:l, :cod, 'WAREHOUSE', true) RETURNING id
+                """),
+                {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
+            )
+        ).scalar_one()
+
+        creada = await gestion.crear(
+            session,
+            datos=gestion.DatosDeCarga(
+                company_id=entorno["empresa"],
+                origin_location_id=entorno["origen"],
+                destination_location_id=entorno["destino"],
+                origin_facility_id=bodega,
+            ),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert creada.id
+
+    async def test_guarda_los_campos_comerciales_del_sistema_viejo(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Shipper, carrier, CFTS y libras eran columnas del listado viejo.
+
+        Dentro de la descripción no se pueden buscar ni ordenar, que es para lo
+        que se usan.
+        """
+        creada = await gestion.crear(
+            session,
+            datos=_datos(
+                entorno,
+                shipper="Proveedor Ejemplo",
+                carrier="Naviera Ejemplo",
+                foots_cft=Decimal("42.50"),
+                weight_lb=Decimal("120.000"),
+                weight_kg=Decimal("54.431"),
+                tracking="1Z999",
+                po="PO-77",
+                container="MSCU1234567",
+            ),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        fila = (
+            await session.execute(
+                text("""
+                    SELECT shipper, carrier, foots_cft, weight_lb, weight_kg
+                    FROM shipments WHERE id = :s
+                """),
+                {"s": creada.id},
+            )
+        ).one()
+        assert fila.shipper == "Proveedor Ejemplo"
+        assert fila.carrier == "Naviera Ejemplo"
+        assert fila.foots_cft == Decimal("42.50")
+        # Kilos y libras se guardan por separado: no se calcula uno del otro.
+        assert fila.weight_lb == Decimal("120.000")
+        assert fila.weight_kg == Decimal("54.431")
+
+        referencias = {
+            f.reference_type: f.value
+            for f in (
+                await session.execute(
+                    text(
+                        "SELECT reference_type, value FROM shipment_references WHERE shipment_id = :s"
+                    ),
+                    {"s": creada.id},
+                )
+            ).all()
+        }
+        assert referencias["TRACKING"] == "1Z999"
+        assert referencias["PO"] == "PO-77"
+        assert referencias["CONTAINER"] == "MSCU1234567"
 
     async def test_origen_y_destino_no_pueden_coincidir(
         self, session: AsyncSession, redis, entorno
@@ -306,3 +418,257 @@ class TestActualizar:
         assert nota.title == "Datos corregidos"
         assert "description" in nota.description
         assert "weight_kg" in nota.description
+
+
+class TestRevisionLegacy:
+    """Cargas que la migración no supo traducir con certeza (ADR-0002).
+
+    Sin forma de resolverlas quedan como deuda invisible: el número nunca baja y
+    la Fase 5 no cierra.
+    """
+
+    async def _marcada(self, session: AsyncSession, redis, entorno) -> uuid.UUID:
+        carga = await gestion.crear(
+            session,
+            datos=_datos(entorno),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+        await session.execute(
+            text("""
+                UPDATE shipments
+                SET legacy_review_required = true, legacy_status = 'PENDIENTE'
+                WHERE id = :s
+            """),
+            {"s": carga.id},
+        )
+        return carga.id
+
+    async def test_las_lista_con_su_motivo(self, session: AsyncSession, redis, entorno) -> None:
+        await self._marcada(session, redis, entorno)
+
+        cargas = await gestion.listar_en_revision(
+            session, permisos=await _permisos(session, redis, entorno["ops"])
+        )
+
+        assert len(cargas) == 1
+        assert cargas[0].legacy_status == "PENDIENTE"
+
+    async def test_resolver_quita_la_marca_y_deja_constancia(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._marcada(session, redis, entorno)
+
+        await gestion.resolver_revision(
+            session,
+            shipment_id=carga,
+            nota="Confirmado con Operaciones: llegó el 3 de marzo.",
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        fila = (
+            await session.execute(
+                text("SELECT legacy_review_required, legacy_status FROM shipments WHERE id = :s"),
+                {"s": carga},
+            )
+        ).one()
+        assert fila.legacy_review_required is False
+        # El rastro del sistema viejo no se borra nunca: sirve para auditar la
+        # traducción años después.
+        assert fila.legacy_status == "PENDIENTE"
+
+        evento = (
+            await session.execute(
+                text("""
+                    SELECT title, description FROM shipment_events
+                    WHERE shipment_id = :s AND event_type = 'CORRECTION'
+                """),
+                {"s": carga},
+            )
+        ).one()
+        assert "3 de marzo" in evento.description
+
+    async def test_sin_nota_no_se_resuelve(self, session: AsyncSession, redis, entorno) -> None:
+        """Una marca quitada sin explicación no se puede auditar después."""
+        carga = await self._marcada(session, redis, entorno)
+
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.resolver_revision(
+                session,
+                shipment_id=carga,
+                nota="   ",
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_resolver_no_cambia_el_estado(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Si además hay que corregirlo, eso va por una transición, que valida
+        el catálogo y deja su propio evento."""
+        carga = await self._marcada(session, redis, entorno)
+        antes = (
+            await session.execute(
+                text("SELECT current_status_code FROM shipments WHERE id = :s"), {"s": carga}
+            )
+        ).scalar_one()
+
+        await gestion.resolver_revision(
+            session,
+            shipment_id=carga,
+            nota="Revisado.",
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        despues = (
+            await session.execute(
+                text("SELECT current_status_code FROM shipments WHERE id = :s"), {"s": carga}
+            )
+        ).scalar_one()
+        assert despues == antes
+
+    async def test_una_carga_no_marcada_no_se_resuelve_dos_veces(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._marcada(session, redis, entorno)
+        permisos = await _permisos(session, redis, entorno["ops"])
+        await gestion.resolver_revision(
+            session,
+            shipment_id=carga,
+            nota="Revisado.",
+            actor_user_id=entorno["ops"],
+            permisos=permisos,
+        )
+
+        with pytest.raises(gestion.NoSePuedeEditar):
+            await gestion.resolver_revision(
+                session,
+                shipment_id=carga,
+                nota="Otra vez.",
+                actor_user_id=entorno["ops"],
+                permisos=permisos,
+            )
+
+    async def test_un_cliente_no_puede_resolverlas(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Decidir qué pasó de verdad con una carga migrada es de Operaciones."""
+        carga = await self._marcada(session, redis, entorno)
+
+        with pytest.raises(SinPermisoParaTransicion):
+            await gestion.resolver_revision(
+                session,
+                shipment_id=carga,
+                nota="Yo digo que está bien.",
+                actor_user_id=entorno["cliente"],
+                permisos=await _permisos(session, redis, entorno["cliente"]),
+            )
+
+
+class TestOcultar:
+    """Reemplaza al "eliminar" del sistema viejo (ADR-0007)."""
+
+    async def _crear(self, session, redis, entorno):
+        return await gestion.crear(
+            session,
+            datos=_datos(entorno),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+    async def test_ocultar_no_borra_nada(self, session: AsyncSession, redis, entorno) -> None:
+        carga = await self._crear(session, redis, entorno)
+
+        await gestion.ocultar(
+            session,
+            shipment_id=carga.id,
+            motivo="Duplicada por error de captura.",
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        fila = (
+            await session.execute(
+                text("SELECT hidden_at, hidden_by, hidden_reason FROM shipments WHERE id = :s"),
+                {"s": carga.id},
+            )
+        ).one()
+        assert fila.hidden_at is not None
+        # Quién la ocultó y por qué: una carga que desaparece sin explicación es
+        # indistinguible de una que se perdió.
+        assert fila.hidden_by == entorno["ops"]
+        assert "Duplicada" in fila.hidden_reason
+
+    async def test_sin_motivo_no_se_oculta(self, session: AsyncSession, redis, entorno) -> None:
+        carga = await self._crear(session, redis, entorno)
+
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.ocultar(
+                session,
+                shipment_id=carga.id,
+                motivo="  ",
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_una_carga_oculta_se_puede_recuperar(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._crear(session, redis, entorno)
+        permisos = await _permisos(session, redis, entorno["ops"])
+        await gestion.ocultar(
+            session,
+            shipment_id=carga.id,
+            motivo="Prueba.",
+            actor_user_id=entorno["ops"],
+            permisos=permisos,
+        )
+
+        await gestion.recuperar(
+            session, shipment_id=carga.id, actor_user_id=entorno["ops"], permisos=permisos
+        )
+
+        oculta = (
+            await session.execute(
+                text("SELECT hidden_at FROM shipments WHERE id = :s"), {"s": carga.id}
+            )
+        ).scalar_one()
+        assert oculta is None
+
+    async def test_los_documentos_y_la_historia_sobreviven(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Es la diferencia con el borrado del sistema viejo."""
+        carga = await self._crear(session, redis, entorno)
+        eventos_antes = (
+            await session.execute(
+                text("SELECT count(*) FROM shipment_events WHERE shipment_id = :s"),
+                {"s": carga.id},
+            )
+        ).scalar_one()
+
+        await gestion.ocultar(
+            session,
+            shipment_id=carga.id,
+            motivo="Prueba.",
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        eventos_despues = (
+            await session.execute(
+                text("SELECT count(*) FROM shipment_events WHERE shipment_id = :s"),
+                {"s": carga.id},
+            )
+        ).scalar_one()
+        # Y suma uno más: el de haberla ocultado.
+        assert eventos_despues == eventos_antes + 1
+        referencias = (
+            await session.execute(
+                text("SELECT count(*) FROM shipment_references WHERE shipment_id = :s"),
+                {"s": carga.id},
+            )
+        ).scalar_one()
+        assert referencias > 0

@@ -90,3 +90,66 @@ async def validar_wr_presente_para_almacenar(session: AsyncSession, shipment_id:
             "La carga se recibió en una bodega que emite Warehouse Receipt: "
             "registre el WR antes de marcarla como almacenada."
         )
+
+
+class IdentificadorFaltante(ReglaDeNegocioViolada):
+    code = "SHIPMENT_MISSING_IDENTIFIER"
+
+
+async def validar_identificador_comercial(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    origin_facility_id: UUID | None,
+    invoice: str | None,
+) -> None:
+    """Toda carga tiene que poder buscarse por su identificador de negocio.
+
+    La regla del negocio, confirmada con AMVARMAR: **solo lo que viene de una
+    bodega que emite Warehouse Receipt lleva WR; todo lo demás se identifica por
+    su factura.**
+
+    Sin esto, una carga que no viene de Miami y a la que nadie le puso factura
+    solo se puede encontrar por su número interno, que es un dato que el cliente
+    no conoce y que no aparece en ningún papel del embarque.
+
+    El flujo de alta es el mismo para las dos: cambia qué campo se exige, no los
+    pasos.
+    """
+    if origin_facility_id is not None:
+        usa_wr = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(uses_warehouse_receipt, false) FROM facilities WHERE id = :f"
+                ),
+                {"f": origin_facility_id},
+            )
+        ).scalar_one_or_none()
+
+        if usa_wr:
+            # El WR lo emite la bodega al recibir físicamente la carga, así que
+            # todavía puede no existir al darla de alta. Se exige al almacenar
+            # (`validar_wr_presente_para_almacenar`), no acá.
+            return
+
+    if (invoice or "").strip():
+        return
+
+    # Puede que la factura ya esté cargada como referencia de una edición previa.
+    ya_tiene = (
+        await session.execute(
+            text("""
+                SELECT 1 FROM shipment_references
+                WHERE shipment_id = :s AND reference_type = 'INVOICE'
+                  AND coalesce(trim(value), '') <> ''
+                LIMIT 1
+            """),
+            {"s": shipment_id},
+        )
+    ).scalar_one_or_none()
+
+    if ya_tiene is None:
+        raise IdentificadorFaltante(
+            "Esta carga no viene de una bodega que emita Warehouse Receipt, así que "
+            "necesita el número de factura para poder encontrarla."
+        )

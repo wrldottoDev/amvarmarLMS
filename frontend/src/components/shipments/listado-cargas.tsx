@@ -1,56 +1,91 @@
-import { ArrowRight, MapPin } from "lucide-react";
+"use client";
+
+import { ArrowRight, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { BadgeEstado, BadgePendientes } from "./badges-carga";
+import {
+  columnasNumericas,
+  contenidoColumna,
+  usePreferenciaColumnas,
+} from "@/features/shipments/columnas";
 import type { CargaResumen } from "@/lib/api/tipos";
-import { formatearFecha } from "@/lib/utilidades";
+import { clases, formatearFecha } from "@/lib/utilidades";
 
+/**
+ * Cómo se identifica una carga en pantalla.
+ *
+ * Lo de Miami lleva Warehouse Receipt; lo demás va por factura. Ese es el orden
+ * en que la gente la busca, así que ese es el orden en que se muestra. El
+ * número interno solo aparece si no hay ninguno de los dos.
+ */
 function referencia(carga: CargaResumen) {
-  return carga.invoice || carga.shipment_number;
+  return carga.wr || carga.invoice || carga.shipment_number;
 }
 
 function cantidadPendiente(carga: CargaResumen, esCliente: boolean) {
   return esCliente ? carga.client_action_required_count : carga.open_requirements_count;
 }
 
-export function ListadoCargas({ cargas, esCliente }: { cargas: CargaResumen[]; esCliente: boolean }) {
+export function ListadoCargas({
+  cargas,
+  esCliente,
+  empresaVisible = false,
+}: {
+  cargas: CargaResumen[];
+  esCliente: boolean;
+  empresaVisible?: boolean;
+}) {
+  const { data: preferencia } = usePreferenciaColumnas();
+
+  // Mientras carga la preferencia se usan las columnas mínimas, para que la
+  // tabla no salte de ancho al llegar la respuesta.
+  const visibles = preferencia?.visibles ?? ["identificador", "estado", "pendientes"];
+  const etiquetas = new Map(preferencia?.disponibles.map((c) => [c.clave, c.etiqueta]) ?? []);
+
+  // Un cliente ve una sola empresa: la columna sería la misma en cada fila.
+  const columnas = visibles.filter((c) => c !== "empresa" || (empresaVisible && !esCliente));
+
   return (
     <>
       <div className="hidden overflow-hidden rounded-lg border bg-white md:block">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left">
+          <table className="w-full border-collapse text-left">
             <thead className="border-b bg-[#f8f9fa] text-xs font-bold uppercase text-[var(--texto-secundario)]">
               <tr>
-                <th className="px-5 py-3">Carga</th>
-                <th className="px-5 py-3">Ruta</th>
-                <th className="px-5 py-3">ETA</th>
-                <th className="px-5 py-3">Estado</th>
-                <th className="px-5 py-3">Pendientes</th>
-                <th className="w-14 px-4 py-3"><span className="sr-only">Ver</span></th>
+                {columnas.map((clave) => (
+                  <th
+                    key={clave}
+                    className={clases(
+                      "whitespace-nowrap px-4 py-3",
+                      columnasNumericas.has(clave) && "text-right",
+                    )}
+                  >
+                    {etiquetas.get(clave) ?? clave}
+                  </th>
+                ))}
+                <th className="w-12 px-3 py-3">
+                  <span className="sr-only">Ver</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {cargas.map((carga) => (
-                <tr key={carga.id} className="group hover:bg-[#f8fafb]">
-                  <td className="px-5 py-4">
-                    <Link href={`/shipments/${carga.id}`} className="font-semibold text-[var(--mar)] hover:underline">
-                      {referencia(carga)}
-                    </Link>
-                    {carga.invoice ? <p className="mt-1 text-xs text-[var(--texto-secundario)]">{carga.shipment_number}</p> : null}
-                  </td>
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span>{carga.origin.location_code}</span>
-                      <ArrowRight className="size-3.5 text-[#879399]" aria-hidden="true" />
-                      <span>{carga.destination.location_code}</span>
-                    </div>
-                    <p className="mt-1 max-w-60 truncate text-xs text-[var(--texto-secundario)]">
-                      {carga.origin.name} · {carga.destination.name}
-                    </p>
-                  </td>
-                  <td className="px-5 py-4 text-sm">{formatearFecha(carga.estimated_arrival_at)}</td>
-                  <td className="px-5 py-4"><BadgeEstado estado={carga.status} /></td>
-                  <td className="px-5 py-4"><BadgePendientes cantidad={cantidadPendiente(carga, esCliente)} /></td>
-                  <td className="px-4 py-4">
+                <tr
+                  key={carga.id}
+                  className={clases("group hover:bg-[#f8fafb]", carga.hidden_at && "opacity-55")}
+                >
+                  {columnas.map((clave) => (
+                    <td
+                      key={clave}
+                      className={clases(
+                        "px-4 py-3.5 text-sm",
+                        columnasNumericas.has(clave) && "text-right tabular-nums",
+                      )}
+                    >
+                      <Celda clave={clave} carga={carga} esCliente={esCliente} />
+                    </td>
+                  ))}
+                  <td className="px-3 py-3.5">
                     <Link
                       href={`/shipments/${carga.id}`}
                       className="grid size-9 place-items-center rounded-md text-[var(--mar)] opacity-60 hover:bg-[#e8f0f2] group-hover:opacity-100"
@@ -67,29 +102,66 @@ export function ListadoCargas({ cargas, esCliente }: { cargas: CargaResumen[]; e
         </div>
       </div>
 
-      <div className="grid gap-3 md:hidden">
+      {/* En móvil una tabla de trece columnas es inusable: se muestra lo que
+          identifica la carga y su estado, que es con lo que se decide si abrirla. */}
+      <ul className="grid gap-2 md:hidden">
         {cargas.map((carga) => (
-          <Link key={carga.id} href={`/shipments/${carga.id}`} className="rounded-lg border bg-white p-4 shadow-sm active:bg-[#f8fafb]">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-[var(--mar)]">{referencia(carga)}</p>
-                {carga.invoice ? <p className="mt-0.5 truncate text-xs text-[var(--texto-secundario)]">{carga.shipment_number}</p> : null}
-              </div>
+          <li key={carga.id}>
+            <Link
+              href={`/shipments/${carga.id}`}
+              className={clases(
+                "flex items-center gap-3 rounded-lg border bg-white px-4 py-3.5",
+                carga.hidden_at && "opacity-55",
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <strong className="block text-sm">{referencia(carga)}</strong>
+                <span className="block text-xs text-[var(--texto-secundario)]">
+                  {carga.origin.location_code} → {carga.destination.location_code} ·{" "}
+                  {formatearFecha(carga.created_at)}
+                </span>
+              </span>
               <BadgeEstado estado={carga.status} />
-            </div>
-            <div className="mt-4 flex items-center gap-2 text-sm">
-              <MapPin className="size-4 shrink-0 text-[var(--marca)]" aria-hidden="true" />
-              <span>{carga.origin.location_code}</span>
-              <ArrowRight className="size-3.5 text-[#879399]" aria-hidden="true" />
-              <span>{carga.destination.location_code}</span>
-            </div>
-            <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3">
-              <span className="text-xs text-[var(--texto-secundario)]">ETA {formatearFecha(carga.estimated_arrival_at)}</span>
-              <BadgePendientes cantidad={cantidadPendiente(carga, esCliente)} />
-            </div>
-          </Link>
+            </Link>
+          </li>
         ))}
-      </div>
+      </ul>
     </>
   );
+}
+
+function Celda({
+  clave,
+  carga,
+  esCliente,
+}: {
+  clave: string;
+  carga: CargaResumen;
+  esCliente: boolean;
+}) {
+  if (clave === "identificador") {
+    return (
+      <span className="flex items-center gap-1.5">
+        {carga.hidden_at ? (
+          <EyeOff
+            className="size-3.5 shrink-0 text-[var(--texto-secundario)]"
+            aria-label="Oculta"
+          />
+        ) : null}
+        <Link
+          href={`/shipments/${carga.id}`}
+          className="font-semibold text-[var(--mar)] hover:underline"
+        >
+          {referencia(carga)}
+        </Link>
+      </span>
+    );
+  }
+
+  if (clave === "estado") return <BadgeEstado estado={carga.status} />;
+  if (clave === "pendientes")
+    return <BadgePendientes cantidad={cantidadPendiente(carga, esCliente)} />;
+
+  const valor = contenidoColumna[clave]?.(carga) ?? "—";
+  return <span className={valor === "—" ? "text-[var(--texto-secundario)]" : ""}>{valor}</span>;
 }

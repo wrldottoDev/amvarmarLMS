@@ -59,6 +59,9 @@ class FiltrosListado:
     # Busca en shipment_number y en el valor de cualquier referencia.
     texto: str | None = None
     incluir_archivadas: bool = False
+    # El "eliminar" del sistema viejo. Por defecto no se listan; Operaciones
+    # puede pedirlas para revisarlas o recuperarlas.
+    incluir_ocultas: bool = False
 
 
 # Columnas del listado. Explícitas y no `SELECT *`: agregar una columna a
@@ -73,6 +76,11 @@ _COLUMNAS_LISTADO = """
     s.current_location,
     s.package_count,
     s.weight_kg,
+    s.weight_lb,
+    s.foots_cft,
+    s.shipper,
+    s.carrier,
+    s.hidden_at,
     s.permit_review_required,
     s.legacy_review_required,
     s.created_at,
@@ -89,6 +97,29 @@ _COLUMNAS_LISTADO = """
         ORDER BY r.is_primary DESC, r.created_at
         LIMIT 1
     ) AS factura,
+    -- Tracking, PO y contenedor salen de las referencias, igual que la factura:
+    -- una carga puede tener varias, y el sistema viejo las metía separadas por
+    -- comas en un solo campo de texto.
+    (
+        SELECT r.value FROM shipment_references r
+        WHERE r.shipment_id = s.id AND r.reference_type = 'TRACKING'
+        ORDER BY r.is_primary DESC, r.created_at LIMIT 1
+    ) AS tracking,
+    (
+        SELECT r.value FROM shipment_references r
+        WHERE r.shipment_id = s.id AND r.reference_type = 'PO'
+        ORDER BY r.is_primary DESC, r.created_at LIMIT 1
+    ) AS po,
+    (
+        SELECT r.value FROM shipment_references r
+        WHERE r.shipment_id = s.id AND r.reference_type = 'CONTAINER'
+        ORDER BY r.is_primary DESC, r.created_at LIMIT 1
+    ) AS contenedor,
+    (
+        SELECT r.value FROM shipment_references r
+        WHERE r.shipment_id = s.id AND r.reference_type = 'WR'
+        ORDER BY r.is_primary DESC, r.created_at LIMIT 1
+    ) AS wr,
     (
         SELECT count(*) FROM shipment_requirements q
         WHERE q.shipment_id = s.id
@@ -116,6 +147,8 @@ async def listar_shipments(
         return Pagina(items=[], next_cursor=None, has_more=False)
 
     condiciones = ["s.deleted_at IS NULL"]
+    if not filtros.incluir_ocultas:
+        condiciones.append("s.hidden_at IS NULL")
     parametros: dict[str, Any] = {"limite": limite + 1}
 
     if not filtros.incluir_archivadas:

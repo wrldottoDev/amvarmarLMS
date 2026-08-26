@@ -1,8 +1,9 @@
 from datetime import datetime
 from enum import StrEnum
+from uuid import UUID
 
-from sqlalchemy import CheckConstraint, SmallInteger, String, text
-from sqlalchemy.dialects.postgresql import CITEXT
+from sqlalchemy import CheckConstraint, ForeignKey, SmallInteger, String, text
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base, TimestampMixin, UUIDPk
@@ -63,3 +64,30 @@ class User(Base, TimestampMixin):
         CheckConstraint("failed_login_attempts >= 0", name="intentos_fallidos_no_negativos"),
         CheckConstraint("authz_version > 0", name="authz_version_positiva"),
     )
+
+
+class ColumnPreference(Base):
+    """Qué columnas ve cada persona en cada listado.
+
+    El sistema viejo lo tenía en dos tablas —una para administración y otra para
+    clientes— porque eran dos plantillas distintas. Acá es una sola con la
+    pantalla como parte de la clave: agregar un listado nuevo no debería obligar
+    a crear otra tabla.
+
+    Es preferencia de interfaz, no configuración del negocio: si se pierde, la
+    persona vuelve a marcar sus columnas y no pasa nada más.
+    """
+
+    __tablename__ = "column_preferences"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # `shipments`, `dispatches`… La pantalla a la que aplica.
+    vista: Mapped[str] = mapped_column(String(40), primary_key=True)
+
+    # Lista ordenada de columnas visibles. Guardar el orden y no solo cuáles
+    # permite que cada quien las acomode como las usa.
+    columnas: Mapped[list[str]] = mapped_column(JSONB)
+
+    updated_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
