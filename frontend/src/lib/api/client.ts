@@ -25,6 +25,29 @@ function conAutorizacion(input: RequestInfo | URL, init: RequestInit | undefined
   return { ...init, headers, credentials: "include" as const };
 }
 
+/** Evento que avisa que el servidor exige cambiar la contraseña temporal. */
+export const EVENTO_CAMBIO_OBLIGATORIO = "amvarmar:debe-cambiar-contrasena";
+
+/**
+ * Avisa que el servidor bloqueó por contraseña temporal.
+ *
+ * Se emite un evento en vez de navegar acá: esto corre fuera de React, donde no
+ * hay router, y `window.location` recargaría la aplicación entera perdiendo el
+ * token que vive en memoria.
+ *
+ * El bloqueo lo impone la API, no la interfaz: una pantalla se puede saltar
+ * llamando al endpoint directo. Esto solo evita que la persona vea errores sin
+ * entender qué se espera de ella.
+ */
+function avisarSiDebeCambiarContrasena(respuesta: Response, cuerpo: unknown) {
+  if (respuesta.status !== 403 || typeof window === "undefined") return;
+
+  const contenido = (cuerpo as { error?: { code?: string } })?.error;
+  if (contenido?.code !== "DEBE_CAMBIAR_CONTRASENA") return;
+
+  window.dispatchEvent(new CustomEvent(EVENTO_CAMBIO_OBLIGATORIO));
+}
+
 const fetchAutenticado: typeof fetch = async (input, init) => {
   const ruta = rutaDe(input);
   const tokenInicial = obtenerAccessToken();
@@ -85,6 +108,8 @@ function esRegistro(valor: unknown): valor is Record<string, unknown> {
 }
 
 export function convertirErrorApi(error: unknown, respuesta: Response) {
+  avisarSiDebeCambiarContrasena(respuesta, error);
+
   if (esRegistro(error) && esRegistro(error.error)) {
     const contenido = error.error;
     return new ErrorApi(

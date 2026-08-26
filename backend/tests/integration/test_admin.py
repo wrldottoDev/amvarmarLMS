@@ -6,6 +6,7 @@ alcance, así que un `CLIENT_ADMIN` administra su empresa y nada más.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from scripts.seed_rbac import sembrar as sembrar_rbac
@@ -187,6 +188,45 @@ class TestUsuarios:
             )
         ).scalar_one()
         assert debe_cambiar is True
+
+    async def test_el_alta_emite_una_invitacion_de_un_solo_uso(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Reemplaza `credentials.html`, que mandaba la contraseña en texto plano.
+
+        Se comprueba que quede el token y que la base guarde su huella y no el
+        token: si guardara el token, quien pudiera leer la base entraría a
+        cualquier cuenta recién creada.
+        """
+        permisos = await _permisos(session, redis, entorno["super"])
+
+        creado = await service.crear_usuario(
+            session,
+            email="invitado@alfa.example.com",
+            first_name="Rosa",
+            last_name="Díaz",
+            role_code=RoleCode.CLIENT_USER,
+            company_id=entorno["alfa"],
+            phone=None,
+            permisos=permisos,
+        )
+
+        fila = (
+            await session.execute(
+                text("""
+                    SELECT purpose, token_hash, expires_at, consumed_at
+                    FROM one_time_tokens WHERE user_id = :u
+                """),
+                {"u": creado.id},
+            )
+        ).one()
+
+        assert fila.purpose == "INVITATION"
+        assert fila.consumed_at is None
+        # 48 horas, con margen para el tiempo que tardó la prueba.
+        assert timedelta(hours=47) < fila.expires_at - datetime.now(UTC) <= timedelta(hours=48)
+        # La huella es opaca: no contiene la contraseña temporal ni el correo.
+        assert creado.password_temporal.encode() not in bytes(fila.token_hash)
 
     async def test_el_personal_interno_no_lleva_empresa(
         self, session: AsyncSession, redis, entorno

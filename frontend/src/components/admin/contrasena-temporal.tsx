@@ -1,23 +1,51 @@
 "use client";
 
-import { Check, Copy, KeyRound } from "lucide-react";
+import { Check, Copy, KeyRound, Mail, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
 /**
- * Muestra la contraseña temporal recién generada.
+ * En qué quedó una contraseña recién generada.
  *
- * Se ve UNA sola vez: no se guarda en claro en ningún lado y no hay forma de
- * volver a consultarla. Por eso el aviso es explícito y el botón de copiar está
- * a la mano — si se cierra sin copiarla, hay que generar otra.
+ * Tres situaciones distintas, no dos: el alta con invitación entregada, el alta
+ * con el correo caído, y el restablecimiento que hace un administrador —donde
+ * no hay invitación ninguna y la temporal siempre es la vía—.
+ *
+ * Cuando la invitación salió, la temporal es solo un respaldo y arranca
+ * plegada: mostrarla de entrada empuja a repartir contraseñas por chat cuando
+ * no hace falta. En los tres casos se ve UNA vez; no se guarda en claro en
+ * ningún lado y no hay forma de volver a consultarla.
  */
+export type EstadoInvitacion = "enviada" | "fallo" | "no-aplica";
+
+const TONO = {
+  enviada: {
+    caja: "border-[#b7e0c2] bg-[#e9f6ec]",
+    texto: "text-[#1c6b33]",
+  },
+  fallo: {
+    caja: "border-[#e6c07a] bg-[#fdf4e3]",
+    texto: "text-[#8a5a12]",
+  },
+  "no-aplica": {
+    caja: "border-[#b7e0c2] bg-[#e9f6ec]",
+    texto: "text-[#1c6b33]",
+  },
+} as const;
+
 export function ContrasenaTemporal({
   correo,
   contrasena,
+  invitacion,
 }: {
   correo: string;
   contrasena: string;
+  invitacion: EstadoInvitacion;
 }) {
   const [copiado, setCopiado] = useState(false);
+  // Plegada solo cuando hay otra vía de acceso viva.
+  const [verContrasena, setVerContrasena] = useState(invitacion !== "enviada");
+
+  const tono = TONO[invitacion];
 
   async function copiar() {
     await navigator.clipboard.writeText(contrasena);
@@ -26,39 +54,74 @@ export function ContrasenaTemporal({
   }
 
   return (
-    <div className="space-y-3 rounded-md border border-[#b7e0c2] bg-[#e9f6ec] px-4 py-4">
-      <p className="flex items-center gap-2 text-sm font-semibold text-[#1c6b33]">
-        <KeyRound className="size-4" aria-hidden="true" />
-        Cuenta creada para {correo}
+    <div className={`space-y-3 rounded-md border px-4 py-4 ${tono.caja}`}>
+      <p className={`flex items-center gap-2 text-sm font-semibold ${tono.texto}`}>
+        {invitacion === "enviada" ? (
+          <Mail className="size-4" aria-hidden="true" />
+        ) : invitacion === "fallo" ? (
+          <TriangleAlert className="size-4" aria-hidden="true" />
+        ) : (
+          <KeyRound className="size-4" aria-hidden="true" />
+        )}
+        {invitacion === "no-aplica" ? "Contraseña restablecida" : "Cuenta creada"} para {correo}
       </p>
 
-      <div className="flex items-center gap-2">
-        <code className="flex-1 overflow-x-auto rounded border bg-white px-3 py-2 font-mono text-sm">
-          {contrasena}
-        </code>
+      {invitacion === "enviada" ? (
+        <p className={`text-sm ${tono.texto}`}>
+          Le mandamos un enlace para que elija su contraseña. Vence en 48 horas y sirve una sola
+          vez.
+        </p>
+      ) : invitacion === "fallo" ? (
+        <p className={`text-sm ${tono.texto}`}>
+          <strong>El correo de invitación no salió.</strong> Esta contraseña temporal es el único
+          acceso que tiene esa persona ahora mismo.
+        </p>
+      ) : (
+        <p className={`text-sm ${tono.texto}`}>
+          Sus sesiones abiertas se cerraron. Necesita esta contraseña para volver a entrar.
+        </p>
+      )}
+
+      {verContrasena ? (
+        <>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 overflow-x-auto rounded border bg-white px-3 py-2 font-mono text-sm">
+              {contrasena}
+            </code>
+            <button
+              type="button"
+              className="flex h-10 shrink-0 items-center gap-1.5 rounded-md border bg-white px-3 text-sm font-medium hover:bg-[#f0f3f4]"
+              onClick={() => void copiar()}
+            >
+              {copiado ? (
+                <>
+                  <Check className="size-4" aria-hidden="true" />
+                  Copiada
+                </>
+              ) : (
+                <>
+                  <Copy className="size-4" aria-hidden="true" />
+                  Copiar
+                </>
+              )}
+            </button>
+          </div>
+
+          <p className="text-sm text-[var(--texto-secundario)]">
+            Pasásela por un medio seguro. <strong>No se va a volver a mostrar</strong>, y la
+            persona tendrá que cambiarla la primera vez que entre.
+          </p>
+        </>
+      ) : (
         <button
           type="button"
-          className="flex h-10 shrink-0 items-center gap-1.5 rounded-md border bg-white px-3 text-sm font-medium hover:bg-[#f0f3f4]"
-          onClick={() => void copiar()}
+          className={`inline-flex items-center gap-1.5 text-sm font-semibold underline ${tono.texto}`}
+          onClick={() => setVerContrasena(true)}
         >
-          {copiado ? (
-            <>
-              <Check className="size-4" aria-hidden="true" />
-              Copiada
-            </>
-          ) : (
-            <>
-              <Copy className="size-4" aria-hidden="true" />
-              Copiar
-            </>
-          )}
+          <KeyRound className="size-4" aria-hidden="true" />
+          Ver la contraseña temporal de respaldo
         </button>
-      </div>
-
-      <p className="text-sm text-[#1c6b33]">
-        Pasásela por un medio seguro. <strong>No se va a volver a mostrar</strong>, y la persona
-        tendrá que cambiarla la primera vez que entre.
-      </p>
+      )}
     </div>
   );
 }

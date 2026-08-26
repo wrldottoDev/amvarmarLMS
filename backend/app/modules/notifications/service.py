@@ -20,11 +20,14 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.logging import obtener_logger
 from app.core.observability import metrics
 from app.core.pagination import Cursor, Pagina, armar_pagina
+from app.core.security.token_fingerprint import fingerprint
 from app.modules.notifications import email as correo
 from app.modules.notifications.catalog import DefinicionEvento, definicion
+from app.modules.notifications.catalog import texto as texto_del_evento
 from app.modules.notifications.models import Channel, DeliveryStatus
 
 _log = obtener_logger("notificaciones")
@@ -76,6 +79,76 @@ async def destinatarios_de_empresa(session: AsyncSession, company_id: UUID) -> l
     ]
 
 
+async def destinatario_por_id(session: AsyncSession, user_id: UUID) -> Destinatario | None:
+    """Una persona concreta, para los avisos de su propia cuenta.
+
+    No filtra por estado ni por membresía: un aviso de seguridad o una
+    invitación van a esa cuenta y a ninguna otra, sin importar de qué empresa
+    sea ni si el alta todavía no terminó.
+    """
+    fila = (
+        await session.execute(
+            text("""
+                SELECT u.id, u.email, u.email_verified_at IS NOT NULL AS verificado,
+                       (SELECT cm.company_id FROM company_memberships cm
+                        WHERE cm.user_id = u.id AND cm.status = 'ACTIVE' LIMIT 1) AS empresa
+                FROM users u
+                WHERE u.id = :u AND u.deleted_at IS NULL
+            """),
+            {"u": user_id},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        return None
+
+    return Destinatario(
+        user_id=fila.id,
+        email=fila.email,
+        email_verificado=fila.verificado,
+        company_id=fila.empresa,
+    )
+
+
+async def destinatarios_de_operaciones(session: AsyncSession) -> list[Destinatario]:
+    """Staff interno que debe enterarse de lo que hace un cliente.
+
+    El staff no tiene membresía de empresa (ADR-0011), así que se lo busca por
+    rol y no por `company_memberships`. Se excluye a `OPS_AGENT` a propósito:
+    el aviso de "hay una solicitud para aprobar" le sirve a quien puede
+    aprobarla, y llenarle la bandeja a todo el equipo con avisos que no puede
+    accionar termina en que nadie los lee.
+
+    `company_id` queda en `None`: es un aviso interno, no pertenece a la
+    empresa que lo originó, y ponerla ahí lo mostraría bajo el filtro de esa
+    empresa en la bandeja.
+    """
+    filas = (
+        await session.execute(
+            text("""
+                SELECT DISTINCT u.id, u.email, u.email_verified_at IS NOT NULL AS verificado
+                FROM user_role_assignments ura
+                JOIN roles r ON r.id = ura.role_id
+                JOIN users u ON u.id = ura.user_id
+                WHERE r.code IN ('OPS_ADMIN', 'SUPER_ADMIN')
+                  AND (ura.expires_at IS NULL OR ura.expires_at > now())
+                  AND u.status = 'ACTIVE'
+                  AND u.deleted_at IS NULL
+            """)
+        )
+    ).all()
+
+    return [
+        Destinatario(
+            user_id=f.id,
+            email=f.email,
+            email_verificado=f.verificado,
+            company_id=None,
+        )
+        for f in filas
+    ]
+
+
 async def _crear_notificacion(
     session: AsyncSession,
     *,
@@ -84,6 +157,7 @@ async def _crear_notificacion(
     resource_type: str | None,
     resource_id: UUID | None,
     dedup_key: str,
+    referencia: str | None,
 ) -> UUID | None:
     """Crea la fila del aviso. Devuelve `None` si ya existía.
 
@@ -114,7 +188,7 @@ async def _crear_notificacion(
                 "codigo": evento.codigo,
                 "critico": evento.critico,
                 "titulo": evento.asunto,
-                "cuerpo": evento.mensaje,
+                "cuerpo": texto_del_evento(evento, referencia),
                 "recurso_tipo": resource_type,
                 "recurso_id": resource_id,
                 "dedup": dedup_key,
@@ -210,8 +284,22 @@ async def notificar(
     resource_type: str | None = None,
     resource_id: UUID | None = None,
     dedup_key: str,
+    referencia: str | None = None,
+    enlace: str | None = None,
+    exigir_correo_verificado: bool = True,
 ) -> list[UUID]:
     """Avisa a un conjunto de personas por todos los canales que correspondan.
+
+    `referencia` es el identificador que la persona reconoce: el WR, el número
+    de factura o el número de solicitud. Es lo único de negocio que ADR-0008
+    deja salir en un correo. `enlace` sobreescribe el que se deriva de la ruta
+    del catálogo, y hoy solo lo usa la invitación, cuya URL lleva un token.
+
+    `exigir_correo_verificado=False` es para los avisos donde el correo mismo
+    ES la verificación: la invitación y la recuperación. Exigirlo ahí sería
+    circular — la persona no puede verificar su dirección sin recibir el correo
+    que le pide verificarla — y dejaría sin acceso a todas las cuentas
+    migradas, que llegaron sin verificar.
 
     Devuelve los ids de las notificaciones creadas. Un destinatario que ya
     tenía el aviso no genera uno nuevo.
@@ -230,6 +318,7 @@ async def notificar(
             resource_type=resource_type,
             resource_id=resource_id,
             dedup_key=dedup_key,
+            referencia=referencia,
         )
 
         if notification_id is None:
@@ -241,6 +330,9 @@ async def notificar(
                 evento=evento,
                 resource_id=resource_id,
                 dedup_key=dedup_key,
+                referencia=referencia,
+                enlace=enlace,
+                exigir_correo_verificado=exigir_correo_verificado,
             )
             continue
 
@@ -263,6 +355,9 @@ async def notificar(
             evento=evento,
             resource_id=resource_id,
             dedup_key=dedup_key,
+            referencia=referencia,
+            enlace=enlace,
+            exigir_correo_verificado=exigir_correo_verificado,
         )
 
     return creadas
@@ -276,6 +371,9 @@ async def _entregar_correo(
     evento: DefinicionEvento,
     resource_id: UUID | None,
     dedup_key: str,
+    referencia: str | None = None,
+    enlace: str | None = None,
+    exigir_correo_verificado: bool = True,
 ) -> None:
     metadatos: dict[str, object] = {
         "dedup_key": dedup_key,
@@ -284,7 +382,9 @@ async def _entregar_correo(
 
     # Sin correo verificado no se envía. Mandar a una dirección no verificada
     # filtraría el aviso a quien haya puesto un correo ajeno al registrarse.
-    if not destinatario.email or not destinatario.email_verificado:
+    # La invitación y la recuperación son la excepción: ahí el correo es el
+    # mecanismo de verificación, no algo que dependa de ella.
+    if not destinatario.email or (exigir_correo_verificado and not destinatario.email_verificado):
         await _registrar_entrega(
             session,
             notification_id=notification_id,
@@ -299,7 +399,12 @@ async def _entregar_correo(
     if await _ya_enviado_por_correo(session, dedup_key, destinatario.user_id):
         return
 
-    compuesto = correo.componer(evento, resource_id=str(resource_id) if resource_id else None)
+    compuesto = correo.componer(
+        evento,
+        resource_id=str(resource_id) if resource_id else None,
+        referencia=referencia,
+        enlace=enlace,
+    )
 
     try:
         await correo.enviar(destinatario.email, compuesto)
@@ -333,6 +438,9 @@ async def _reintentar_correo(
     evento: DefinicionEvento,
     resource_id: UUID | None,
     dedup_key: str,
+    referencia: str | None = None,
+    enlace: str | None = None,
+    exigir_correo_verificado: bool = True,
 ) -> None:
     """El aviso ya existía; solo falta ver si el correo quedó sin enviar."""
     pendiente = (
@@ -361,7 +469,68 @@ async def _reintentar_correo(
         evento=evento,
         resource_id=resource_id,
         dedup_key=dedup_key,
+        referencia=referencia,
+        enlace=enlace,
+        exigir_correo_verificado=exigir_correo_verificado,
     )
+
+
+async def enviar_enlace_de_cuenta(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    event_code: str,
+    token: str,
+) -> bool:
+    """Manda un correo con un enlace de un solo uso. Devuelve si se entregó.
+
+    **No pasa por el outbox, a diferencia de todo lo demás.** El outbox guarda
+    su `payload` en la base, y meter ahí el token en claro anularía el motivo de
+    que `one_time_tokens` guarde solo su huella: quien pudiera leer la base
+    podría entrar a cualquier cuenta. Se paga con que un relay caído pierde el
+    correo, y por eso esto devuelve un booleano en vez de lanzar — el llamador
+    decide qué hacer. En el alta hay salida: el administrador todavía tiene la
+    contraseña temporal para entregarla a mano.
+
+    La `dedup_key` incluye la huella del token, no el token: dos pedidos de
+    recuperación seguidos son dos correos distintos y los dos deben salir, pero
+    reprocesar el mismo pedido no debe mandarlo dos veces.
+    """
+    evento = definicion(event_code)
+    if evento is None:
+        raise EventoDesconocido(event_code)
+
+    destinatario = await destinatario_por_id(session, user_id)
+    if destinatario is None:
+        return False
+
+    base = get_settings().frontend_base_url.rstrip("/")
+    enlace = f"{base}{evento.ruta.format(id=token)}"
+
+    try:
+        await notificar(
+            session,
+            event_code=event_code,
+            destinatarios=[destinatario],
+            resource_type="user",
+            resource_id=user_id,
+            dedup_key=f"cuenta:{event_code}:{fingerprint(token).hex()}",
+            enlace=enlace,
+            # El correo es el que verifica la dirección; no puede depender de
+            # que ya esté verificada.
+            exigir_correo_verificado=False,
+        )
+    except correo.EnvioFallido as error:
+        # La entrega ya quedó registrada como FAILED dentro de `notificar`, con
+        # su motivo. Acá solo se evita que el fallo tumbe la operación que la
+        # originó: crear un usuario o pedir una recuperación.
+        _log.warning(
+            "no se pudo enviar el enlace de cuenta",
+            extra={"evento": event_code, "user_id": str(user_id), "error": str(error)[:200]},
+        )
+        return False
+
+    return True
 
 
 # --- Bandeja ---

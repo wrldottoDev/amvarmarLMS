@@ -4,10 +4,18 @@ import { clases } from "@/lib/utilidades";
 interface PropiedadesCampo extends InputHTMLAttributes<HTMLInputElement> {
   etiqueta: string;
   error?: string;
+  /** Explicación bajo el campo. Se lee junto con la etiqueta, no en lugar de ella. */
+  ayuda?: string;
 }
 
-export function Campo({ etiqueta, error, className, id, ...propiedades }: PropiedadesCampo) {
+export function Campo({ etiqueta, error, ayuda, className, id, ...propiedades }: PropiedadesCampo) {
   const campoId = id ?? propiedades.name;
+  // Los dos van en `aria-describedby`: si solo fuera el error, quien use lector
+  // de pantalla no se enteraría de la regla hasta después de incumplirla.
+  const descripcion = [ayuda && `${campoId}-ayuda`, error && `${campoId}-error`]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <label className="grid gap-1.5 text-sm font-medium text-[#334047]" htmlFor={campoId}>
       {etiqueta}
@@ -19,9 +27,14 @@ export function Campo({ etiqueta, error, className, id, ...propiedades }: Propie
           className,
         )}
         aria-invalid={Boolean(error)}
-        aria-describedby={error ? `${campoId}-error` : undefined}
+        aria-describedby={descripcion || undefined}
         {...propiedades}
       />
+      {ayuda ? (
+        <span id={`${campoId}-ayuda`} className="text-xs font-normal text-[var(--texto-secundario)]">
+          {ayuda}
+        </span>
+      ) : null}
       {error ? (
         <span id={`${campoId}-error`} className="text-xs font-normal text-[var(--peligro)]">
           {error}

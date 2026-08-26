@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.errors import ReglaDeNegocioViolada
 from app.core.observability import metrics
 from app.core.security.argon2 import hash_password, verificar_y_rehashear_si_corresponde
 from app.core.security.jwt import (
@@ -438,18 +439,37 @@ async def consumir_token_recuperacion(
     Revoca además todas las sesiones del usuario: si la contraseña se cambió
     porque alguien más la tenía, dejar sesiones vivas anularía el cambio.
     """
+    return await _consumir_token_de_contrasena(
+        session, token=token, proposito="PASSWORD_RESET", nueva_password=nueva_password
+    )
+
+
+async def _consumir_token_de_contrasena(
+    session: AsyncSession,
+    *,
+    token: str,
+    proposito: str,
+    nueva_password: str,
+) -> UUID:
+    """Canje de un token de un solo uso por una contraseña nueva.
+
+    Vale igual para la recuperación y para la invitación: en los dos casos
+    alguien que probó su acceso al buzón elige una contraseña. El propósito va
+    en el WHERE y no solo en la búsqueda, para que un token de invitación no
+    sirva en el endpoint de recuperación ni al revés.
+    """
     fila = (
         await session.execute(
             text("""
                 UPDATE one_time_tokens
                 SET consumed_at = now()
                 WHERE token_hash = :token_hash
-                  AND purpose = 'PASSWORD_RESET'
+                  AND purpose = :proposito
                   AND consumed_at IS NULL
                   AND expires_at > now()
                 RETURNING user_id
             """),
-            {"token_hash": fingerprint(token)},
+            {"token_hash": fingerprint(token), "proposito": proposito},
         )
     ).one_or_none()
 
@@ -473,6 +493,87 @@ async def consumir_token_recuperacion(
     await _revocar_todas(session, user_id, RevokeReason.PASSWORD_CHANGED)
 
     return user_id
+
+
+# --- Invitación (reemplaza el correo de credenciales del sistema anterior) ---
+
+# 48 horas: el alta la hace un administrador en horario de oficina y la persona
+# puede abrir el correo al día siguiente. Más largo que la recuperación porque
+# nadie está esperando este enlace, más corto que "para siempre" porque sigue
+# siendo un acceso a la cuenta.
+TTL_INVITACION_SEGUNDOS = 48 * 3600
+
+
+async def crear_token_invitacion(session: AsyncSession, user_id: UUID) -> str:
+    """Emite el enlace de alta para una cuenta recién creada.
+
+    A diferencia de la recuperación, no busca por correo: el llamador acaba de
+    crear la fila y ya tiene el id. Buscar por correo acá abriría una vía para
+    pedir una invitación de una cuenta ajena.
+    """
+    await session.execute(
+        text("""
+            UPDATE one_time_tokens SET consumed_at = now()
+            WHERE user_id = :user_id AND purpose = 'INVITATION' AND consumed_at IS NULL
+        """),
+        {"user_id": user_id},
+    )
+
+    token = secrets.token_urlsafe(48)
+    await session.execute(
+        text("""
+            INSERT INTO one_time_tokens (user_id, purpose, token_hash, expires_at)
+            VALUES (:user_id, 'INVITATION', :token_hash, :expires_at)
+        """),
+        {
+            "user_id": user_id,
+            "token_hash": fingerprint(token),
+            "expires_at": datetime.now(UTC) + timedelta(seconds=TTL_INVITACION_SEGUNDOS),
+        },
+    )
+
+    return token
+
+
+async def destinatario_de_invitacion(session: AsyncSession, token: str) -> Any | None:
+    """Para quién es el enlace, sin consumirlo.
+
+    La pantalla de alta muestra el nombre y el correo antes de pedir la
+    contraseña, para que la persona sepa a qué cuenta está entrando. No
+    consume el token: si consumiera, recargar la página lo invalidaría.
+    """
+    return (
+        await session.execute(
+            text("""
+                SELECT u.email, u.first_name, u.last_name
+                FROM one_time_tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE t.token_hash = :token_hash
+                  AND t.purpose = 'INVITATION'
+                  AND t.consumed_at IS NULL
+                  AND t.expires_at > now()
+                  AND u.deleted_at IS NULL
+            """),
+            {"token_hash": fingerprint(token)},
+        )
+    ).one_or_none()
+
+
+async def consumir_token_invitacion(
+    session: AsyncSession,
+    *,
+    token: str,
+    nueva_password: str,
+) -> UUID:
+    """La persona elige su contraseña y la cuenta queda lista.
+
+    Se revocan las sesiones igual que en la recuperación. Suena innecesario en
+    una cuenta nueva, pero no lo es: el alta también entrega una contraseña
+    temporal por si el correo no llega, y alguien pudo haber entrado con ella.
+    """
+    return await _consumir_token_de_contrasena(
+        session, token=token, proposito="INVITATION", nueva_password=nueva_password
+    )
 
 
 async def _revocar_todas(session: AsyncSession, user_id: UUID, motivo: RevokeReason) -> int:
@@ -529,3 +630,101 @@ async def revocar_sesion_de(session: AsyncSession, *, user_id: UUID, session_id:
 
     await _revocar_sesion(session, session_id, RevokeReason.LOGOUT)
     return True
+
+
+async def cambiar_contrasena_propia(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    session_id: UUID,
+    actual: str,
+    nueva: str,
+) -> None:
+    """Cambia la contraseña de quien está autenticado.
+
+    Exige la actual aunque ya haya sesión iniciada: si alguien deja el
+    computador abierto, sin este paso puede cambiarle la contraseña a esa
+    persona y quedarse con la cuenta.
+
+    Al terminar se revocan las demás sesiones, pero NO la que hizo el cambio: si
+    se cambió por sospecha de robo, hay que cortar la del atacante; cortar
+    también la propia obligaría a entrar de nuevo sin ninguna razón.
+    """
+    fila = (
+        await session.execute(
+            text("""
+                SELECT password_hash, must_change_password
+                FROM users WHERE id = :u AND deleted_at IS NULL
+            """),
+            {"u": user_id},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise CredencialesInvalidas
+
+    verificacion = verificar_y_rehashear_si_corresponde(actual, fila.password_hash)
+    if not verificacion.valido:
+        metrics.login_fallido_total.labels(motivo="cambio_password_actual_incorrecta").inc()
+        raise CredencialesInvalidas
+
+    if actual == nueva:
+        raise ReglaDeNegocioViolada(
+            "La contraseña nueva tiene que ser distinta de la actual.",
+            code="CONTRASENA_REPETIDA",
+        )
+
+    await session.execute(
+        text("""
+            UPDATE users
+            SET password_hash = :hash,
+                must_change_password = false,
+                password_changed_at = now(),
+                failed_login_attempts = 0,
+                locked_until = NULL,
+                updated_at = now()
+            WHERE id = :u
+        """),
+        {"hash": hash_password(nueva), "u": user_id},
+    )
+
+    await session.execute(
+        text("""
+            UPDATE auth_sessions
+            SET revoked_at = now(), revoke_reason = :motivo
+            WHERE user_id = :u AND id <> :sesion AND revoked_at IS NULL
+        """),
+        {"motivo": RevokeReason.PASSWORD_CHANGED.value, "u": user_id, "sesion": session_id},
+    )
+
+
+async def actualizar_perfil_propio(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    first_name: str | None,
+    last_name: str | None,
+    phone: str | None,
+) -> None:
+    """Datos que cada quien puede corregir de sí mismo.
+
+    El correo NO está: es el identificador con el que entra y cambiarlo sin
+    verificar el nuevo dejaría la cuenta sin forma de recuperarse. Eso lo hace
+    un administrador.
+    """
+    cambios: dict[str, object] = {}
+    if first_name is not None:
+        cambios["first_name"] = first_name.strip()[:80]
+    if last_name is not None:
+        cambios["last_name"] = last_name.strip()[:80]
+    if phone is not None:
+        cambios["phone"] = phone.strip()[:40] or None
+
+    if not cambios:
+        return
+
+    asignaciones = ", ".join(f"{campo} = :{campo}" for campo in cambios)
+    await session.execute(
+        text(f"UPDATE users SET {asignaciones}, updated_at = now() WHERE id = :u"),  # noqa: S608
+        {**cambios, "u": user_id},
+    )

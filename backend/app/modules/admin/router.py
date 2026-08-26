@@ -191,6 +191,10 @@ class UsuarioCreadoResponse(BaseModel):
     email: str
     # Se muestra UNA vez. No se guarda en claro y no se puede volver a consultar.
     password_temporal: str
+    # `False` si el correo de invitación no salió. La pantalla lo usa para
+    # decidir si insiste con la contraseña temporal o solo la ofrece como
+    # respaldo.
+    invitacion_enviada: bool
 
 
 class ActualizarUsuarioRequest(BaseModel):

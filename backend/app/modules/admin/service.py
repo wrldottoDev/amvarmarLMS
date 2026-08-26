@@ -26,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada, SinPermiso
 from app.core.security.argon2 import hash_password
+from app.modules.auth import service as auth_service
+from app.modules.notifications import service as notificaciones
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import PermisosEfectivos, invalidar_permisos
@@ -330,6 +332,10 @@ class UsuarioCreado:
     # Contraseña temporal. Se devuelve UNA sola vez, al crear: no se guarda en
     # claro en ningún lado y no hay forma de volver a consultarla.
     password_temporal: str
+    # Si el correo de invitación salió. Cuando es `False` la pantalla tiene que
+    # insistir con la contraseña temporal, porque es el único acceso que le
+    # queda a esa persona.
+    invitacion_enviada: bool = False
 
 
 async def crear_usuario(
@@ -345,9 +351,17 @@ async def crear_usuario(
 ) -> UsuarioCreado:
     """Da de alta a una persona con su rol.
 
-    Devuelve una contraseña temporal generada acá y marca la cuenta con
-    `must_change_password`. Que la elija el administrador sería peor: quedaría
-    escrita en un correo o un chat, y encima la conocería alguien más.
+    Manda un enlace de invitación de un solo uso, válido 48 horas, donde la
+    persona elige su propia contraseña. El sistema anterior mandaba usuario y
+    contraseña en texto plano por correo (`templates/emails/credentials.html`),
+    que queda para siempre en ese buzón y en el de quien lo reenvíe; la
+    enmienda de ADR-0008 lo prohíbe.
+
+    Igual se genera una contraseña temporal y se devuelve, por dos motivos: es
+    la salida cuando el correo no llega —el campo `invitacion_enviada` dice si
+    pasó—, y deja la cuenta con una contraseña real desde el primer momento en
+    vez de un hueco. Que la elija el administrador sería peor: quedaría escrita
+    en un chat y encima la conocería alguien más.
     """
     if role_code in ROLES_INTERNOS:
         _exigir(permisos, Perm.USERS_CREATE_INTERNAL)
@@ -410,7 +424,21 @@ async def crear_usuario(
             {"c": company_id, "u": user_id},
         )
 
-    return UsuarioCreado(id=user_id, email=email.strip().lower(), password_temporal=temporal)
+    # El envío va acá y no por el outbox a propósito: el outbox guardaría el
+    # token en claro en la base. Ver `notifications.service.enviar_enlace_de_cuenta`.
+    invitacion_enviada = await notificaciones.enviar_enlace_de_cuenta(
+        session,
+        user_id=user_id,
+        event_code="account.invitation",
+        token=await auth_service.crear_token_invitacion(session, user_id),
+    )
+
+    return UsuarioCreado(
+        id=user_id,
+        email=email.strip().lower(),
+        password_temporal=temporal,
+        invitacion_enviada=invitacion_enviada,
+    )
 
 
 async def _empresa_activa(session: AsyncSession, company_id: UUID) -> bool:

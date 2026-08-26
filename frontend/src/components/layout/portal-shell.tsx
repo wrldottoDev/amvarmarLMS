@@ -12,7 +12,9 @@ import {
   PanelLeftClose,
   Settings,
   Truck,
+  UserRound,
   UsersRound,
+  Warehouse,
   X,
 } from "lucide-react";
 import Image from "next/image";
@@ -51,6 +53,7 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
     ...(esCliente
       ? []
       : [
+          { href: "/inventario", etiqueta: "Inventario", icono: Warehouse },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },
           { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
         ]),
@@ -164,12 +167,20 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
             {menuUsuario ? (
               <div className="absolute right-0 mt-2 w-56 rounded-md border bg-white p-1.5 shadow-xl">
                 <Link
+                  href="/cuenta"
+                  className="flex items-center gap-2 rounded px-3 py-2 text-sm hover:bg-[#edf1f2]"
+                  onClick={() => setMenuUsuario(false)}
+                >
+                  <UserRound className="size-4" aria-hidden="true" />
+                  Mi cuenta
+                </Link>
+                <Link
                   href="/sesiones"
                   className="flex items-center gap-2 rounded px-3 py-2 text-sm hover:bg-[#edf1f2]"
                   onClick={() => setMenuUsuario(false)}
                 >
                   <Settings className="size-4" aria-hidden="true" />
-                  Seguridad de la cuenta
+                  Sesiones activas
                 </Link>
                 <button
                   type="button"

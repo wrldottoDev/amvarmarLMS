@@ -180,6 +180,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/invitation/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Invitacion Detalle
+         * @description Para quién es el enlace, sin consumirlo.
+         *
+         *     La pantalla muestra el nombre y el correo antes de pedir la contraseña,
+         *     para que la persona sepa a qué cuenta está entrando. No consume el token:
+         *     si lo consumiera, recargar la página lo invalidaría.
+         *
+         *     Acá sí se distingue entre válido e inválido, a diferencia de
+         *     `/password/forgot`: el token es de 48 bytes aleatorios, así que responder
+         *     no revela nada que no supiera ya quien lo tiene en la mano.
+         */
+        get: operations["invitacion_detalle_api_v1_auth_invitation__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/invitation/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invitacion Aceptar
+         * @description La persona elige su contraseña y la cuenta queda lista para usar.
+         *
+         *     Reusa `PasswordResetRequest` porque el cuerpo es idéntico —token más
+         *     contraseña nueva— y la validación de fortaleza tiene que ser la misma. El
+         *     propósito del token se comprueba en la consulta, así que uno de invitación
+         *     no sirve en `/password/reset` ni al revés.
+         */
+        post: operations["invitacion_aceptar_api_v1_auth_invitation_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -197,6 +250,31 @@ export interface paths {
         get: operations["me_api_v1_me_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Actualizar Mi Perfil */
+        patch: operations["actualizar_mi_perfil_api_v1_me_patch"];
+        trace?: never;
+    };
+    "/api/v1/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cambiar Mi Contrasena
+         * @description Cambia la contraseña propia y corta las demás sesiones.
+         *
+         *     La sesión actual sobrevive: si se cambió por sospecha de robo hay que cortar
+         *     la del atacante, y cortar también la propia obligaría a entrar de nuevo sin
+         *     ninguna razón.
+         */
+        post: operations["cambiar_mi_contrasena_api_v1_me_password_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -286,6 +364,114 @@ export interface paths {
         head?: never;
         /** Actualizar Carga */
         patch: operations["actualizar_carga_api_v1_shipments__shipment_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/shipments/revision-legacy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar En Revision
+         * @description Cargas que la migración no supo traducir con certeza (ADR-0002).
+         */
+        get: operations["listar_en_revision_api_v1_shipments_revision_legacy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/revision-legacy/resolver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolver Revision
+         * @description Quita la marca de revisión. NO cambia el estado.
+         *
+         *     Si además hay que corregir el estado, eso va por una transición: valida el
+         *     catálogo, exige permiso y deja su propio evento.
+         */
+        post: operations["resolver_revision_api_v1_shipments__shipment_id__revision_legacy_resolver_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/preferencias/columnas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Obtener Columnas
+         * @description Qué columnas ve esta persona en el listado de cargas.
+         *
+         *     Con trece columnas posibles no es un lujo: quien factura mira CFTS y peso,
+         *     quien rastrea mira tracking y WR, y obligar a los dos a la misma vista hace
+         *     que ninguno la tenga cómoda.
+         */
+        get: operations["obtener_columnas_api_v1_shipments_preferencias_columnas_get"];
+        /** Guardar Columnas */
+        put: operations["guardar_columnas_api_v1_shipments_preferencias_columnas_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/ocultar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ocultar Carga
+         * @description Saca la carga de los listados. Reemplaza al "eliminar" del sistema viejo.
+         *
+         *     No borra nada: sus documentos, su línea de tiempo y su auditoría siguen
+         *     existiendo, y se puede recuperar (ADR-0007).
+         */
+        post: operations["ocultar_carga_api_v1_shipments__shipment_id__ocultar_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/recuperar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Recuperar Carga */
+        post: operations["recuperar_carga_api_v1_shipments__shipment_id__recuperar_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/shipments/{shipment_id}/transitions": {
@@ -479,6 +665,101 @@ export interface paths {
         };
         /** Expediente De Carga */
         get: operations["expediente_de_carga_api_v1_shipments__shipment_id__documents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/documents/download-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Descargar Todos
+         * @description Todos los documentos de una carga en un ZIP.
+         *
+         *     Existía en el sistema viejo y se usa para mandarle el expediente completo a
+         *     un agente aduanal. Bajar ocho archivos uno por uno es trabajo que la máquina
+         *     puede hacer.
+         *
+         *     A diferencia de la descarga individual, el archivo pasa por la aplicación:
+         *     hay que leer cada objeto para comprimirlo, y no se puede firmar una URL de
+         *     algo que todavía no existe. Por eso se audita: es la única vía por la que
+         *     salen varios documentos de una sola vez.
+         */
+        get: operations["descargar_todos_api_v1_shipments__shipment_id__documents_download_all_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Documentos De Despacho
+         * @description El BL y las facturas que cuelgan de la solicitud, no de una carga suelta.
+         */
+        get: operations["documentos_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/documents/presign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Presign Documento De Despacho
+         * @description Adjunta un BL o una factura a la solicitud.
+         *
+         *     Pasa por el mismo flujo de dos tiempos que cualquier documento: el formato,
+         *     el tamaño y el escaneo se comportan igual venga de donde venga.
+         */
+        post: operations["presign_documento_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_presign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/documents/bls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Descargar Bls
+         * @description Todos los Bills of Lading del despacho en un ZIP.
+         *
+         *     Un despacho puede llevar varios y el cliente los necesita juntos para su
+         *     agente aduanal.
+         */
+        get: operations["descargar_bls_api_v1_dispatch_requests__dispatch_id__documents_bls_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -824,10 +1105,18 @@ export interface components {
             estimated_arrival_at?: string | null;
             /** Weight Kg */
             weight_kg?: number | string | null;
+            /** Weight Lb */
+            weight_lb?: number | string | null;
             /** Volumetric Weight Kg */
             volumetric_weight_kg?: number | string | null;
             /** Volume M3 */
             volume_m3?: number | string | null;
+            /** Foots Cft */
+            foots_cft?: number | string | null;
+            /** Shipper */
+            shipper?: string | null;
+            /** Carrier */
+            carrier?: string | null;
             /** Permit Review Required */
             permit_review_required?: boolean | null;
             /** Assigned To */
@@ -843,6 +1132,22 @@ export interface components {
             tax_id?: string | null;
             /** Status */
             status?: string | null;
+        };
+        /**
+         * ActualizarPerfilRequest
+         * @description Lo que cada quien puede corregir de sí mismo.
+         *
+         *     El correo NO está: es el identificador con el que entra, y cambiarlo sin
+         *     verificar el nuevo dejaría la cuenta sin forma de recuperarse. Eso lo hace
+         *     un administrador.
+         */
+        ActualizarPerfilRequest: {
+            /** First Name */
+            first_name?: string | null;
+            /** Last Name */
+            last_name?: string | null;
+            /** Phone */
+            phone?: string | null;
         };
         /** ActualizarUsuarioRequest */
         ActualizarUsuarioRequest: {
@@ -874,6 +1179,13 @@ export interface components {
             /** Uses Warehouse Receipt */
             uses_warehouse_receipt: boolean;
         };
+        /** CambiarContrasenaRequest */
+        CambiarContrasenaRequest: {
+            /** Actual */
+            actual: string;
+            /** Nueva */
+            nueva: string;
+        };
         /** CargaActualizadaResponse */
         CargaActualizadaResponse: {
             /**
@@ -898,11 +1210,43 @@ export interface components {
             /** Row Version */
             row_version: number;
         };
+        /** CargaEnRevisionResponse */
+        CargaEnRevisionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Shipment Number */
+            shipment_number: string;
+            /** Company Name */
+            company_name: string;
+            /** Current Status Code */
+            current_status_code: string;
+            /** Legacy Status */
+            legacy_status: string | null;
+            /** Motivo */
+            motivo: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /**
          * ClientType
          * @enum {string}
          */
         ClientType: "WEB" | "IOS" | "ANDROID";
+        /** ColumnaResponse */
+        ColumnaResponse: {
+            /** Clave */
+            clave: string;
+            /** Etiqueta */
+            etiqueta: string;
+            /** Fija */
+            fija: boolean;
+        };
         /** CompleteRequest */
         CompleteRequest: {
             /**
@@ -978,10 +1322,18 @@ export interface components {
             estimated_arrival_at?: string | null;
             /** Weight Kg */
             weight_kg?: number | string | null;
+            /** Weight Lb */
+            weight_lb?: number | string | null;
             /** Volumetric Weight Kg */
             volumetric_weight_kg?: number | string | null;
             /** Volume M3 */
             volume_m3?: number | string | null;
+            /** Foots Cft */
+            foots_cft?: number | string | null;
+            /** Shipper */
+            shipper?: string | null;
+            /** Carrier */
+            carrier?: string | null;
             /**
              * Permit Review Required
              * @default false
@@ -989,6 +1341,14 @@ export interface components {
             permit_review_required: boolean;
             /** Assigned To */
             assigned_to?: string | null;
+            /** Invoice */
+            invoice?: string | null;
+            /** Tracking */
+            tracking?: string | null;
+            /** Po */
+            po?: string | null;
+            /** Container */
+            container?: string | null;
         };
         /** CrearEmpresaRequest */
         CrearEmpresaRequest: {
@@ -1098,6 +1458,33 @@ export interface components {
          * @enum {string}
          */
         DispatchStatus: "PENDING" | "APPROVED" | "PREPARING" | "DISPATCHED" | "COMPLETED" | "REJECTED" | "CANCELLED";
+        /** DocumentoDespachoResponse */
+        DocumentoDespachoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Document Type Code */
+            document_type_code: string;
+            /** Document Type Label */
+            document_type_label: string;
+            /** Original Name */
+            original_name: string;
+            /** Media Type */
+            media_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Upload Status */
+            upload_status: string;
+            /** Scan Status */
+            scan_status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** DocumentoResponse */
         DocumentoResponse: {
             /**
@@ -1220,10 +1607,27 @@ export interface components {
             /** Tipos */
             tipos: components["schemas"]["TipoDocumentoResponse"][];
         };
+        /** GuardarColumnasRequest */
+        GuardarColumnasRequest: {
+            /** Visibles */
+            visibles: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * InvitacionResponse
+         * @description A quién pertenece el enlace. Sin datos más allá de identificar la cuenta.
+         */
+        InvitacionResponse: {
+            /** Email */
+            email: string;
+            /** First Name */
+            first_name: string;
+            /** Last Name */
+            last_name: string;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1301,6 +1705,11 @@ export interface components {
             /** Read At */
             read_at: string | null;
         };
+        /** OcultarRequest */
+        OcultarRequest: {
+            /** Motivo */
+            motivo: string;
+        };
         /** PaginaNotifications */
         PaginaNotifications: {
             /** Items */
@@ -1354,6 +1763,13 @@ export interface components {
             /** Nueva Password */
             nueva_password: string;
         };
+        /** PreferenciaColumnasResponse */
+        PreferenciaColumnasResponse: {
+            /** Disponibles */
+            disponibles: components["schemas"]["ColumnaResponse"][];
+            /** Visibles */
+            visibles: string[];
+        };
         /** PresignRequest */
         PresignRequest: {
             /**
@@ -1377,6 +1793,11 @@ export interface components {
              * Format: uuid
              */
             document_id: string;
+            /**
+             * Shipment Id
+             * Format: uuid
+             */
+            shipment_id: string;
             /** Upload Url */
             upload_url: string;
             /** Expires In Seconds */
@@ -1475,6 +1896,11 @@ export interface components {
             /** Document Id */
             document_id: string | null;
         };
+        /** ResolverRevisionRequest */
+        ResolverRevisionRequest: {
+            /** Nota */
+            nota: string;
+        };
         /** SessionResponse */
         SessionResponse: {
             /**
@@ -1516,6 +1942,26 @@ export interface components {
             open_requirements_count: number;
             /** Client Action Required Count */
             client_action_required_count: number;
+            /** Wr */
+            wr?: string | null;
+            /** Tracking */
+            tracking?: string | null;
+            /** Po */
+            po?: string | null;
+            /** Container */
+            container?: string | null;
+            /** Shipper */
+            shipper?: string | null;
+            /** Carrier */
+            carrier?: string | null;
+            /** Foots Cft */
+            foots_cft?: string | null;
+            /** Weight Kg */
+            weight_kg?: string | null;
+            /** Weight Lb */
+            weight_lb?: string | null;
+            /** Hidden At */
+            hidden_at?: string | null;
             /** Invoice */
             invoice: string | null;
             origin: components["schemas"]["UbicacionResponse"];
@@ -1577,6 +2023,26 @@ export interface components {
             open_requirements_count: number;
             /** Client Action Required Count */
             client_action_required_count: number;
+            /** Wr */
+            wr?: string | null;
+            /** Tracking */
+            tracking?: string | null;
+            /** Po */
+            po?: string | null;
+            /** Container */
+            container?: string | null;
+            /** Shipper */
+            shipper?: string | null;
+            /** Carrier */
+            carrier?: string | null;
+            /** Foots Cft */
+            foots_cft?: string | null;
+            /** Weight Kg */
+            weight_kg?: string | null;
+            /** Weight Lb */
+            weight_lb?: string | null;
+            /** Hidden At */
+            hidden_at?: string | null;
             /** Invoice */
             invoice: string | null;
             origin: components["schemas"]["UbicacionResponse"];
@@ -1785,6 +2251,8 @@ export interface components {
             email: string;
             /** Password Temporal */
             password_temporal: string;
+            /** Invitacion Enviada */
+            invitacion_enviada: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -2062,6 +2530,70 @@ export interface operations {
             };
         };
     };
+    invitacion_detalle_api_v1_auth_invitation__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitacionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invitacion_aceptar_api_v1_auth_invitation_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensajeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     me_api_v1_me_get: {
         parameters: {
             query?: never;
@@ -2078,6 +2610,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+        };
+    };
+    actualizar_mi_perfil_api_v1_me_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualizarPerfilRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensajeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cambiar_mi_contrasena_api_v1_me_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CambiarContrasenaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensajeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2129,6 +2727,7 @@ export interface operations {
                 cursor?: string | null;
                 status?: components["schemas"]["ShipmentStatus"][] | null;
                 company_id?: string | null;
+                incluir_ocultas?: boolean;
                 eta_from?: string | null;
                 eta_to?: string | null;
                 q?: string | null;
@@ -2247,6 +2846,185 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CargaActualizadaResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_en_revision_api_v1_shipments_revision_legacy_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CargaEnRevisionResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolver_revision_api_v1_shipments__shipment_id__revision_legacy_resolver_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolverRevisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    obtener_columnas_api_v1_shipments_preferencias_columnas_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferenciaColumnasResponse"];
+                };
+            };
+        };
+    };
+    guardar_columnas_api_v1_shipments_preferencias_columnas_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuardarColumnasRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferenciaColumnasResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ocultar_carga_api_v1_shipments__shipment_id__ocultar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OcultarRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recuperar_carga_api_v1_shipments__shipment_id__recuperar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -2558,6 +3336,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExpedienteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    descargar_todos_api_v1_shipments__shipment_id__documents_download_all_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    documentos_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoDespachoResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    presign_documento_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_presign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresignResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    descargar_bls_api_v1_dispatch_requests__dispatch_id__documents_bls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

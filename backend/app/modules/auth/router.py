@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,7 @@ from app.modules.auth.schemas import (
     TokenResponse,
 )
 from app.modules.auth.service import DatosCliente
+from app.modules.notifications import service as notificaciones
 from app.modules.rbac.service import obtener_permisos_efectivos
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -302,19 +304,31 @@ async def password_forgot(
     resultado = await service.crear_token_recuperacion(db, datos.email)
 
     if resultado is not None:
-        _token, user_id = resultado
+        token, user_id = resultado
+        # Envío directo, no por el outbox: el outbox guardaría el token en claro
+        # en la base y `one_time_tokens` guarda solo su huella justamente para
+        # que eso no pase. Si el relay está caído se registra la entrega fallida
+        # y la persona vuelve a pedirlo.
+        enviado = await notificaciones.enviar_enlace_de_cuenta(
+            db,
+            user_id=user_id,
+            event_code="account.password_reset",
+            token=token,
+        )
         await registrar(
             db,
             action="auth.password.forgot",
             resource_type="user",
             resource_id=user_id,
-            outcome=Outcome.SUCCESS,
+            outcome=Outcome.SUCCESS if enviado else Outcome.FAILED,
             ip_address=_ip(request),
+            reason=None if enviado else "No se pudo entregar el correo de recuperación.",
         )
-        # Fase 4 encola aquí el correo con el enlace vía outbox. Hasta entonces
-        # el token se emite y queda en la base, pero no se entrega.
         await db.commit()
 
+    # La respuesta es la misma haya salido el correo o no, e incluso si la
+    # cuenta no existe: distinguir convertiría esto en un verificador de
+    # correos registrados.
     return MensajeResponse(mensaje=_MENSAJE_RECUPERACION)
 
 
@@ -349,6 +363,79 @@ async def password_reset(
 
     _borrar_cookie_refresh(respuesta)
     return MensajeResponse(mensaje="Contraseña actualizada. Inicie sesión de nuevo.")
+
+
+class InvitacionResponse(BaseModel):
+    """A quién pertenece el enlace. Sin datos más allá de identificar la cuenta."""
+
+    email: str
+    first_name: str
+    last_name: str
+
+
+@router.get("/invitation/{token}", response_model=InvitacionResponse)
+async def invitacion_detalle(token: str, db: SesionDb) -> InvitacionResponse:
+    """Para quién es el enlace, sin consumirlo.
+
+    La pantalla muestra el nombre y el correo antes de pedir la contraseña,
+    para que la persona sepa a qué cuenta está entrando. No consume el token:
+    si lo consumiera, recargar la página lo invalidaría.
+
+    Acá sí se distingue entre válido e inválido, a diferencia de
+    `/password/forgot`: el token es de 48 bytes aleatorios, así que responder
+    no revela nada que no supiera ya quien lo tiene en la mano.
+    """
+    fila = await service.destinatario_de_invitacion(db, token)
+
+    if fila is None:
+        raise ReglaDeNegocioViolada(
+            "El enlace de invitación no es válido o ya venció.",
+            code="TOKEN_INVITACION_INVALIDO",
+        )
+
+    return InvitacionResponse(
+        email=fila.email, first_name=fila.first_name, last_name=fila.last_name
+    )
+
+
+@router.post("/invitation/accept", response_model=MensajeResponse)
+async def invitacion_aceptar(
+    datos: PasswordResetRequest,
+    request: Request,
+    respuesta: Response,
+    db: SesionDb,
+) -> MensajeResponse:
+    """La persona elige su contraseña y la cuenta queda lista para usar.
+
+    Reusa `PasswordResetRequest` porque el cuerpo es idéntico —token más
+    contraseña nueva— y la validación de fortaleza tiene que ser la misma. El
+    propósito del token se comprueba en la consulta, así que uno de invitación
+    no sirve en `/password/reset` ni al revés.
+    """
+    try:
+        user_id = await service.consumir_token_invitacion(
+            db, token=datos.token, nueva_password=datos.nueva_password
+        )
+    except service.TokenRecuperacionInvalido as error:
+        await db.rollback()
+        raise ReglaDeNegocioViolada(
+            "El enlace de invitación no es válido o ya venció.",
+            code="TOKEN_INVITACION_INVALIDO",
+        ) from error
+
+    await registrar(
+        db,
+        action="auth.invitation.accepted",
+        resource_type="user",
+        resource_id=user_id,
+        actor_user_id=user_id,
+        ip_address=_ip(request),
+        reason="Alta completada: la persona eligió su contraseña.",
+    )
+    await db.commit()
+
+    _borrar_cookie_refresh(respuesta)
+    return MensajeResponse(mensaje="Contraseña creada. Ya puede iniciar sesión.")
 
 
 me_router = APIRouter(prefix="/api/v1", tags=["auth"])
@@ -397,3 +484,100 @@ async def me(actor: ActorDep, db: SesionDb, redis: RedisDep) -> MeResponse:
         },
         permisos=sorted(permisos.codigos()),
     )
+
+
+class CambiarContrasenaRequest(BaseModel):
+    # La actual se exige aunque ya haya sesión: si alguien deja el computador
+    # abierto, sin este paso puede quedarse con la cuenta.
+    actual: str = Field(min_length=1)
+    nueva: str = Field(min_length=12, max_length=200)
+
+
+class ActualizarPerfilRequest(BaseModel):
+    """Lo que cada quien puede corregir de sí mismo.
+
+    El correo NO está: es el identificador con el que entra, y cambiarlo sin
+    verificar el nuevo dejaría la cuenta sin forma de recuperarse. Eso lo hace
+    un administrador.
+    """
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=80)
+    last_name: str | None = Field(default=None, min_length=1, max_length=80)
+    phone: str | None = Field(default=None, max_length=40)
+
+
+@me_router.post("/me/password", response_model=MensajeResponse)
+async def cambiar_mi_contrasena(
+    datos: CambiarContrasenaRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+) -> MensajeResponse:
+    """Cambia la contraseña propia y corta las demás sesiones.
+
+    La sesión actual sobrevive: si se cambió por sospecha de robo hay que cortar
+    la del atacante, y cortar también la propia obligaría a entrar de nuevo sin
+    ninguna razón.
+    """
+    try:
+        await service.cambiar_contrasena_propia(
+            db,
+            user_id=actor.user_id,
+            session_id=actor.session_id,
+            actual=datos.actual,
+            nueva=datos.nueva,
+        )
+    except service.CredencialesInvalidas as error:
+        await registrar(
+            db,
+            action="auth.password.change_denied",
+            resource_type="user",
+            resource_id=actor.user_id,
+            actor_user_id=actor.user_id,
+            outcome=Outcome.DENIED,
+            reason="La contraseña actual no coincide",
+            ip_address=_ip(request),
+        )
+        await db.commit()
+        raise NoAutenticado("La contraseña actual no es correcta.") from error
+
+    await registrar(
+        db,
+        action="auth.password.changed",
+        resource_type="user",
+        resource_id=actor.user_id,
+        actor_user_id=actor.user_id,
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+    return MensajeResponse(mensaje="Contraseña actualizada. Las demás sesiones se cerraron.")
+
+
+@me_router.patch("/me", response_model=MensajeResponse)
+async def actualizar_mi_perfil(
+    datos: ActualizarPerfilRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+) -> MensajeResponse:
+    await service.actualizar_perfil_propio(
+        db,
+        user_id=actor.user_id,
+        first_name=datos.first_name,
+        last_name=datos.last_name,
+        phone=datos.phone,
+    )
+
+    await registrar(
+        db,
+        action="user.profile.updated",
+        resource_type="user",
+        resource_id=actor.user_id,
+        actor_user_id=actor.user_id,
+        after_data={"campos": sorted(datos.model_dump(exclude_unset=True))},
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+    return MensajeResponse(mensaje="Datos actualizados.")

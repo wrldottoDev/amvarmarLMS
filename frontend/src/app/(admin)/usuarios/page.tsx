@@ -3,7 +3,10 @@
 import { KeyRound, Plus, Power, UserRound } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { ContrasenaTemporal } from "@/components/admin/contrasena-temporal";
+import {
+  ContrasenaTemporal,
+  type EstadoInvitacion,
+} from "@/components/admin/contrasena-temporal";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
@@ -32,7 +35,11 @@ function Contenido() {
 
   const [creando, setCreando] = useState(false);
   const [aDesactivar, setADesactivar] = useState<{ id: string; nombre: string } | null>(null);
-  const [credenciales, setCredenciales] = useState<{ correo: string; clave: string } | null>(null);
+  const [credenciales, setCredenciales] = useState<{
+    correo: string;
+    clave: string;
+    invitacion: EstadoInvitacion;
+  } | null>(null);
 
   const { data, isPending, error } = useUsuarios(empresaFiltro);
   const empresas = useEmpresas();
@@ -59,7 +66,11 @@ function Contenido() {
       company_id: esInterno ? null : empresa || null,
       phone: telefono.trim() || null,
     });
-    setCredenciales({ correo: creado.email, clave: creado.password_temporal });
+    setCredenciales({
+      correo: creado.email,
+      clave: creado.password_temporal,
+      invitacion: creado.invitacion_enviada ? "enviada" : "fallo",
+    });
     setCreando(false);
     setCorreo("");
     setNombre("");
@@ -92,7 +103,11 @@ function Contenido() {
       </header>
 
       {credenciales ? (
-        <ContrasenaTemporal correo={credenciales.correo} contrasena={credenciales.clave} />
+        <ContrasenaTemporal
+          correo={credenciales.correo}
+          contrasena={credenciales.clave}
+          invitacion={credenciales.invitacion}
+        />
       ) : null}
 
       {error ? <AvisoError error={error} /> : null}
@@ -146,6 +161,9 @@ function Contenido() {
                     setCredenciales({
                       correo: usuario.email,
                       clave: resultado.password_temporal,
+                      // Un restablecimiento no manda invitación: la temporal es
+                      // la única vía y por eso se muestra abierta.
+                      invitacion: "no-aplica",
                     });
                   }}
                   disabled={restablecer.isPending}

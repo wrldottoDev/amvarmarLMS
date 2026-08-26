@@ -271,6 +271,27 @@ async def crear(
         datos={"cargas": len(ordenadas)},
     )
 
+    # Dispara los dos avisos de la creación: el acuse al cliente y el pedido de
+    # aprobación a Operaciones. Va por el outbox y no por un envío directo acá
+    # para que un relay caído no haga fallar la creación de la solicitud.
+    #
+    # La `dedup_key` usa la versión inicial de la fila, igual que las
+    # transiciones (`dispatch:{id}:v{n}`), así que una solicitud tiene una sola
+    # cadena de claves sin huecos ni choques.
+    await publicar(
+        session,
+        aggregate_type="dispatch_request",
+        aggregate_id=dispatch.id,
+        event_type="dispatch.created",
+        payload={
+            "hacia": DispatchStatus.PENDING.value,
+            "company_id": str(company_id),
+            "actor_user_id": str(actor_user_id),
+            "cargas": len(ordenadas),
+        },
+        dedup_key=f"dispatch:{dispatch.id}:v1",
+    )
+
     return SolicitudCreada(
         id=dispatch.id,
         dispatch_number=dispatch.dispatch_number,

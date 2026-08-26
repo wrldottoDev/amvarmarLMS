@@ -39,6 +39,33 @@ async def _limpiar(db: AsyncSession, email: str) -> None:
     await db.commit()
 
 
+async def _invitacion(db: AsyncSession, user_id: str) -> str:
+    """Emite una invitación real y devuelve el token en claro.
+
+    Se usa el servicio y no un INSERT a mano para que la prueba se rompa si
+    cambia la forma de guardar la huella.
+    """
+    from app.modules.auth.service import crear_token_invitacion
+
+    token = await crear_token_invitacion(db, uuid.UUID(user_id))
+    await db.commit()
+    return token
+
+
+async def _ultimo_token_de(db: AsyncSession, user_id: str, proposito: str) -> uuid.UUID | None:
+    fila: uuid.UUID | None = (
+        await db.execute(
+            text("""
+                SELECT id FROM one_time_tokens
+                WHERE user_id = :u AND purpose = :p AND consumed_at IS NULL
+                ORDER BY created_at DESC LIMIT 1
+            """),
+            {"u": user_id, "p": proposito},
+        )
+    ).scalar_one_or_none()
+    return fila
+
+
 @pytest.fixture
 async def usuario(db_directa: AsyncSession):
     email = f"e2e-{uuid.uuid4().hex[:8]}@pruebas.amvarmar.com"
@@ -327,6 +354,131 @@ class TestRecuperacionDePassword:
 
         assert r.status_code == 422
         assert r.json()["error"]["code"] == "PAYLOAD_INVALIDO"
+
+
+class TestInvitacion:
+    """El alta por enlace, que reemplaza el correo de credenciales del Django."""
+
+    async def test_el_enlace_dice_de_quien_es_sin_consumirse(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        """Consultarlo dos veces tiene que dar lo mismo.
+
+        Si consultarlo lo consumiera, recargar la página dejaría a la persona
+        sin acceso y sin forma de recuperarlo por su cuenta.
+        """
+        email, user_id = usuario
+        token = await _invitacion(db_directa, user_id)
+
+        primera = await cliente.get(f"/api/v1/auth/invitation/{token}")
+        segunda = await cliente.get(f"/api/v1/auth/invitation/{token}")
+
+        assert primera.status_code == 200
+        assert primera.json()["email"] == email
+        assert segunda.json() == primera.json()
+
+    async def test_aceptar_deja_la_cuenta_lista_y_quema_el_enlace(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        email, user_id = usuario
+        token = await _invitacion(db_directa, user_id)
+        nueva = "la passphrase que eligio la persona"
+
+        aceptar = await cliente.post(
+            "/api/v1/auth/invitation/accept",
+            json={"token": token, "nueva_password": nueva},
+        )
+        assert aceptar.status_code == 200
+
+        # Entra con la suya y ya no le exigen cambiarla.
+        entrar = await cliente.post("/api/v1/auth/login", json={"email": email, "password": nueva})
+        assert entrar.status_code == 200
+
+        debe_cambiar = (
+            await db_directa.execute(
+                text("SELECT must_change_password FROM users WHERE id = :u"), {"u": user_id}
+            )
+        ).scalar_one()
+        assert debe_cambiar is False
+
+        # Un solo uso: el enlace reenviado ya no sirve.
+        segunda = await cliente.post(
+            "/api/v1/auth/invitation/accept",
+            json={
+                "token": token,
+                "nueva_password": "otra passphrase distinta larga",  # pragma: allowlist secret
+            },
+        )
+        assert segunda.status_code == 422
+
+    async def test_un_token_de_recuperacion_no_sirve_de_invitacion(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        """El propósito se comprueba en la consulta, no solo al buscarlo.
+
+        Los dos viven en la misma tabla con el mismo formato. Sin el filtro por
+        propósito, un enlace de recuperación —que vence en una hora— serviría
+        para completar un alta, y al revés uno de invitación de 48 horas
+        serviría para tomar una cuenta ajena que pidió recuperarla.
+        """
+        email, user_id = usuario
+        await cliente.post("/api/v1/auth/password/forgot", json={"email": email})
+
+        recuperacion = await _ultimo_token_de(db_directa, user_id, "PASSWORD_RESET")
+        assert recuperacion is not None
+
+        # No se conoce el token en claro, así que se prueba por el otro lado:
+        # un token de invitación no puede canjearse como recuperación.
+        invitacion = await _invitacion(db_directa, user_id)
+        r = await cliente.post(
+            "/api/v1/auth/password/reset",
+            json={
+                "token": invitacion,
+                "nueva_password": "una passphrase larga de prueba",  # pragma: allowlist secret
+            },
+        )
+
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "TOKEN_RECUPERACION_INVALIDO"
+
+    async def test_un_enlace_vencido_no_sirve(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        _email, user_id = usuario
+        token = await _invitacion(db_directa, user_id)
+        await db_directa.execute(
+            text("""
+                UPDATE one_time_tokens SET expires_at = now() - interval '1 minute'
+                WHERE user_id = :u AND purpose = 'INVITATION'
+            """),
+            {"u": user_id},
+        )
+        await db_directa.commit()
+
+        assert (await cliente.get(f"/api/v1/auth/invitation/{token}")).status_code == 422
+        assert (
+            await cliente.post(
+                "/api/v1/auth/invitation/accept",
+                json={
+                    "token": token,
+                    "nueva_password": "una passphrase larga de prueba",  # pragma: allowlist secret
+                },
+            )
+        ).status_code == 422
+
+    async def test_forgot_deja_un_token_de_recuperacion(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        """El endpoint emitía el token y el correo nunca salía.
+
+        Acá no se puede comprobar la entrega —no hay relay en esta suite—, pero
+        sí que el token se emite. La entrega tiene su prueba contra Mailpit.
+        """
+        email, user_id = usuario
+
+        await cliente.post("/api/v1/auth/password/forgot", json={"email": email})
+
+        assert await _ultimo_token_de(db_directa, user_id, "PASSWORD_RESET") is not None
 
 
 class TestRequestId:

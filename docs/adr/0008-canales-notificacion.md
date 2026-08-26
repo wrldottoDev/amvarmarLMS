@@ -137,3 +137,42 @@ alguien introduce un marcador `{...}` en un asunto o cuerpo, y otro que verifica
 contra el correo realmente recibido que no aparezca ningún identificador de
 negocio ni adjunto. Sin esas pruebas, la regla se pierde en la primera mejora
 bienintencionada de la plantilla.
+
+## Enmienda — el identificador sí viaja en el correo (2026-08-25)
+
+La regla original decía «ningún dato de negocio en el cuerpo del correo, solo
+contexto mínimo + link». Al comparar contra el sistema viejo se vio que sus seis
+correos sí llevaban datos —número de WR, shipper, carrier, lista de warehouses,
+método de envío— y que el negocio los usaba: el cliente sabe de qué carga le
+hablan sin entrar a nada.
+
+**La regla queda así:**
+
+| Sí viaja | No viaja |
+|---|---|
+| El identificador de la carga o del despacho: WR, número de factura, número de solicitud | Shipper, carrier, contenido, pesos, montos |
+| El estado al que cambió | La lista completa de cargas de un despacho |
+| El enlace al sistema | Cualquier documento adjunto |
+
+**Por qué el identificador sí y el resto no.** El WR y el número de factura ya
+están en los papeles del embarque y el cliente los tiene: repetirlos en el
+correo no expone nada que no circule ya por su bandeja. El shipper, el
+transportista y los pesos son otra cosa — son la relación comercial y la
+operación, y de esos sí se aprende algo mirando un buzón ajeno.
+
+Sigue prohibido: adjuntar documentos y mandar credenciales.
+
+## Enmienda — las credenciales no viajan por correo (2026-08-25)
+
+El sistema viejo mandaba usuario y contraseña en texto plano
+(`templates/emails/credentials.html`). **No se replica.** Una contraseña enviada
+por correo queda para siempre en el buzón de esa persona y en el de cualquiera a
+quien se le reenvíe, y la conoce además quien creó la cuenta.
+
+En su lugar, el alta manda un **enlace de invitación de un solo uso que vence a
+las 48 horas**, donde la persona elige su propia contraseña. Usa el propósito
+`INVITATION` de `one_time_tokens`, que ya existía.
+
+Queda también la vía actual —el sistema genera una contraseña temporal y el
+administrador la entrega por el medio que prefiera—, con el bloqueo por
+`must_change_password` que obliga a cambiarla al primer acceso.

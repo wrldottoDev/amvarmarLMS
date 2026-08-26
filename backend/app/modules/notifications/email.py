@@ -5,8 +5,9 @@ Dos responsabilidades separadas: `componer()` arma el mensaje y no toca la red;
 servidor SMTP, y el envío se puede probar contra Mailpit sin volver a armar el
 mensaje.
 
-ADR-0008: el correo no lleva adjuntos ni datos de negocio. Solo el texto fijo
-del catálogo y un enlace al sistema.
+ADR-0008 y su enmienda del 25-08-2026: el correo lleva el texto del catálogo,
+el identificador de la carga o del despacho, y un enlace al sistema. Nunca lleva
+adjuntos, credenciales, ni el detalle comercial (shipper, carrier, pesos).
 """
 
 from dataclasses import dataclass
@@ -18,10 +19,11 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from app.core.config import get_settings
 from app.modules.notifications.catalog import DefinicionEvento
+from app.modules.notifications.catalog import texto as texto_del_evento
 
 # Versión de las plantillas. Se guarda en cada entrega para poder saber con qué
 # texto se envió un correo viejo, incluso después de rediseñar la plantilla.
-PLANTILLA_VERSION = "1"
+PLANTILLA_VERSION = "2"
 
 _DIRECTORIO = Path(__file__).parent / "templates"
 
@@ -49,17 +51,49 @@ class CorreoCompuesto:
 
 
 def construir_enlace(evento: DefinicionEvento, resource_id: str | None) -> str:
+    """La URL del aviso. Sin recurso, la pantalla general en vez de un enlace roto.
+
+    El corte va en la primera llave y no en `"/{"`: hay rutas donde el hueco
+    está en la query (`?token={id}`), y buscar la barra dejaría el `{id}`
+    literal dentro del enlace. Después se descarta la query entera, porque lo
+    que quedaría es un parámetro a medias (`?token=`).
+    """
     base = get_settings().frontend_base_url.rstrip("/")
-    ruta = evento.ruta.format(id=resource_id) if resource_id else evento.ruta.split("/{")[0]
+
+    if resource_id:
+        return f"{base}{evento.ruta.format(id=resource_id)}"
+
+    ruta = evento.ruta.split("{")[0].partition("?")[0].rstrip("/")
     return f"{base}{ruta}"
 
 
-def componer(evento: DefinicionEvento, *, resource_id: str | None) -> CorreoCompuesto:
-    enlace = construir_enlace(evento, resource_id)
-    contexto = {"asunto": evento.asunto, "mensaje": evento.mensaje, "enlace": enlace}
+def componer(
+    evento: DefinicionEvento,
+    *,
+    resource_id: str | None,
+    referencia: str | None = None,
+    enlace: str | None = None,
+) -> CorreoCompuesto:
+    """Arma el correo. No toca la red.
+
+    `referencia` es el identificador que el cliente reconoce —WR, número de
+    factura, número de solicitud—. `enlace` solo se pasa cuando no se puede
+    derivar de la ruta, que hoy es únicamente la invitación: su URL lleva un
+    token de un solo uso, no el id del recurso.
+
+    El asunto también lleva el identificador: en una bandeja con veinte correos
+    de AMVARMAR, veinte asuntos idénticos no dicen cuál es cuál.
+    """
+    enlace = enlace or construir_enlace(evento, resource_id)
+    asunto = f"{evento.asunto} — {referencia}" if referencia else evento.asunto
+    contexto = {
+        "asunto": asunto,
+        "mensaje": texto_del_evento(evento, referencia),
+        "enlace": enlace,
+    }
 
     return CorreoCompuesto(
-        asunto=evento.asunto,
+        asunto=asunto,
         texto=_entorno.get_template("base.txt").render(**contexto),
         html=_entorno.get_template("base.html").render(**contexto),
         enlace=enlace,

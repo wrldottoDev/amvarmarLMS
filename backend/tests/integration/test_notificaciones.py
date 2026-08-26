@@ -10,13 +10,19 @@ import uuid
 import httpx
 import pytest
 from scripts.seed_rbac import sembrar as sembrar_rbac
+from scripts.seed_shipment_statuses import sembrar as sembrar_estados
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.admin import service as admin_service
+from app.modules.audit.outbox import EventoPendiente
 from app.modules.notifications import email as correo
-from app.modules.notifications import service
+from app.modules.notifications import handlers, service
 from app.modules.notifications.catalog import EVENTOS, definicion
+from app.modules.notifications.catalog import texto as catalogo_texto
 from app.modules.notifications.models import Channel, DeliveryStatus
+from app.modules.rbac.models import RoleCode
+from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import service as cargas
 from app.modules.shipments.models import ShipmentStatus
 from tests.integration.test_requisitos_documentales import _carga, _entorno, _permisos
@@ -70,6 +76,124 @@ async def _destinatario(
     )
 
 
+async def _staff(session: AsyncSession, rol: str) -> uuid.UUID:
+    """Personal interno: sin membresía de empresa, con rol global (ADR-0011)."""
+    user_id, _ = await _usuario(session, None)
+    await session.execute(
+        text("""
+            INSERT INTO user_role_assignments (user_id, role_id, scope_type)
+            SELECT :u, r.id, 'GLOBAL' FROM roles r WHERE r.code = :rol
+        """),
+        {"u": user_id, "rol": rol},
+    )
+    return user_id
+
+
+async def _solicitud(
+    session: AsyncSession, empresa: uuid.UUID, usuario: uuid.UUID
+) -> tuple[uuid.UUID, str]:
+    fila = (
+        await session.execute(
+            text("""
+                INSERT INTO dispatch_requests (company_id, requested_by, method, status)
+                VALUES (:c, :u, 'SEA', 'PENDING')
+                RETURNING id, dispatch_number
+            """),
+            {"c": empresa, "u": usuario},
+        )
+    ).one()
+    return fila.id, fila.dispatch_number
+
+
+async def _carga_con_referencia(
+    session: AsyncSession,
+    empresa: uuid.UUID,
+    valor: str | None,
+    *,
+    tipo: str = "WR",
+    creador: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Una carga con su WR o su factura, o sin ninguno de los dos.
+
+    Se inserta directo y no por el servicio: lo que se prueba es de dónde saca
+    el manejador el identificador, no el alta de cargas.
+    """
+    await sembrar_estados(session)
+
+    ubicacion = (
+        await session.execute(
+            text("""
+                INSERT INTO locations (country_code, city_code, location_code, name)
+                VALUES ('PA', :ciudad, :codigo, 'Prueba') RETURNING id
+            """),
+            {
+                "ciudad": uuid.uuid4().hex[:3].upper(),
+                "codigo": uuid.uuid4().hex[:3].upper(),
+            },
+        )
+    ).scalar_one()
+
+    shipment_id = (
+        await session.execute(
+            text("""
+                INSERT INTO shipments
+                    (company_id, created_by, origin_location_id, destination_location_id,
+                     transport_mode, current_status_code)
+                VALUES (:c, :autor, :l, :l, 'SEA', :estado)
+                RETURNING id
+            """),
+            {
+                "c": empresa,
+                "autor": creador,
+                "l": ubicacion,
+                "estado": ShipmentStatus.STORED.value,
+            },
+        )
+    ).scalar_one()
+
+    if valor is not None:
+        await session.execute(
+            text("""
+                INSERT INTO shipment_references (shipment_id, reference_type, value)
+                VALUES (:s, :t, :v)
+            """),
+            {"s": shipment_id, "t": tipo, "v": valor},
+        )
+
+    return shipment_id
+
+
+def _evento_de_outbox(*, aggregate_id: uuid.UUID, payload: dict) -> EventoPendiente:
+    """Lo que el worker le pasa a un manejador, sin pasar por el worker."""
+    return EventoPendiente(
+        id=uuid.uuid4(),
+        aggregate_type="prueba",
+        aggregate_id=aggregate_id,
+        event_type="prueba",
+        payload=payload,
+        attempt_count=0,
+    )
+
+
+async def _aviso(session: AsyncSession, user_id: uuid.UUID) -> tuple[str, str]:
+    """El único aviso de esa persona. Falla si hay más de uno: sería el bug."""
+    fila = (
+        await session.execute(
+            text("SELECT event_code, body FROM notifications WHERE user_id = :u"),
+            {"u": user_id},
+        )
+    ).one()
+    return fila.event_code, fila.body
+
+
+async def _codigo_de_aviso(session: AsyncSession, user_id: uuid.UUID) -> str:
+    return (await _aviso(session, user_id))[0]
+
+
+async def _cuerpo_de_aviso(session: AsyncSession, user_id: uuid.UUID) -> str:
+    return (await _aviso(session, user_id))[1]
+
+
 async def _entregas(session: AsyncSession, notification_id: uuid.UUID) -> dict[str, str]:
     filas = (
         await session.execute(
@@ -95,21 +219,71 @@ def _cuerpo(api: str, mensaje_id: str) -> dict:
     return respuesta.json()
 
 
+# Los ocho críticos que ADR-0008 enumeró en su versión original, más los que
+# agregó la reconstrucción de los seis correos del sistema anterior. Se listan
+# uno por uno en vez de contarlos: un número suelto no dice cuál falta cuando
+# el test se pone en rojo, y bajarlo para que pase es demasiado fácil.
+_CRITICOS_ESPERADOS = frozenset(
+    {
+        # ADR-0008 original
+        "shipment.requirement_blocking",
+        "shipment.requirement_rejected",
+        "shipment.permit_review",
+        "dispatch.status_changed",
+        "shipment.dispatched",
+        "shipment.delivered",
+        "shipment.corrected",
+        "account.security_alert",
+        # Los seis del sistema Django
+        "shipment.stored",
+        "dispatch.requested",
+        "dispatch.requested_internal",
+        "dispatch.approved",
+        "dispatch.bol_available",
+        "account.invitation",
+        # El correo que `/password/forgot` prometía y no mandaba
+        "account.password_reset",
+    }
+)
+
+
 class TestCatalogo:
-    def test_los_ocho_criticos_de_adr_0008_estan(self) -> None:
+    def test_estan_todos_los_criticos_y_ninguno_de_mas(self) -> None:
         criticos = {c for c, e in EVENTOS.items() if e.critico}
-        assert len(criticos) == 8
+        assert criticos == _CRITICOS_ESPERADOS
 
-    def test_ningun_texto_lleva_datos_de_negocio(self) -> None:
-        """Regla dura de ADR-0008: el correo no dice qué carga ni qué documento.
+    def test_lo_unico_sustituible_es_el_identificador(self) -> None:
+        """ADR-0008 enmendado: del negocio solo sale el identificador.
 
-        Se comprueba que ningún texto tenga marcadores de sustitución: si los
-        tuviera, alguien podría rellenarlos con el número de carga y ese dato
+        El asunto y el texto genérico no llevan ningún marcador. La variante
+        `con_referencia` lleva `{ref}` y nada más: si apareciera otro hueco,
+        alguien podría rellenarlo con el shipper, el carrier o el peso, y eso
         terminaría en una bandeja de entrada ajena.
         """
         for evento in EVENTOS.values():
             assert "{" not in evento.asunto
             assert "{" not in evento.mensaje
+
+            if evento.con_referencia is not None:
+                assert evento.con_referencia.replace("{ref}", "").count("{") == 0
+
+    def test_los_seis_del_sistema_anterior_tienen_su_reemplazo(self) -> None:
+        """Cada plantilla de `templates/emails/` del Django tiene su evento acá."""
+        for codigo in (
+            "shipment.stored",  # new_warehouse.html
+            "dispatch.requested",  # dispatch_received.html
+            "dispatch.requested_internal",  # dispatch_request.html
+            "dispatch.approved",  # dispatch_approved.html
+            "dispatch.bol_available",  # dispatch_bol.html
+            "account.invitation",  # credentials.html
+        ):
+            assert definicion(codigo) is not None, codigo
+
+    def test_sin_identificador_el_texto_no_queda_con_un_hueco(self) -> None:
+        """Las cargas migradas sin WR ni factura existen: no puede salir vacío."""
+        evento = definicion("shipment.dispatched")
+        assert catalogo_texto(evento, None) == evento.mensaje
+        assert "WR105921" in catalogo_texto(evento, "WR105921")
 
 
 class TestComposicion:
@@ -347,6 +521,194 @@ class TestBandeja:
         assert len(solo_nuevas.items) == 2
 
 
+class TestSeisCorreosDelSistemaAnterior:
+    """Los seis correos del Django, reconstruidos (ver la enmienda de ADR-0008)."""
+
+    async def test_la_creacion_de_un_despacho_avisa_al_cliente_y_a_operaciones(
+        self, session: AsyncSession
+    ) -> None:
+        """Un solo hecho, dos avisos distintos, con destinatarios distintos.
+
+        En el sistema anterior eran dos llamadas sueltas desde la vista y podía
+        salir una sin la otra. Acá salen del mismo evento del outbox.
+        """
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        cliente, _ = await _usuario(session, empresa)
+        interno = await _staff(session, "OPS_ADMIN")
+
+        dispatch_id, numero = await _solicitud(session, empresa, cliente)
+
+        await handlers.solicitud_de_despacho_creada(
+            session,
+            _evento_de_outbox(
+                aggregate_id=dispatch_id,
+                payload={"company_id": str(empresa), "hacia": "PENDING"},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, cliente) == "dispatch.requested"
+        assert await _codigo_de_aviso(session, interno) == "dispatch.requested_internal"
+
+        # El número de solicitud es lo único de negocio que sale; sin él el
+        # correo no dice de qué despacho habla.
+        assert numero in await _cuerpo_de_aviso(session, cliente)
+
+    async def test_operaciones_no_recibe_el_aviso_bajo_la_empresa_del_cliente(
+        self, session: AsyncSession
+    ) -> None:
+        """El aviso interno no pertenece a la empresa que lo originó.
+
+        Si llevara su `company_id`, aparecería filtrado bajo esa empresa en la
+        bandeja del staff, como si fuera un aviso del cliente y no un pendiente
+        propio.
+        """
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        cliente, _ = await _usuario(session, empresa)
+        interno = await _staff(session, "SUPER_ADMIN")
+
+        dispatch_id, _ = await _solicitud(session, empresa, cliente)
+        await handlers.solicitud_de_despacho_creada(
+            session,
+            _evento_de_outbox(
+                aggregate_id=dispatch_id,
+                payload={"company_id": str(empresa), "hacia": "PENDING"},
+            ),
+        )
+
+        fila = (
+            await session.execute(
+                text("SELECT company_id FROM notifications WHERE user_id = :u"), {"u": interno}
+            )
+        ).scalar_one()
+        assert fila is None
+
+    async def test_un_ops_agent_no_recibe_el_pedido_de_aprobacion(
+        self, session: AsyncSession
+    ) -> None:
+        """No puede aprobar: llenarle la bandeja termina en que nadie lee nada."""
+        await sembrar_rbac(session)
+        agente = await _staff(session, "OPS_AGENT")
+
+        destinatarios = await service.destinatarios_de_operaciones(session)
+
+        assert agente not in {d.user_id for d in destinatarios}
+
+    async def test_almacenar_una_carga_avisa_con_su_identificador(
+        self, session: AsyncSession
+    ) -> None:
+        """Reemplaza `new_warehouse.html`: la mercadería llegó y está contada."""
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        shipment_id = await _carga_con_referencia(session, empresa, "WR105921", creador=usuario)
+
+        await handlers.cambio_de_estado_de_carga(
+            session,
+            _evento_de_outbox(
+                aggregate_id=shipment_id,
+                payload={"desde": ShipmentStatus.RECEIVED, "hacia": ShipmentStatus.STORED},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "shipment.stored"
+        assert "WR105921" in await _cuerpo_de_aviso(session, usuario)
+
+    async def test_una_carga_sin_wr_ni_factura_avisa_igual(self, session: AsyncSession) -> None:
+        """Las cargas migradas sin identificador existen y no pueden romper esto."""
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        shipment_id = await _carga_con_referencia(session, empresa, None, creador=usuario)
+
+        await handlers.cambio_de_estado_de_carga(
+            session,
+            _evento_de_outbox(
+                aggregate_id=shipment_id,
+                payload={"desde": ShipmentStatus.RECEIVED, "hacia": ShipmentStatus.STORED},
+            ),
+        )
+
+        cuerpo = await _cuerpo_de_aviso(session, usuario)
+        assert "{" not in cuerpo
+        assert cuerpo.strip()
+
+    async def test_la_factura_sirve_de_identificador_cuando_no_hay_wr(
+        self, session: AsyncSession
+    ) -> None:
+        """Solo lo que sale de una bodega que emite WR lo lleva; el resto, factura."""
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        shipment_id = await _carga_con_referencia(
+            session, empresa, "F-2026-0088", tipo="INVOICE", creador=usuario
+        )
+
+        await handlers.cambio_de_estado_de_carga(
+            session,
+            _evento_de_outbox(
+                aggregate_id=shipment_id,
+                payload={"desde": ShipmentStatus.STORED, "hacia": ShipmentStatus.DISPATCHED},
+            ),
+        )
+
+        assert "F-2026-0088" in await _cuerpo_de_aviso(session, usuario)
+
+    async def test_completar_un_despacho_avisa_del_bill_of_lading(
+        self, session: AsyncSession
+    ) -> None:
+        """Reemplaza `dispatch_bol.html`, que adjuntaba los PDF al correo."""
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        dispatch_id, _ = await _solicitud(session, empresa, usuario)
+
+        await handlers.cambio_de_estado_de_despacho(
+            session,
+            _evento_de_outbox(
+                aggregate_id=dispatch_id,
+                payload={"company_id": str(empresa), "desde": "PREPARING", "hacia": "COMPLETED"},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "dispatch.bol_available"
+
+    async def test_aprobar_un_despacho_tiene_su_propio_aviso(self, session: AsyncSession) -> None:
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        dispatch_id, _ = await _solicitud(session, empresa, usuario)
+
+        await handlers.cambio_de_estado_de_despacho(
+            session,
+            _evento_de_outbox(
+                aggregate_id=dispatch_id,
+                payload={"company_id": str(empresa), "desde": "PENDING", "hacia": "APPROVED"},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "dispatch.approved"
+
+    async def test_un_estado_sin_aviso_propio_cae_en_el_generico(
+        self, session: AsyncSession
+    ) -> None:
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        dispatch_id, _ = await _solicitud(session, empresa, usuario)
+
+        await handlers.cambio_de_estado_de_despacho(
+            session,
+            _evento_de_outbox(
+                aggregate_id=dispatch_id,
+                payload={"company_id": str(empresa), "desde": "APPROVED", "hacia": "PREPARING"},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "dispatch.status_changed"
+
+
 @pytest.mark.slow
 class TestCorreoReal:
     """Contra Mailpit de verdad. Marcado `slow`: levanta un contenedor."""
@@ -414,6 +776,156 @@ class TestCorreoReal:
         assert numero not in cuerpo["Text"]
         assert numero not in cuerpo["HTML"]
         assert cuerpo["Attachments"] == []
+
+    async def test_el_identificador_sale_pero_el_detalle_comercial_no(
+        self, session: AsyncSession, correo_de_prueba: str
+    ) -> None:
+        """El corte de la enmienda de ADR-0008, contra un buzón real.
+
+        El WR ya está en los papeles del embarque y el cliente lo tiene, así
+        que repetirlo no expone nada nuevo. El shipper y el carrier son la
+        relación comercial, y de esos sí se aprende algo mirando un buzón ajeno.
+        """
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        destinatario = await _destinatario(session, empresa)
+
+        await service.notificar(
+            session,
+            event_code="shipment.stored",
+            destinatarios=[destinatario],
+            resource_type="shipment",
+            resource_id=uuid.uuid4(),
+            referencia="WR105921",
+            dedup_key=f"prueba-{uuid.uuid4().hex}",
+        )
+
+        mensaje = _mensajes(correo_de_prueba)[0]
+        cuerpo = _cuerpo(correo_de_prueba, mensaje["ID"])
+
+        # El asunto también lo lleva: veinte asuntos idénticos en una bandeja no
+        # dicen cuál es cuál.
+        assert "WR105921" in mensaje["Subject"]
+        assert "WR105921" in cuerpo["Text"]
+        assert "WR105921" in cuerpo["HTML"]
+        assert cuerpo["Attachments"] == []
+
+    async def test_la_invitacion_llega_con_enlace_y_sin_contrasena(
+        self, session: AsyncSession, correo_de_prueba: str, redis
+    ) -> None:
+        """Lo que separa esto de `credentials.html` del sistema anterior.
+
+        Aquel mandaba usuario y contraseña en texto plano, que quedan para
+        siempre en ese buzón y en el de quien lo reenvíe. Acá viaja un enlace
+        de un solo uso y la contraseña la elige la persona.
+        """
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        admin = await _staff(session, "SUPER_ADMIN")
+        await session.commit()
+
+        creado = await admin_service.crear_usuario(
+            session,
+            email=f"alta-{uuid.uuid4().hex[:8]}@amvarmar.test",
+            first_name="Nora",
+            last_name="Salas",
+            role_code=RoleCode.CLIENT_USER,
+            company_id=empresa,
+            phone=None,
+            permisos=await obtener_permisos_efectivos(session, redis, admin),
+        )
+
+        assert creado.invitacion_enviada is True
+
+        cuerpo = _cuerpo(correo_de_prueba, _mensajes(correo_de_prueba)[0]["ID"])
+
+        assert "https://app.amvarmar.test/invitacion/" in cuerpo["Text"]
+        # Lo que nunca puede viajar.
+        assert creado.password_temporal not in cuerpo["Text"]
+        assert creado.password_temporal not in cuerpo["HTML"]
+        assert creado.email not in cuerpo["Text"]
+
+    async def test_la_invitacion_sale_aunque_el_correo_no_este_verificado(
+        self, session: AsyncSession, correo_de_prueba: str, redis
+    ) -> None:
+        """Exigir verificación acá sería circular.
+
+        La persona no puede verificar su dirección sin recibir el correo que se
+        lo pide. Con la regla general, toda cuenta nueva quedaría sin acceso.
+        """
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        admin = await _staff(session, "SUPER_ADMIN")
+        await session.commit()
+
+        creado = await admin_service.crear_usuario(
+            session,
+            email=f"sinverificar-{uuid.uuid4().hex[:8]}@amvarmar.test",
+            first_name="Beto",
+            last_name="Cruz",
+            role_code=RoleCode.CLIENT_USER,
+            company_id=empresa,
+            phone=None,
+            permisos=await obtener_permisos_efectivos(session, redis, admin),
+        )
+
+        verificado = (
+            await session.execute(
+                text("SELECT email_verified_at FROM users WHERE id = :u"), {"u": creado.id}
+            )
+        ).scalar_one()
+
+        assert verificado is None
+        assert len(_mensajes(correo_de_prueba)) == 1
+
+    async def test_un_relay_caido_no_impide_dar_de_alta(
+        self, session: AsyncSession, correo_de_prueba: str, redis, monkeypatch
+    ) -> None:
+        """El alta no puede depender de que el servidor de correo responda.
+
+        Se monta sobre el fixture de Mailpit a propósito: sin él el envío
+        fallaría de todas formas por falta de relay y la prueba pasaría sin
+        ejercitar nada.
+        """
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        admin = await _staff(session, "SUPER_ADMIN")
+        await session.commit()
+
+        async def falla(*_args: object, **_kwargs: object) -> None:
+            raise correo.EnvioFallido("relay caído")
+
+        monkeypatch.setattr(correo, "enviar", falla)
+
+        creado = await admin_service.crear_usuario(
+            session,
+            email=f"sinrelay-{uuid.uuid4().hex[:8]}@amvarmar.test",
+            first_name="Sara",
+            last_name="Lima",
+            role_code=RoleCode.CLIENT_USER,
+            company_id=empresa,
+            phone=None,
+            permisos=await obtener_permisos_efectivos(session, redis, admin),
+        )
+
+        # La cuenta existe y la temporal sirve para entrar: el administrador
+        # tiene cómo darle acceso mientras el relay vuelve.
+        assert creado.invitacion_enviada is False
+        assert creado.password_temporal
+        assert _mensajes(correo_de_prueba) == []
+
+        # Y queda registro de que falló, no un silencio.
+        estado = (
+            await session.execute(
+                text("""
+                    SELECT d.status FROM notification_deliveries d
+                    JOIN notifications n ON n.id = d.notification_id
+                    WHERE n.user_id = :u AND d.channel = 'EMAIL'
+                """),
+                {"u": creado.id},
+            )
+        ).scalar_one()
+        assert estado == DeliveryStatus.FAILED
 
     async def test_un_reproceso_no_manda_dos_correos(
         self, session: AsyncSession, correo_de_prueba: str
