@@ -367,6 +367,17 @@ async def _guardar_referencias(
 # `shipment_number` quedan fuera a propósito: el estado lo mueve el motor de
 # transiciones, y cambiar de empresa o de número reescribiría la identidad de la
 # carga en vez de corregirla.
+# Identificadores comerciales. No son columnas de `shipments` sino filas de
+# `shipment_references`, así que se aplican aparte del UPDATE genérico. El
+# sistema viejo los editaba desde el mismo formulario y acá también.
+_REFERENCIAS_EDITABLES: dict[str, ReferenceType] = {
+    "wr": ReferenceType.WR,
+    "invoice": ReferenceType.INVOICE,
+    "tracking": ReferenceType.TRACKING,
+    "po": ReferenceType.PO,
+    "container": ReferenceType.CONTAINER,
+}
+
 _EDITABLES_CAMPOS: dict[str, str] = {
     "origin_location_id": "origen",
     "origin_facility_id": "bodega",
@@ -431,8 +442,20 @@ async def actualizar(
         )
 
     aplicables = {c: v for c, v in cambios.items() if c in _EDITABLES_CAMPOS}
-    if not aplicables:
+    referencias = {c: v for c, v in cambios.items() if c in _REFERENCIAS_EDITABLES}
+
+    if not aplicables and not referencias:
         raise DatosInvalidos("No hay ningún campo editable en la solicitud.")
+
+    if not aplicables:
+        # Solo cambiaron identificadores. Igual sube la versión: quien editaba
+        # en paralelo tiene que enterarse de que su copia quedó vieja.
+        nueva_version = await _subir_version(session, shipment_id, row_version)
+        await _aplicar_referencias(session, shipment_id, referencias)
+        await _registrar_correccion(
+            session, shipment_id, sorted(referencias), actor_user_id=actor_user_id
+        )
+        return nueva_version
 
     asignaciones = ", ".join(f"{campo} = :{_EDITABLES_CAMPOS[campo]}" for campo in aplicables)
     parametros: dict[str, Any] = {
@@ -448,12 +471,72 @@ async def actualizar(
     """  # noqa: S608
 
     try:
-        nueva_version: int = (await session.execute(text(consulta), parametros)).scalar_one()
+        nueva_version = int((await session.execute(text(consulta), parametros)).scalar_one())
     except IntegrityError as error:
         raise DatosInvalidos(
             "Alguno de los datos referenciados no existe (ubicación, bodega o responsable)."
         ) from error
 
+    await _aplicar_referencias(session, shipment_id, referencias)
+    await _registrar_correccion(
+        session,
+        shipment_id,
+        sorted([*aplicables, *referencias]),
+        actor_user_id=actor_user_id,
+    )
+
+    return nueva_version
+
+
+async def _subir_version(session: AsyncSession, shipment_id: UUID, row_version: int) -> int:
+    version: int = (
+        await session.execute(
+            text("""
+                UPDATE shipments SET row_version = row_version + 1, updated_at = now()
+                WHERE id = :id AND row_version = :version
+                RETURNING row_version
+            """),
+            {"id": shipment_id, "version": row_version},
+        )
+    ).scalar_one()
+    return version
+
+
+async def _aplicar_referencias(
+    session: AsyncSession, shipment_id: UUID, referencias: dict[str, Any]
+) -> None:
+    """Reemplaza los identificadores que vinieron en el cuerpo.
+
+    Vacío significa borrar: corregir una factura mal tecleada es tan válido como
+    ponerle una, y sin esto la equivocada quedaría para siempre. Se borra y se
+    reinserta en vez de hacer UPDATE porque una carga puede tener varias del
+    mismo tipo y el formulario manda una sola: el reemplazo deja el estado que
+    el formulario muestra, que es lo que la persona cree haber guardado.
+    """
+    for campo, valor in referencias.items():
+        tipo = _REFERENCIAS_EDITABLES[campo]
+        await session.execute(
+            text("""
+                DELETE FROM shipment_references
+                WHERE shipment_id = :s AND reference_type = :t
+            """),
+            {"s": shipment_id, "t": tipo.value},
+        )
+
+        limpio = (valor or "").strip()
+        if limpio:
+            await session.execute(
+                text("""
+                    INSERT INTO shipment_references (shipment_id, reference_type, value)
+                    VALUES (:s, :t, :v)
+                """),
+                {"s": shipment_id, "t": tipo.value, "v": limpio[:120]},
+            )
+
+
+async def _registrar_correccion(
+    session: AsyncSession, shipment_id: UUID, campos: list[str], *, actor_user_id: UUID
+) -> None:
     await session.execute(
         text("""
             INSERT INTO shipment_events
@@ -466,12 +549,10 @@ async def actualizar(
             "titulo": "Datos corregidos",
             # Qué se tocó, no los valores: el detalle vive en la auditoría, que
             # sí guarda antes y después con redacción de campos sensibles.
-            "descripcion": "Campos actualizados: " + ", ".join(sorted(aplicables)),
+            "descripcion": "Campos actualizados: " + ", ".join(campos),
             "actor": actor_user_id,
         },
     )
-
-    return nueva_version
 
 
 # --- Revisión de lo migrado (ADR-0002 / Paso 5.7) ---

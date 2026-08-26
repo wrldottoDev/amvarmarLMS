@@ -85,6 +85,8 @@ _COLUMNAS_LISTADO = """
     s.legacy_review_required,
     s.created_at,
     s.updated_at,
+    s.origin_location_id AS origen_id,
+    s.destination_location_id AS destino_id,
     origen.location_code AS origen_codigo,
     origen.name AS origen_nombre,
     origen.country_code AS origen_pais,

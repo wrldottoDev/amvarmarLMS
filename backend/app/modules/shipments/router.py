@@ -172,6 +172,15 @@ class ActualizarCargaRequest(BaseModel):
     permit_review_required: bool | None = None
     assigned_to: UUID | None = None
 
+    # Identificadores comerciales. El sistema viejo los editaba desde el mismo
+    # formulario. Mandar la cadena vacía los borra: corregir una factura mal
+    # tecleada es tan válido como ponerle una.
+    wr: str | None = Field(default=None, max_length=120)
+    invoice: str | None = Field(default=None, max_length=120)
+    tracking: str | None = Field(default=None, max_length=120)
+    po: str | None = Field(default=None, max_length=120)
+    container: str | None = Field(default=None, max_length=120)
+
 
 class CargaActualizadaResponse(BaseModel):
     id: UUID
@@ -721,6 +730,9 @@ async def resolver_requisito(
 
 
 class UbicacionResponse(BaseModel):
+    # El id además del código: sin él, una pantalla que quiera preseleccionar
+    # esta ubicación en un desplegable tiene que adivinar cuál es por su nombre.
+    id: UUID
     location_code: str
     name: str
     country_code: str
@@ -813,11 +825,13 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         weight_lb=fila.weight_lb,
         hidden_at=fila.hidden_at,
         origin=UbicacionResponse(
+            id=fila.origen_id,
             location_code=fila.origen_codigo,
             name=fila.origen_nombre,
             country_code=fila.origen_pais,
         ),
         destination=UbicacionResponse(
+            id=fila.destino_id,
             location_code=fila.destino_codigo,
             name=fila.destino_nombre,
             country_code=fila.destino_pais,

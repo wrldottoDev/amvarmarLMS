@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Package, Route, Ship, Tag } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Package, Pencil, Route, Ship, Tag } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carga";
@@ -14,6 +14,15 @@ import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
+
+/**
+ * Estados en los que la carga todavía se puede corregir.
+ *
+ * Es el mismo conjunto que `_EDITABLES` de `shipments/gestion.py`. Una vez
+ * despachada, un error se registra como corrección en la línea de tiempo y no
+ * se sobreescribe: el expediente ya salió con esos datos.
+ */
+const EDITABLES = new Set(["PRE_ALERT", "IN_TRANSIT", "RECEIVED", "STORED"]);
 
 /** Los mismos nombres que usaba el desplegable del sistema viejo. */
 const ETIQUETA_PIEZA: Record<string, string> = {
@@ -93,7 +102,21 @@ export default function PaginaDetalleCarga() {
               <p className="mt-1 font-mono text-sm text-[var(--texto-secundario)]">{carga.shipment_number}</p>
             ) : null}
           </div>
-          <TransicionCarga cargaId={carga.id} estado={carga.status} rowVersion={carga.row_version} />
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Solo Operaciones edita, y solo mientras la carga no salió de
+                bodega. Un cliente que ve el botón y recibe un 403 al pulsarlo
+                aprende menos que uno que no lo ve. */}
+            {!usuario?.empresa && EDITABLES.has(carga.status) ? (
+              <Link
+                href={`/cargas/${carga.id}/editar`}
+                className="flex h-10 items-center gap-1.5 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
+              >
+                <Pencil className="size-4" aria-hidden="true" />
+                Editar
+              </Link>
+            ) : null}
+            <TransicionCarga cargaId={carga.id} estado={carga.status} rowVersion={carga.row_version} />
+          </div>
         </div>
 
         <div className="mt-5">

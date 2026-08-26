@@ -580,6 +580,132 @@ class TestActualizar:
         assert "weight_kg" in nota.description
 
 
+class TestEditarIdentificadores:
+    """El sistema viejo editaba WR, factura, tracking, PO y contenedor.
+
+    No son columnas de `shipments` sino filas de `shipment_references`, así que
+    van por un camino propio dentro de la misma llamada.
+    """
+
+    async def _crear(self, session, redis, entorno, **extra):
+        return await gestion.crear(
+            session,
+            datos=_datos(entorno, **extra),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+    async def _referencia(self, session, shipment_id, tipo: str) -> str | None:
+        valor: str | None = (
+            await session.execute(
+                text("""
+                    SELECT value FROM shipment_references
+                    WHERE shipment_id = :s AND reference_type = :t
+                """),
+                {"s": shipment_id, "t": tipo},
+            )
+        ).scalar_one_or_none()
+        return valor
+
+    async def test_corrige_una_factura_mal_tecleada(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        creada = await self._crear(session, redis, entorno, invoice="F-0001")
+
+        await gestion.actualizar(
+            session,
+            shipment_id=creada.id,
+            cambios={"invoice": "F-0002"},
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert await self._referencia(session, creada.id, "INVOICE") == "F-0002"
+
+    async def test_vaciar_una_referencia_la_borra(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Si no, un tracking puesto por error queda para siempre."""
+        creada = await self._crear(session, redis, entorno, tracking="TRK-1")
+
+        await gestion.actualizar(
+            session,
+            shipment_id=creada.id,
+            cambios={"tracking": ""},
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert await self._referencia(session, creada.id, "TRACKING") is None
+
+    async def test_editar_solo_identificadores_sube_la_version(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Aunque no cambie ninguna columna de `shipments`.
+
+        Sin esto, quien tuviera el formulario abierto en paralelo guardaría
+        encima sin enterarse de que su copia quedó vieja.
+        """
+        creada = await self._crear(session, redis, entorno, invoice="F-0001")
+
+        nueva = await gestion.actualizar(
+            session,
+            shipment_id=creada.id,
+            cambios={"po": "PO-77"},
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert nueva == creada.row_version + 1
+
+    async def test_el_wr_se_puede_agregar_despues(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """La bodega lo emite al recibir, así que puede no existir al dar de alta."""
+        creada = await self._crear(session, redis, entorno)
+
+        await gestion.actualizar(
+            session,
+            shipment_id=creada.id,
+            cambios={"wr": "WR105921"},
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert await self._referencia(session, creada.id, "WR") == "WR105921"
+
+    async def test_queda_constancia_de_lo_que_se_toco(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        creada = await self._crear(session, redis, entorno)
+
+        await gestion.actualizar(
+            session,
+            shipment_id=creada.id,
+            cambios={"invoice": "F-9", "shipper": "Otro"},
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        descripcion = (
+            await session.execute(
+                text("""
+                    SELECT description FROM shipment_events
+                    WHERE shipment_id = :s AND title = 'Datos corregidos'
+                """),
+                {"s": creada.id},
+            )
+        ).scalar_one()
+
+        assert "invoice" in descripcion
+        assert "shipper" in descripcion
+
+
 class TestRevisionLegacy:
     """Cargas que la migración no supo traducir con certeza (ADR-0002).
 

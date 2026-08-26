@@ -27,6 +27,9 @@ class DefinicionColumna:
 COLUMNAS_CARGAS: list[DefinicionColumna] = [
     DefinicionColumna("identificador", "WR / Factura", fija=True),
     DefinicionColumna("empresa", "Empresa"),
+    # Además del identificador: una carga de Miami tiene WR **y** puede tener
+    # factura, y el listado viejo mostraba las dos columnas por separado.
+    DefinicionColumna("invoice", "Invoice #"),
     DefinicionColumna("estado", "Estado", fija=True),
     DefinicionColumna("shipper", "Shipper"),
     DefinicionColumna("carrier", "Carrier"),

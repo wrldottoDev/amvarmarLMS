@@ -1121,6 +1121,16 @@ export interface components {
             permit_review_required?: boolean | null;
             /** Assigned To */
             assigned_to?: string | null;
+            /** Wr */
+            wr?: string | null;
+            /** Invoice */
+            invoice?: string | null;
+            /** Tracking */
+            tracking?: string | null;
+            /** Po */
+            po?: string | null;
+            /** Container */
+            container?: string | null;
         };
         /** ActualizarEmpresaRequest */
         ActualizarEmpresaRequest: {
@@ -2231,6 +2241,11 @@ export interface components {
         };
         /** UbicacionResponse */
         UbicacionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             /** Location Code */
             location_code: string;
             /** Name */

@@ -40,6 +40,7 @@ export function useGuardarColumnas() {
 export const contenidoColumna: Record<string, (carga: CargaResumen) => string> = {
   identificador: (c) => c.wr || c.invoice || c.shipment_number,
   empresa: () => "",
+  invoice: (c) => c.invoice || "—",
   estado: (c) => c.status,
   shipper: (c) => c.shipper || "—",
   carrier: (c) => c.carrier || "—",
