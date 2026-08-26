@@ -281,11 +281,11 @@ class TestCargasSinCliente:
         """Es la fuga que el modelo de alcances existe para impedir."""
         legacy["correr"]("/tmp/000_registro.sql")
         original = (_CORRECCIONES / "002_cargas_sin_cliente.sql").read_text()
-        # La carga 1 es de la empresa 2; el usuario 5 pertenece a la empresa 1.
+        # WR000001 es de la empresa 2; el usuario 5 pertenece a la empresa 1.
         contenido = original.replace(
             "-- ###########################################################################\n\n-- El cliente asignado",
             "-- ###########################################################################\n"
-            "INSERT INTO asignaciones VALUES (1, 5, 'asignación equivocada');\n\n"
+            "INSERT INTO asignaciones VALUES ('WR000001', 5, 'asignación equivocada');\n\n"
             "-- El cliente asignado",
         )
         ruta = Path("/tmp") / f"002_malo_{uuid.uuid4().hex[:8]}.sql"
@@ -296,44 +296,50 @@ class TestCargasSinCliente:
 
         assert resultado.returncode != 0
         assert "otra empresa" in resultado.stderr
-        assert legacy["psql"]("SELECT cliente_id FROM core_warehouse WHERE id = 1") == ""
-
-
-class TestFormatoDeWr:
-    def test_normaliza_los_dos_wr_mal_capturados(self, legacy) -> None:
-        legacy["correr"]("/tmp/000_registro.sql")
-
-        resultado = legacy["correr"]("/tmp/003_wr_formato.sql")
-
-        assert resultado.returncode == 0, resultado.stderr
         assert (
-            legacy["psql"]("SELECT count(*) FROM core_warehouse WHERE wr_number !~ '^[A-Z0-9-]+$'")
-            == "0"
-        )
-        assert (
-            legacy["psql"]("SELECT count(*) FROM core_warehouse WHERE wr_number = 'WR000901'")
-            == "1"
-        )
-        assert (
-            legacy["psql"]("SELECT count(*) FROM core_warehouse WHERE wr_number = 'WR000902'")
-            == "1"
+            legacy["psql"](
+                "SELECT coalesce(cliente_id::text, '') FROM core_warehouse "
+                "WHERE wr_number = 'WR000001'"
+            )
+            == ""
         )
 
-    def test_aborta_si_la_limpieza_fusionaria_dos_wr(self, legacy) -> None:
-        """Normalizar no puede convertir dos cargas distintas en la misma."""
-        legacy["correr"]("/tmp/000_registro.sql")
-        legacy["psql"](
-            "INSERT INTO core_warehouse (wr_number, company_id, status) VALUES ('WR000902', 1, 'COMPLETADO')"
-        )
 
-        resultado = legacy["correr"]("/tmp/003_wr_formato.sql")
+class TestNormalizacionDelWrNoSeHaceAqui:
+    """El WR mal capturado se deja como está en el legacy.
+
+    Es la clave primaria y lo referencian cinco tablas con `NO ACTION`, así que
+    cambiarlo en una carga con documentos o piezas falla. Se normaliza al
+    migrar, donde ya es una referencia y no la identidad (ADR-0005).
+    """
+
+    def test_ya_no_existe_un_script_que_lo_toque(self) -> None:
+        assert not (_CORRECCIONES / "003_wr_formato.sql").exists()
+        # Y queda escrito por qué, para que nadie lo reponga sin leer el motivo.
+        assert (_CORRECCIONES / "003_wr_formato.OMITIDO.md").exists()
+
+    def test_cambiar_el_wr_en_el_legacy_falla_de_verdad(self, legacy) -> None:
+        """No es una precaución teórica: la base lo rechaza."""
+        resultado = legacy["ejecutar"](
+            [
+                "psql",
+                "--dbname",
+                legacy["base"],
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-c",
+                "UPDATE core_warehouse SET wr_number = 'WR000903' WHERE wr_number = 'WR000901.'",
+            ]
+        )
 
         assert resultado.returncode != 0
-        assert "duplicados" in resultado.stderr
-        assert (
-            legacy["psql"]("SELECT count(*) FROM core_warehouse WHERE wr_number = 'WR000902|'")
-            == "1"
-        )
+        assert "foreign key" in resultado.stderr.lower()
+
+    def test_el_migrador_si_lo_normaliza(self) -> None:
+        from scripts.migrate_legacy import normalizar_wr
+
+        assert normalizar_wr("WR000901.") == "WR000901"
+        assert normalizar_wr("WR000902|") == "WR000902"
 
 
 class TestReversion:
@@ -341,29 +347,30 @@ class TestReversion:
         """Un script de corrección sin vuelta atrás obliga a restaurar un
         respaldo entero para deshacer un correo mal puesto."""
         legacy["correr"]("/tmp/000_registro.sql")
-        antes = legacy["psql"](
-            "SELECT string_agg(wr_number, ',' ORDER BY id) FROM core_warehouse "
-            "WHERE wr_number IN ('WR000901.', 'WR000902|')"
+        # Las decisiones tienen que cubrir a TODOS los que quedarían sin correo:
+        # el script verifica antes de confirmar, y si alguno queda vacío aborta
+        # y no hay nada que revertir.
+        script = _con_decisiones(
+            "INSERT INTO decisiones VALUES (1, 'nuevo@ejemplo.example', false, 'prueba');\n"
+            "INSERT INTO decisiones VALUES (2, NULL, true, 'sin uso');\n"
+            "INSERT INTO decisiones VALUES (3, NULL, true, 'sin uso');\n"
+            "INSERT INTO decisiones VALUES (4, NULL, true, 'sin uso');\n"
+            "INSERT INTO decisiones VALUES (6, NULL, true, 'duplicado');\n"
+            "INSERT INTO decisiones VALUES (8, NULL, true, 'duplicado');"
         )
-        legacy["correr"]("/tmp/003_wr_formato.sql")
-        assert (
-            legacy["psql"]("SELECT count(*) FROM core_warehouse WHERE wr_number = 'WR000901'")
-            == "1"
-        )
+        legacy["copiar"](script, "/tmp/001_revertible.sql")
 
-        resultado = legacy["correr"]("/tmp/999_revertir.sql", "script=003_wr_formato")
+        antes = legacy["psql"]("SELECT coalesce(email, '') FROM auth_user WHERE id = 1")
+        legacy["correr"]("/tmp/001_revertible.sql")
+        assert legacy["psql"]("SELECT email FROM auth_user WHERE id = 1") == "nuevo@ejemplo.example"
+
+        resultado = legacy["correr"]("/tmp/999_revertir.sql", "script=001_emails")
 
         assert resultado.returncode == 0, resultado.stderr
+        assert legacy["psql"]("SELECT coalesce(email, '') FROM auth_user WHERE id = 1") == antes
         assert (
             legacy["psql"](
-                "SELECT string_agg(wr_number, ',' ORDER BY id) FROM core_warehouse "
-                "WHERE wr_number IN ('WR000901.', 'WR000902|')"
-            )
-            == antes
-        )
-        assert (
-            legacy["psql"](
-                "SELECT count(*) FROM migracion_correcciones WHERE script = '003_wr_formato'"
+                "SELECT count(*) FROM migracion_correcciones WHERE script = '001_emails'"
             )
             == "0"
         )

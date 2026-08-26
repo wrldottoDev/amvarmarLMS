@@ -21,6 +21,15 @@ alerta sin runbook es una alerta que alguien va a ignorar.
 | [storage-no-responde.md](storage-no-responde.md) | `EscaneoAtascado` |
 | [restaurar-backup.md](restaurar-backup.md) | `RespaldoVencido`, `EnsayoDeRestauracionFallido` |
 
+## Migración
+
+Estos dos no responden a una alerta: son procedimientos planificados.
+
+| Runbook | Cuándo |
+|---|---|
+| [cutover.md](cutover.md) | El día del cambio de sistema (Pasos 5.5 y 5.6) |
+| [estabilizacion.md](estabilizacion.md) | Las dos semanas siguientes (Paso 5.7) |
+
 ## Objetivos comprometidos
 
 | Objetivo | Valor | Dónde se verifica |

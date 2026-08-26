@@ -402,9 +402,15 @@ class TestRespaldoYRestauracion:
         entorno["BACKUP_DIR"] = "/tmp/no-deberia-crearse"
 
         # Se apunta al contenedor de la suite, que es más nuevo que el cliente.
-        partes = urlparse(
-            os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
-        )
+        url = os.environ.get("DATABASE_URL", "")
+        if not url:
+            # Sin URL, los `or` de abajo apuntarían a un `postgres@localhost`
+            # que no tiene por qué existir, y el script fallaría por no poder
+            # conectarse. Eso no dice nada sobre la comprobación de versiones,
+            # que es lo único que esta prueba mira.
+            pytest.skip("DATABASE_URL no está en el entorno")
+
+        partes = urlparse(url.replace("postgresql+asyncpg://", "postgresql://"))
         entorno.update(
             {
                 "PGHOST": partes.hostname or "localhost",

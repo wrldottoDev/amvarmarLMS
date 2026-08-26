@@ -109,3 +109,7 @@ backup_checksums.txt
 # Código fuente del sistema viejo. Se conserva aparte, en su propio repositorio;
 # acá solo estorbaría y duplicaría historia que ya existe en otro lado.
 amvarmarProduccion*.zip
+
+# Copia local de los archivos del sistema viejo (Paso 5.3). Son documentos de
+# clientes y pesan cerca de 10 GB.
+media-legacy/

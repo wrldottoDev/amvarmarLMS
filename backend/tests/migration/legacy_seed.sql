@@ -55,12 +55,21 @@ INSERT INTO core_warehouse (wr_number, company_id, cliente_id, status) VALUES
     ('WR000901.', 1, 5, 'COMPLETADO'),
     ('WR000902|', 2, 7, 'COMPLETADO');
 
-INSERT INTO core_dispatchrequest (user_id, company_id, status)
-SELECT 5, 1, 'COMPLETADO' FROM generate_series(1, 10);
+INSERT INTO core_dispatchrequest (user_id, company_id, status, method)
+SELECT 5, 1, 'COMPLETADO', 'MARITIMO' FROM generate_series(1, 10);
 
-INSERT INTO core_dispatchrequestitem (dispatch_request_id, warehouse_id)
-SELECT d.id, w.id
+INSERT INTO core_dispatchrequestitem (dispatch_id, warehouse_id)
+SELECT d.id, w.wr_number
 FROM core_dispatchrequest d
 CROSS JOIN LATERAL (
-    SELECT id FROM core_warehouse WHERE id > 5 ORDER BY id LIMIT 3
+    SELECT wr_number FROM core_warehouse
+    WHERE cliente_id IS NOT NULL ORDER BY wr_number LIMIT 3
 ) AS w;
+
+-- Un documento y una pieza sobre el WR mal capturado: es lo que hace que
+-- normalizarlo en el legacy falle, y por eso se hace al migrar.
+INSERT INTO core_warehousedocument (warehouse_id, file, original_name)
+VALUES ('WR000901.', 'warehouse_docs/2026/01/factura.pdf', 'factura.pdf');
+
+INSERT INTO core_piecewarehouse (warehouse_id, type_of, quantity, description)
+VALUES ('WR000901.', 'CAJAS', 2, 'Dos cajas');

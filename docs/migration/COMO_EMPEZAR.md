@@ -79,8 +79,9 @@ no está construido. El orden es:
    decisiones y ejecutarlos.
 2. **5.2** — el migrador con `legacy_id_map` y modo `--dry-run`, que traduce
    `core_warehouse` a `shipments` y todo lo demás.
-3. **5.3** — subir los archivos de `media/` al storage privado. Son casi 10 GB,
-   así que es la etapa larga.
+3. **5.3** — subir los archivos de `media/` al storage privado. **Ya está
+   construido**, ver abajo. Son casi 10 GB: es la etapa larga en tiempo de
+   ejecución.
 4. **5.4** — ensayo completo sobre una copia, cronometrado, para saber cuánto
    dura la ventana de cutover.
 
@@ -97,3 +98,40 @@ tiempo, y las sesiones activas.
 **Falta interfaz** para lo de Fase 3 y 4, aunque la API ya lo tiene: despachos,
 subida y descarga de documentos, requisitos documentales y bandeja de
 notificaciones.
+
+## Paso 5.3 — subir los archivos del sistema viejo
+
+El migrador de datos registró cada documento con la ruta que tenía en el
+servidor viejo y lo dejó pendiente: la fila existe, el archivo no. Por eso hoy
+la interfaz los muestra como "No disponible todavía".
+
+```bash
+# 1. Traer media/ desde la VPS. Se puede cortar y reanudar: son ~10 GB.
+VPS_HOST=usuario@ip infra/backup/traer_media.sh
+
+# 2. Simular. No escribe nada y lista lo que falta.
+cd backend
+python -m scripts.migrate_files --media-root ../media-legacy --dry-run
+
+# 3. Subir. Commitea documento por documento, así que interrumpirlo no
+#    pierde el avance y volver a lanzarlo continúa donde quedó.
+python -m scripts.migrate_files --media-root ../media-legacy
+
+# 4. Verificar uno por uno: relee del storage y recalcula el hash.
+python -m scripts.migrate_files --media-root ../media-legacy --verificar
+```
+
+**El gate del paso es cero faltantes y cero discrepancias sin explicar.** El
+script termina con código 1 si queda alguna, así que sirve en un pipeline.
+
+Dos cosas que hace a propósito:
+
+- **No marca nada como limpio.** Los archivos quedan pendientes de antivirus y
+  por lo tanto no descargables (Paso 3.2). Darlos por buenos porque vienen del
+  sistema viejo sería confiar en que ahí nunca entró nada malo. El worker de
+  escaneo los va tomando por lotes.
+- **No borra el original.** El servidor viejo sigue siendo la copia de
+  referencia hasta que el cutover termine.
+
+Cuando el storage esté verificado, borrá `media-legacy/`: son documentos de
+clientes.

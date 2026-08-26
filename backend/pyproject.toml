@@ -153,6 +153,10 @@ ignore = [
 # El sembrado de demo escribe su contraseña a la vista y usa `random` con semilla
 # fija: las dos cosas son deliberadas y el script se niega a correr fuera de local.
 "scripts/seed_demo.py" = ["T20", "S105", "S311"]
+# El migrador de archivos lee del disco y sube por boto3, las dos cosas
+# síncronas. Es un script por lotes: no hay event loop atendiendo peticiones al
+# que bloquear, y envolver cada `open()` en un hilo solo agregaría ruido.
+"scripts/migrate_files.py" = ["T20", "ASYNC230", "ASYNC240", "SLF001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

@@ -38,7 +38,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_engine, get_sessionmaker
 from app.modules.rbac.models import RoleCode, ScopeType
-from app.modules.shipments.models import ReferenceType, ShipmentStatus
+from app.modules.shipments.models import EventType, ReferenceType, ShipmentStatus
+
+# Conexión a la base vieja. Se define acá para que los demás scripts de la fase
+# usen la misma y no haya dos cadenas que puedan divergir.
+LEGACY_URL_POR_DEFECTO = os.environ.get(
+    "LEGACY_DATABASE_URL", "postgresql://amvarmar@localhost:5435/amvarmar_legacy"
+)
 
 # --- Traducción de estados (ADR-0002) ---
 
@@ -94,7 +100,13 @@ class Conteo:
 @dataclass
 class Reporte:
     tablas: dict[str, Conteo] = field(default_factory=dict)
+    # Impiden migrar: el script termina con error y no se debe seguir.
     problemas: list[str] = field(default_factory=list)
+    # Cosas que hay que saber pero que ya están resueltas de una forma decidida
+    # —por ejemplo, cargas sin cliente que se marcan para revisión—. Mezclarlas
+    # con los problemas haría que el cutover abortara por una condición
+    # esperada, y a la tercera vez nadie leería la diferencia.
+    avisos: list[str] = field(default_factory=list)
 
     def contador(self, tabla: str) -> Conteo:
         return self.tablas.setdefault(tabla, Conteo())
@@ -110,12 +122,17 @@ class Reporte:
                 f"{c.marcados_revision:>10}"
             )
 
-        if self.problemas:
-            print(f"\n{len(self.problemas)} problema(s):")
-            for p in self.problemas[:40]:
-                print(f"  - {p}")
-            if len(self.problemas) > 40:
-                print(f"  ... y {len(self.problemas) - 40} más")
+        for titulo_lista, elementos in (
+            ("problema(s) que impiden migrar", self.problemas),
+            ("aviso(s)", self.avisos),
+        ):
+            if not elementos:
+                continue
+            print(f"\n{len(elementos)} {titulo_lista}:")
+            for linea in elementos[:40]:
+                print(f"  - {linea}")
+            if len(elementos) > 40:
+                print(f"  ... y {len(elementos) - 40} más")
 
 
 def normalizar_wr(valor: str) -> str:
@@ -224,7 +241,10 @@ class Migrador:
             "SELECT count(*) AS n FROM core_warehouse WHERE cliente_id IS NULL"
         )[0]["n"]
         if sin_cliente:
-            self.reporte.problemas.append(
+            # Aviso, no problema: ya está decidido qué hacer con ellas y el
+            # migrador lo hace. Tratarlo como error abortaría el cutover por una
+            # condición conocida y aceptada.
+            self.reporte.avisos.append(
                 f"{sin_cliente} cargas sin cliente asignado. "
                 "Se migran con el creador de la empresa y quedan marcadas para revisión."
             )
@@ -361,7 +381,7 @@ class Migrador:
         filas = self._leer("""
             SELECT w.wr_number, w.company_id, w.cliente_id, w.status, w.created_at,
                    w.invoice, w.tracking, w.po, w.container, w.shipper, w.carrier,
-                   w.weight_kgs, w.volumetric_kgs, w.foots,
+                   w.weight_kgs, w.weight_lbs, w.volumetric_kgs, w.foots,
                    EXISTS (SELECT 1 FROM core_dispatchrequestitem i
                             WHERE i.warehouse_id = w.wr_number) AS tiene_despacho
             FROM core_warehouse w
@@ -404,12 +424,14 @@ class Migrador:
                         INSERT INTO shipments
                             (id, shipment_number, company_id, created_by, current_status_code,
                              origin_location_id, destination_location_id,
-                             weight_kg, volumetric_weight_kg, description,
+                             weight_kg, weight_lb, volumetric_weight_kg,
+                             foots_cft, shipper, carrier, description,
                              legacy_review_required, legacy_status,
                              created_at, updated_at,
                              dispatched_at)
                         VALUES (:id, siguiente_shipment_number(), :c, :u, :estado,
-                                :o, :d, :peso, :vol, :desc, :revision, :legacy,
+                                :o, :d, :peso, :peso_lb, :vol,
+                                :cft, :shipper, :carrier, :desc, :revision, :legacy,
                                 :creada, :creada, :despachada)
                     """),
                     {
@@ -420,7 +442,13 @@ class Migrador:
                         "o": origen,
                         "d": destino,
                         "peso": fila["weight_kgs"],
+                        # Kilos y libras van por separado, como en el legacy:
+                        # son dos lecturas distintas, no una conversión.
+                        "peso_lb": fila["weight_lbs"],
                         "vol": fila["volumetric_kgs"],
+                        "cft": fila["foots"],
+                        "shipper": (fila["shipper"] or "")[:180] or None,
+                        "carrier": (fila["carrier"] or "")[:180] or None,
                         "desc": self._descripcion(fila),
                         "revision": revision,
                         "legacy": fila["status"],
@@ -431,12 +459,56 @@ class Migrador:
                     },
                 )
                 await self._referencias(nuevo, fila)
+                await self._evento_de_migracion(nuevo, fila, estado, nota)
                 await self._requisitos(nuevo, estado)
 
             await self._registrar("core_warehouse", wr, "shipments", nuevo, nota)
             c.creados += 1
             if revision:
                 c.marcados_revision += 1
+
+    async def _evento_de_migracion(
+        self,
+        shipment_id: UUID,
+        fila: dict[str, Any],
+        estado: ShipmentStatus,
+        nota: str | None,
+    ) -> None:
+        """Deja constancia de que la carga viene del sistema viejo.
+
+        Sin esto la línea de tiempo queda vacía y quien abre la carga no ve
+        ninguna historia: ni cuándo entró, ni de dónde salió su estado. El
+        legacy no guardaba un historial que se pueda reconstruir, así que se
+        registra lo único que sí se sabe — su estado original y la fecha de
+        alta — en vez de inventar una secuencia de hitos que nadie observó.
+        """
+        descripcion = (
+            f"Migrada del sistema anterior. Estado original: {fila['status']}. "
+            f"Warehouse Receipt: {fila['wr_number']}."
+        )
+        if nota:
+            descripcion = f"{descripcion} {nota}"
+
+        await self.session.execute(
+            text("""
+                INSERT INTO shipment_events
+                    (shipment_id, event_type, to_status_code, title, description,
+                     occurred_at, actor_user_id)
+                VALUES (:s, :tipo, :estado, :titulo, :descripcion, :cuando, :actor)
+            """),
+            {
+                "s": shipment_id,
+                "tipo": EventType.CREATED.value,
+                "estado": estado.value,
+                "titulo": "Carga migrada del sistema anterior",
+                "descripcion": descripcion,
+                # La fecha de alta del legacy, no la de la migración: fechar
+                # todo el historial el día del cutover haría que 241 cargas
+                # aparezcan creadas el mismo día.
+                "cuando": fila["created_at"],
+                "actor": await self._usuario_de_sistema(),
+            },
+        )
 
     async def _requisitos(self, shipment_id: UUID, estado: ShipmentStatus) -> None:
         """Abre los documentos que el catálogo exige, solo si aún sirven.
@@ -481,13 +553,15 @@ class Migrador:
         return ShipmentStatus.STORED, True, f"Estado legacy no previsto: {legacy}."
 
     def _descripcion(self, fila: dict[str, Any]) -> str | None:
-        partes = [
-            f"Remitente: {fila['shipper']}" if fila.get("shipper") else None,
-            f"Transportista: {fila['carrier']}" if fila.get("carrier") else None,
-            f"Pies: {fila['foots']}" if fila.get("foots") else None,
-        ]
-        texto = " | ".join(p for p in partes if p)
-        return texto[:2000] or None
+        """La descripción ya no repite lo que ahora son campos propios.
+
+        La primera versión del migrador metía remitente, transportista y pies
+        acá porque el esquema nuevo no tenía dónde ponerlos. Dentro de un texto
+        libre no se pueden buscar ni ordenar, que es justamente para lo que se
+        usan, así que ahora van a sus columnas y esto queda vacío salvo que el
+        legacy traiga algo que no encaje en ningún campo.
+        """
+        return None
 
     async def _referencias(self, shipment_id: UUID, fila: dict[str, Any]) -> None:
         """El WR y los demás identificadores del legacy, como referencias.
@@ -990,10 +1064,7 @@ async def principal() -> None:
     )
     parser.add_argument(
         "--legacy-url",
-        default=os.environ.get(
-            "LEGACY_DATABASE_URL",
-            "postgresql://amvarmar@localhost:5435/amvarmar_legacy",
-        ),
+        default=LEGACY_URL_POR_DEFECTO,
         help="Conexión a la base vieja.",
     )
     argumentos = parser.parse_args()
@@ -1013,7 +1084,8 @@ async def principal() -> None:
     await get_engine().dispose()
     reporte.imprimir(seco=argumentos.dry_run)
 
-    if reporte.problemas and not argumentos.dry_run:
+    if reporte.problemas:
+        # Solo los problemas cortan. Los avisos se leen y se siguen.
         raise SystemExit(1)
 
 

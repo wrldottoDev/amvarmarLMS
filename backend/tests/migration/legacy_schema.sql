@@ -26,9 +26,10 @@ CREATE TABLE core_clientprofile (
     company_id  integer REFERENCES core_company(id)
 );
 
+-- La clave primaria es el `wr_number`, no un entero: así es en el legacy, y de
+-- ahí sale que normalizarlo sea caro (lo referencian cinco tablas).
 CREATE TABLE core_warehouse (
-    id          serial PRIMARY KEY,
-    wr_number   varchar(50) NOT NULL UNIQUE,
+    wr_number   varchar(50) PRIMARY KEY,
     company_id  integer REFERENCES core_company(id),
     cliente_id  integer REFERENCES auth_user(id),
     status      varchar(20) NOT NULL,
@@ -41,6 +42,7 @@ CREATE TABLE core_warehouse (
 
 CREATE TABLE core_dispatchrequest (
     id          serial PRIMARY KEY,
+    method      varchar(20),
     user_id     integer REFERENCES auth_user(id),
     company_id  integer REFERENCES core_company(id),
     status      varchar(20) NOT NULL,
@@ -48,7 +50,23 @@ CREATE TABLE core_dispatchrequest (
 );
 
 CREATE TABLE core_dispatchrequestitem (
-    id                   serial PRIMARY KEY,
-    dispatch_request_id  integer NOT NULL REFERENCES core_dispatchrequest(id),
-    warehouse_id         integer REFERENCES core_warehouse(id)
+    id            serial PRIMARY KEY,
+    dispatch_id   integer NOT NULL REFERENCES core_dispatchrequest(id),
+    warehouse_id  varchar(50) REFERENCES core_warehouse(wr_number)
+);
+
+CREATE TABLE core_warehousedocument (
+    id             serial PRIMARY KEY,
+    warehouse_id   varchar(50) REFERENCES core_warehouse(wr_number),
+    file           varchar(200),
+    original_name  varchar(255),
+    uploaded_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE core_piecewarehouse (
+    id            serial PRIMARY KEY,
+    warehouse_id  varchar(50) REFERENCES core_warehouse(wr_number),
+    type_of       varchar(50),
+    quantity      integer,
+    description   varchar(255)
 );
