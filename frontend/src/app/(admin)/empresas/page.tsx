@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, Plus, Power, Users } from "lucide-react";
+import { Building2, Pencil, Plus, Power, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { AvisoError } from "@/components/ui/aviso-error";
@@ -8,6 +8,7 @@ import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { Modal } from "@/components/ui/modal";
 import {
+  useActualizarEmpresa,
   useCrearEmpresa,
   useDesactivarEmpresa,
   useEmpresas,
@@ -23,6 +24,17 @@ export default function PaginaEmpresas() {
   const { data, isPending, error } = useEmpresas(incluirInactivas);
   const crear = useCrearEmpresa();
   const desactivar = useDesactivarEmpresa();
+  const actualizar = useActualizarEmpresa();
+
+  // La ficha que se está editando, o `null`. Es `edit_client` del sistema
+  // viejo, que era una página propia; acá cabe en un diálogo porque son tres
+  // campos y volver al listado después de cada corrección es un viaje de más.
+  const [editando, setEditando] = useState<{
+    id: string;
+    legal_name: string;
+    trade_name: string;
+    tax_id: string;
+  } | null>(null);
 
   const [nombre, setNombre] = useState("");
   const [comercial, setComercial] = useState("");
@@ -111,6 +123,21 @@ export default function PaginaEmpresas() {
               ) : null}
 
               <span className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
+                  onClick={() =>
+                    setEditando({
+                      id: empresa.id,
+                      legal_name: empresa.legal_name,
+                      trade_name: empresa.trade_name ?? "",
+                      tax_id: empresa.tax_id ?? "",
+                    })
+                  }
+                >
+                  <Pencil className="size-4" aria-hidden="true" />
+                  Editar
+                </button>
                 <Link
                   href={`/usuarios?empresa=${empresa.id}`}
                   className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
@@ -197,6 +224,65 @@ export default function PaginaEmpresas() {
             </button>
             <Boton onClick={() => void guardar()} disabled={!nombre.trim()} cargando={crear.isPending}>
               Crear empresa
+            </Boton>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        abierto={editando !== null}
+        titulo="Editar empresa"
+        cerrar={() => setEditando(null)}
+      >
+        <div className="space-y-3">
+          {(
+            [
+              ["legal_name", "Razón social"],
+              ["trade_name", "Nombre comercial"],
+              ["tax_id", "RUC o cédula"],
+            ] as const
+          ).map(([campo, etiqueta]) => (
+            <label className="block" key={campo}>
+              <span className="mb-1 block text-sm font-medium">{etiqueta}</span>
+              <input
+                className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                value={editando?.[campo] ?? ""}
+                onChange={(evento) =>
+                  setEditando((actual) =>
+                    actual ? { ...actual, [campo]: evento.target.value } : actual,
+                  )
+                }
+              />
+            </label>
+          ))}
+
+          {actualizar.error ? <AvisoError error={actualizar.error} /> : null}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
+              onClick={() => setEditando(null)}
+            >
+              Cancelar
+            </button>
+            <Boton
+              disabled={!editando?.legal_name.trim()}
+              cargando={actualizar.isPending}
+              onClick={async () => {
+                if (!editando) return;
+                await actualizar.mutateAsync({
+                  id: editando.id,
+                  legal_name: editando.legal_name.trim(),
+                  // Vacío es `null`: dejar la cadena vacía guardaría un nombre
+                  // comercial que existe y no dice nada.
+                  trade_name: editando.trade_name.trim() || null,
+                  tax_id: editando.tax_id.trim() || null,
+                });
+                setEditando(null);
+              }}
+            >
+              Guardar
             </Boton>
           </div>
         </div>

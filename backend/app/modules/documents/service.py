@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import Conflicto, RecursoNoEncontrado
+from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
 from app.core.observability import metrics
 from app.infrastructure.storage import s3
 from app.modules.documents.models import UploadStatus
@@ -437,6 +437,136 @@ class DocumentoDeCarga:
 class ExpedienteDeCarga:
     requisitos: list[RequisitoDeCarga]
     documentos: list[DocumentoDeCarga]
+
+
+async def renombrar(
+    session: AsyncSession,
+    *,
+    document_id: UUID,
+    nuevo_nombre: str,
+    company_ids: list[UUID] | None,
+) -> str:
+    """Cambia el nombre visible de un documento. Devuelve el nombre aplicado.
+
+    Solo el nombre que se muestra y con el que se descarga; la clave en el
+    storage no se toca. Renombrar el objeto obligaría a copiarlo y borrarlo, con
+    una ventana en la que el archivo no está en ningún lado.
+
+    El nombre pasa por el mismo saneo que al subir: un nombre elegido a mano es
+    tan capaz de traer una barra o un `..` como uno que viene del navegador.
+    """
+    limpio = (nuevo_nombre or "").strip()
+    if not limpio:
+        raise ReglaDeNegocioViolada("El nombre no puede quedar vacío.")
+
+    seguro = nombre_seguro(limpio)
+
+    condiciones = ["id = :id", "deleted_at IS NULL"]
+    parametros: dict[str, Any] = {"id": document_id, "nombre": limpio[:255], "safe": seguro}
+    if company_ids is not None:
+        condiciones.append("company_id = ANY(:empresas)")
+        parametros["empresas"] = company_ids
+
+    fila = (
+        await session.execute(
+            text(f"""
+                UPDATE documents SET original_name = :nombre, safe_name = :safe
+                WHERE {" AND ".join(condiciones)}
+                RETURNING original_name
+            """),  # noqa: S608
+            parametros,
+        )
+    ).scalar_one_or_none()
+
+    if fila is None:
+        # Ajeno e inexistente son indistinguibles desde afuera.
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    nombre: str = fila
+    return nombre
+
+
+async def invalidar(
+    session: AsyncSession,
+    *,
+    document_id: UUID,
+    company_ids: list[UUID] | None,
+) -> UUID:
+    """Saca un documento del expediente. Devuelve la carga a la que pertenecía.
+
+    **No borra el objeto del storage.** Es la misma regla que para las cargas:
+    un archivo que alguien subió y otro quitó puede ser evidencia de un error o
+    de algo peor, y el archivo pesa mucho menos que la posibilidad de tener que
+    reconstruir qué pasó.
+
+    Si el documento satisfacía un requisito, ese requisito vuelve a quedar
+    pendiente: dejarlo por cumplido con el archivo fuera haría que la carga
+    pasara a despacho sin el papel que la habilita.
+    """
+    condiciones = ["id = :id", "deleted_at IS NULL"]
+    parametros: dict[str, Any] = {"id": document_id}
+    if company_ids is not None:
+        condiciones.append("company_id = ANY(:empresas)")
+        parametros["empresas"] = company_ids
+
+    fila = (
+        await session.execute(
+            text(f"""
+                UPDATE documents SET deleted_at = now()
+                WHERE {" AND ".join(condiciones)}
+                RETURNING id
+            """),  # noqa: S608
+            parametros,
+        )
+    ).scalar_one_or_none()
+
+    if fila is None:
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    enlace = (
+        await session.execute(
+            text("""
+                SELECT shipment_id, document_type_id
+                FROM shipment_documents WHERE document_id = :d
+            """),
+            {"d": document_id},
+        )
+    ).one_or_none()
+
+    if enlace is None:
+        # Documento de despacho, sin carga asociada.
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    # El requisito vuelve a pendiente solo si no queda ningún otro documento
+    # vivo de ese tipo. Con dos facturas subidas, quitar una no deja a la carga
+    # sin factura, y reabrirlo igual haría que Operaciones persiguiera un papel
+    # que ya tiene.
+    await session.execute(
+        text("""
+            UPDATE shipment_requirements r
+            SET status = :pendiente
+            WHERE r.shipment_id = :carga
+              AND r.document_type_id = :tipo
+              AND r.requirement_type = 'DOCUMENT'
+              AND r.status = :subido
+              AND NOT EXISTS (
+                  SELECT 1 FROM shipment_documents sd
+                  JOIN documents d ON d.id = sd.document_id
+                  WHERE sd.shipment_id = r.shipment_id
+                    AND sd.document_type_id = r.document_type_id
+                    AND d.deleted_at IS NULL
+              )
+        """),
+        {
+            "carga": enlace.shipment_id,
+            "tipo": enlace.document_type_id,
+            "pendiente": RequirementStatus.PENDING.value,
+            "subido": RequirementStatus.UPLOADED.value,
+        },
+    )
+
+    carga: UUID = enlace.shipment_id
+    return carga
 
 
 async def expediente(

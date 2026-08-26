@@ -63,6 +63,27 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
         {"c": empresa, "u": user_id},
     )
 
+    # Personal interno. Renombrar y quitar documentos son acciones de staff:
+    # el nombre es cómo Operaciones y el agente aduanal encuentran el papel, y
+    # quitar uno reabre el requisito que bloquea el despacho.
+    email_ops = f"ops-{marca}@pruebas.amvarmar.com"
+    ops_id = (
+        await db_directa.execute(
+            text("""
+                INSERT INTO users (email, password_hash, first_name, last_name, status)
+                VALUES (:e, :h, 'Ops', 'Prueba', 'ACTIVE') RETURNING id
+            """),
+            {"e": email_ops, "h": hash_password(PASSWORD)},
+        )
+    ).scalar_one()
+    await db_directa.execute(
+        text("""
+            INSERT INTO user_role_assignments (user_id, role_id, scope_type)
+            SELECT :u, r.id, 'GLOBAL' FROM roles r WHERE r.code = 'OPS_ADMIN'
+        """),
+        {"u": ops_id},
+    )
+
     origen = await _ubicacion(db_directa, "US", "MIA", "Miami")
     destino = await _ubicacion(db_directa, "CR", "SJO", "San José")
 
@@ -81,6 +102,8 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
 
     yield {
         "email": email,
+        "email_ops": email_ops,
+        "ops_id": ops_id,
         "empresa": empresa,
         "carga": propia,
         "carga_ajena": de_otra,
@@ -105,6 +128,10 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
         """),
         {"c": [empresa, ajena]},
     )
+    await db_directa.execute(
+        text("DELETE FROM user_role_assignments WHERE user_id = :u"), {"u": ops_id}
+    )
+    await db_directa.execute(text("DELETE FROM users WHERE id = :u"), {"u": ops_id})
     await db_directa.execute(
         text("DELETE FROM dispatch_requests WHERE company_id = ANY(:c)"),
         {"c": [empresa, ajena]},
@@ -592,6 +619,141 @@ async def _abrir_requisito(session: AsyncSession, entorno: dict) -> None:
         {"s": entorno["carga"], "t": entorno["tipo_factura"], "u": entorno["user_id"]},
     )
     await session.commit()
+
+
+class TestGestionDeArchivos:
+    """Las acciones `rename` y `delete` de `edit_files` del sistema viejo.
+
+    Las dos son de personal interno, igual que en el original: `edit_files`
+    estaba bajo `@staff_member_required`.
+    """
+
+    async def _subido(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession, nombre: str
+    ) -> str:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        presign = (
+            await cliente.post(
+                f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+                headers=cabeceras,
+                json={
+                    "document_type_id": str(entorno["tipo_factura"]),
+                    "original_name": nombre,
+                },
+            )
+        ).json()
+        async with httpx.AsyncClient() as directo:
+            await directo.put(presign["upload_url"], content=pdf_real())
+        await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/complete",
+            headers=cabeceras,
+            json={"document_id": presign["document_id"]},
+        )
+        documento_id: str = presign["document_id"]
+        return documento_id
+
+    async def test_renombrar_cambia_el_nombre_visible(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        documento = await self._subido(cliente, entorno, db_directa, "malnombre.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
+
+        r = await cliente.patch(
+            f"/api/v1/documents/{documento}",
+            headers=cabeceras,
+            json={"original_name": "Factura ATC 2026.pdf"},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["original_name"] == "Factura ATC 2026.pdf"
+
+    async def test_un_nombre_con_ruta_se_sanea(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """Un nombre escrito a mano trae barras tan fácil como uno del navegador.
+
+        El nombre visible se guarda tal cual —es lo que la persona quiso poner—
+        pero `safe_name`, que es el que se usa al armar el ZIP y la descarga,
+        pasa por el mismo saneo que al subir.
+        """
+        documento = await self._subido(cliente, entorno, db_directa, "ok.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
+
+        await cliente.patch(
+            f"/api/v1/documents/{documento}",
+            headers=cabeceras,
+            json={"original_name": "../../etc/passwd"},
+        )
+
+        safe = (
+            await db_directa.execute(
+                text("SELECT safe_name FROM documents WHERE id = :d"),
+                {"d": uuid.UUID(documento)},
+            )
+        ).scalar_one()
+
+        assert "/" not in safe
+        assert ".." not in safe
+
+    async def test_quitar_lo_saca_del_expediente_sin_borrar_el_archivo(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """El objeto sigue en el storage: puede ser evidencia de un incidente."""
+        documento = await self._subido(cliente, entorno, db_directa, "quitar.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
+
+        r = await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+        assert r.status_code == 204
+
+        fila = (
+            await db_directa.execute(
+                text("SELECT deleted_at, storage_key FROM documents WHERE id = :d"),
+                {"d": uuid.UUID(documento)},
+            )
+        ).one()
+        assert fila.deleted_at is not None
+        assert fila.storage_key
+
+        expediente = await cliente.get(
+            f"/api/v1/shipments/{entorno['carga']}/documents", headers=cabeceras
+        )
+        nombres = [d["original_name"] for d in expediente.json()["documentos"]]
+        assert "quitar.pdf" not in nombres
+
+    async def test_quitarlo_reabre_su_requisito(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        """Si no, la carga pasaría a despacho sin el papel que la habilita."""
+        documento = await self._subido(cliente, entorno, db_directa, "factura.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
+
+        await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+
+        estado = (
+            await db_directa.execute(
+                text("""
+                    SELECT status FROM shipment_requirements
+                    WHERE shipment_id = :s AND document_type_id = :t
+                      AND requirement_type = 'DOCUMENT'
+                """),
+                {"s": entorno["carga"], "t": entorno["tipo_factura"]},
+            )
+        ).scalar_one_or_none()
+
+        assert estado in (None, "PENDING")
+
+    async def test_un_documento_ya_quitado_da_404(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        documento = await self._subido(cliente, entorno, db_directa, "dos-veces.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
+
+        assert (
+            await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+        ).status_code == 204
+        assert (
+            await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+        ).status_code == 404
 
 
 class TestDescargaMasiva:

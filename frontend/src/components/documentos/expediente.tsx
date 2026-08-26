@@ -1,12 +1,14 @@
 "use client";
 
-import { AlertTriangle, Clock, Download, FileText, Upload } from "lucide-react";
+import { AlertTriangle, Clock, Download, FileText, Pencil, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import {
   formatearTamano,
   useDescargar,
   useDescargarTodos,
   useExpediente,
+  useQuitarDocumento,
+  useRenombrarDocumento,
   useSubirDocumento,
 } from "@/features/documentos/consultas";
 import {
@@ -15,6 +17,7 @@ import {
   sePuedeDescargar,
 } from "@/features/documentos/vocabulario";
 import { AvisoError } from "@/components/ui/aviso-error";
+import { Modal } from "@/components/ui/modal";
 import { clases, formatearFecha } from "@/lib/utilidades";
 import type { RequisitoDocumental } from "@/lib/api/tipos";
 
@@ -30,7 +33,17 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
   const subir = useSubirDocumento(cargaId);
   const descargar = useDescargar();
   const descargarTodos = useDescargarTodos(cargaId);
+  const renombrar = useRenombrarDocumento(cargaId);
+  const quitar = useQuitarDocumento(cargaId);
+
   const [subiendo, setSubiendo] = useState<string | null>(null);
+  const [renombrando, setRenombrando] = useState<string | null>(null);
+  const [nombreNuevo, setNombreNuevo] = useState("");
+  const [aQuitar, setAQuitar] = useState<{ id: string; original_name: string } | null>(null);
+
+  // Renombrar y quitar son de personal interno, igual que `edit_files` del
+  // sistema viejo, que estaba bajo `@staff_member_required`.
+  const esInterno = !esCliente;
 
   if (isPending) return null;
   if (error) return <AvisoError error={error} />;
@@ -44,6 +57,11 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
     : data.requisitos;
 
   const faltantes = requisitos.filter((r) => ["PENDING", "REJECTED", "OPEN"].includes(r.status));
+
+  async function guardarNombre(documentoId: string) {
+    await renombrar.mutateAsync({ id: documentoId, nombre: nombreNuevo.trim() });
+    setRenombrando(null);
+  }
 
   async function alElegirArchivo(requisito: RequisitoDocumental, archivo: File | undefined) {
     if (!archivo || !requisito.document_type_id) return;
@@ -185,6 +203,35 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                     </span>
                   </span>
 
+                  {/* Renombrar y quitar son de personal interno, igual que en
+                      `edit_files` del sistema viejo. El cliente ve sus archivos
+                      y los descarga; no reorganiza el expediente. */}
+                  {esInterno ? (
+                    <span className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        className="grid size-9 place-items-center rounded-md border hover:bg-[var(--hover)]"
+                        onClick={() => {
+                          setRenombrando(documento.id);
+                          setNombreNuevo(documento.original_name);
+                        }}
+                        aria-label={`Renombrar ${documento.original_name}`}
+                        title="Renombrar"
+                      >
+                        <Pencil className="size-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="grid size-9 place-items-center rounded-md border text-[var(--peligro)] hover:bg-[var(--peligro-tenue)]"
+                        onClick={() => setAQuitar(documento)}
+                        aria-label={`Quitar ${documento.original_name}`}
+                        title="Quitar del expediente"
+                      >
+                        <Trash2 className="size-4" aria-hidden="true" />
+                      </button>
+                    </span>
+                  ) : null}
+
                   {descargable ? (
                     <button
                       type="button"
@@ -212,12 +259,87 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                       {aviso || "No disponible todavía"}
                     </span>
                   )}
+
+                  {renombrando === documento.id ? (
+                    <form
+                      className="flex w-full gap-2"
+                      onSubmit={(evento) => {
+                        evento.preventDefault();
+                        void guardarNombre(documento.id);
+                      }}
+                    >
+                      <input
+                        className="flex-1 rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                        value={nombreNuevo}
+                        autoFocus
+                        onChange={(evento) => setNombreNuevo(evento.target.value)}
+                      />
+                      <button
+                        type="submit"
+                        className="h-10 rounded-md bg-[var(--marca)] px-3 text-sm font-medium text-white disabled:opacity-50"
+                        disabled={!nombreNuevo.trim() || renombrar.isPending}
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        type="button"
+                        className="h-10 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
+                        onClick={() => setRenombrando(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </form>
+                  ) : null}
                 </li>
               );
             })}
           </ul>
         </details>
       ) : null}
+
+      {/* Confirmación explícita: quitar un documento puede reabrir el requisito
+          que bloquea el despacho, y eso no debería pasar por un clic al pasar. */}
+      <Modal
+        abierto={aQuitar !== null}
+        titulo="¿Quitar este documento del expediente?"
+        cerrar={() => setAQuitar(null)}
+      >
+        <p className="text-sm">
+          <strong>{aQuitar?.original_name}</strong> deja de aparecer en el expediente. Si era el
+          único de su tipo, el requisito que satisfacía vuelve a quedar pendiente y la carga no
+          podrá despacharse hasta que se reponga.
+        </p>
+        <p className="mt-2 text-sm text-[var(--texto-secundario)]">
+          El archivo no se borra del almacenamiento: queda como constancia de que estuvo.
+        </p>
+
+        {quitar.error ? (
+          <div className="mt-3">
+            <AvisoError error={quitar.error} />
+          </div>
+        ) : null}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
+            onClick={() => setAQuitar(null)}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="h-10 rounded-md bg-[var(--peligro)] px-4 text-sm font-semibold text-white disabled:opacity-60"
+            disabled={quitar.isPending}
+            onClick={async () => {
+              if (aQuitar) await quitar.mutateAsync(aQuitar.id);
+              setAQuitar(null);
+            }}
+          >
+            Quitar
+          </button>
+        </div>
+      </Modal>
     </section>
   );
 }

@@ -75,6 +75,51 @@ export function useSubirDocumento(cargaId: string) {
   });
 }
 
+/**
+ * Corrige el nombre visible de un documento.
+ *
+ * Es la acción `rename` de `edit_files` del sistema viejo. Solo personal
+ * interno: el nombre es cómo Operaciones y el agente aduanal encuentran el
+ * papel en el expediente.
+ */
+export function useRenombrarDocumento(cargaId: string) {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, nombre }: { id: string; nombre: string }) =>
+      exigirDatos(
+        await api.PATCH("/api/v1/documents/{document_id}", {
+          params: { path: { document_id: id } },
+          body: { original_name: nombre },
+        }),
+      ),
+    onSuccess: () => cliente.invalidateQueries({ queryKey: ["expediente", cargaId] }),
+  });
+}
+
+/**
+ * Saca un documento del expediente.
+ *
+ * El archivo NO se borra del storage. Si el documento satisfacía un requisito y
+ * no queda otro de su tipo, ese requisito vuelve a pendiente, así que se
+ * invalida también el detalle de la carga: su contador de pendientes cambió.
+ */
+export function useQuitarDocumento(cargaId: string) {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const resultado = await api.DELETE("/api/v1/documents/{document_id}", {
+        params: { path: { document_id: id } },
+      });
+      if (resultado.error) throw resultado.error;
+    },
+    onSuccess: () => {
+      cliente.invalidateQueries({ queryKey: ["expediente", cargaId] });
+      cliente.invalidateQueries({ queryKey: ["carga", cargaId] });
+      cliente.invalidateQueries({ queryKey: ["cargas"] });
+    },
+  });
+}
+
 export function useDescargar() {
   return useMutation({
     mutationFn: async (documentoId: string) =>

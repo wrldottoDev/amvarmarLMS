@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.core.database import get_session
-from app.core.errors import ErrorDeAplicacion, RecursoNoEncontrado
+from app.core.errors import ErrorDeAplicacion, RecursoNoEncontrado, SinPermiso
 from app.core.redis import get_redis
 from app.infrastructure.storage.s3 import TTL_DESCARGA_SEGUNDOS, TTL_SUBIDA_SEGUNDOS
 from app.modules.audit.models import Outcome
@@ -369,6 +369,107 @@ async def expediente_de_carga(
             for t in tipos
         ],
     )
+
+
+class RenombrarDocumentoRequest(BaseModel):
+    original_name: str = Field(min_length=1, max_length=255)
+
+
+class DocumentoRenombradoResponse(BaseModel):
+    original_name: str
+
+
+@router.patch("/documents/{document_id}", response_model=DocumentoRenombradoResponse)
+async def renombrar_documento(
+    document_id: UUID,
+    datos: RenombrarDocumentoRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> DocumentoRenombradoResponse:
+    """Corrige el nombre visible de un documento.
+
+    Es la acción `rename` de `edit_files` del sistema viejo. Solo personal
+    interno: el nombre es cómo Operaciones y el agente aduanal encuentran el
+    papel, y dejar que cada cliente lo cambie convierte el expediente en algo
+    que solo entiende quien lo tocó último.
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    if not any(p.code == Perm.DOCUMENTS_UPLOAD_INTERNAL for p in permisos.permisos):
+        raise SinPermiso("No tiene permiso para renombrar documentos.")
+
+    alcance = alcance_de_lectura(permisos)
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    nombre = await service.renombrar(
+        db,
+        document_id=document_id,
+        nuevo_nombre=datos.original_name,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+
+    await registrar(
+        db,
+        action="document.renamed",
+        resource_type="document",
+        resource_id=document_id,
+        actor_user_id=actor.user_id,
+        after_data={"original_name": nombre},
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+    return DocumentoRenombradoResponse(original_name=nombre)
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def invalidar_documento(
+    document_id: UUID,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> None:
+    """Saca un documento del expediente.
+
+    Es la acción `delete` de `edit_files` del sistema viejo, con una diferencia:
+    el objeto NO se borra del storage. Un archivo que alguien subió y otro quitó
+    puede ser evidencia de un error o de algo peor, y pesa mucho menos que la
+    posibilidad de tener que reconstruir qué pasó.
+
+    Si el documento satisfacía un requisito y no queda otro de su tipo, ese
+    requisito vuelve a pendiente: dejarlo por cumplido con el archivo fuera
+    haría que la carga pasara a despacho sin el papel que la habilita.
+    """
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+
+    if not any(p.code == Perm.DOCUMENTS_INVALIDATE for p in permisos.permisos):
+        raise SinPermiso("No tiene permiso para quitar documentos del expediente.")
+
+    alcance = alcance_de_lectura(permisos)
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    carga = await service.invalidar(
+        db,
+        document_id=document_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+
+    await registrar(
+        db,
+        action="document.invalidated",
+        resource_type="document",
+        resource_id=document_id,
+        actor_user_id=actor.user_id,
+        after_data={"shipment_id": str(carga)},
+        reason="Quitado del expediente. El archivo sigue en el storage.",
+        ip_address=_ip(request),
+    )
+    await db.commit()
 
 
 @router.get("/shipments/{shipment_id}/documents/download-all")

@@ -673,6 +673,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Invalidar Documento
+         * @description Saca un documento del expediente.
+         *
+         *     Es la acción `delete` de `edit_files` del sistema viejo, con una diferencia:
+         *     el objeto NO se borra del storage. Un archivo que alguien subió y otro quitó
+         *     puede ser evidencia de un error o de algo peor, y pesa mucho menos que la
+         *     posibilidad de tener que reconstruir qué pasó.
+         *
+         *     Si el documento satisfacía un requisito y no queda otro de su tipo, ese
+         *     requisito vuelve a pendiente: dejarlo por cumplido con el archivo fuera
+         *     haría que la carga pasara a despacho sin el papel que la habilita.
+         */
+        delete: operations["invalidar_documento_api_v1_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Renombrar Documento
+         * @description Corrige el nombre visible de un documento.
+         *
+         *     Es la acción `rename` de `edit_files` del sistema viejo. Solo personal
+         *     interno: el nombre es cómo Operaciones y el agente aduanal encuentran el
+         *     papel, y dejar que cada cliente lo cambie convierte el expediente en algo
+         *     que solo entiende quien lo tocó último.
+         */
+        patch: operations["renombrar_documento_api_v1_documents__document_id__patch"];
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/documents/download-all": {
         parameters: {
             query?: never;
@@ -1524,6 +1562,11 @@ export interface components {
              */
             created_at: string;
         };
+        /** DocumentoRenombradoResponse */
+        DocumentoRenombradoResponse: {
+            /** Original Name */
+            original_name: string;
+        };
         /** DocumentoResponse */
         DocumentoResponse: {
             /**
@@ -1848,6 +1891,11 @@ export interface components {
             reason: string;
             /** Row Version */
             row_version?: number | null;
+        };
+        /** RenombrarDocumentoRequest */
+        RenombrarDocumentoRequest: {
+            /** Original Name */
+            original_name: string;
         };
         /** RequirementPatch */
         RequirementPatch: {
@@ -3380,6 +3428,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExpedienteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invalidar_documento_api_v1_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renombrar_documento_api_v1_documents__document_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenombrarDocumentoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoRenombradoResponse"];
                 };
             };
             /** @description Validation Error */

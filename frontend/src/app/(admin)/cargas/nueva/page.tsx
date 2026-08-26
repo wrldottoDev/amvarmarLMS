@@ -134,7 +134,10 @@ export default function PaginaNuevaCarga() {
           description: p.description.trim() || null,
         })),
     });
-    router.push(`/shipments/${creada.id}`);
+    // Al expediente, no al detalle. Es el flujo del sistema viejo:
+    // `create_warehouse` guardaba y redirigía a `warehouse_files`, porque quien
+    // acaba de dar de alta una carga casi siempre tiene los papeles en la mano.
+    router.push(`/cargas/${creada.id}/archivos`);
   }
 
   return (
