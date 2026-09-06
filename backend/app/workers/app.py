@@ -23,6 +23,7 @@ def crear_celery() -> Celery:
             "app.workers.tasks.exports",
             "app.workers.tasks.copilot",
             "app.workers.tasks.shipments",
+            "app.workers.tasks.archivado",
         ],
     )
 
@@ -49,7 +50,13 @@ def crear_celery() -> Celery:
             "documents.export": {
                 "soft_time_limit": 3300,
                 "time_limit": 3600,
-            }
+            },
+            # Ghostscript sobre un lote de PDFs puede superar los 3 minutos
+            # globales sin ser un problema real — es CPU, no un cuelgue.
+            "documents.recompress_archived": {
+                "soft_time_limit": 900,
+                "time_limit": 1200,
+            },
         },
         beat_schedule={
             "expire-document-exports-hourly": {
@@ -69,6 +76,13 @@ def crear_celery() -> Celery:
             "archive-pending-shipments-daily": {
                 "task": "shipments.archive_pending",
                 "schedule": crontab(hour=3, minute=0),
+            },
+            # 30 minutos después: recomprimir sobre cargas YA marcadas
+            # archivadas, no antes — un fallo acá nunca debe impedir que el
+            # barrido de arriba archive a tiempo.
+            "recompress-archived-documents-daily": {
+                "task": "documents.recompress_archived",
+                "schedule": crontab(hour=3, minute=30),
             },
         },
     )

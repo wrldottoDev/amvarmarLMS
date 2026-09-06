@@ -19,9 +19,11 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# libmagic es requisito de python-magic (validación de MIME real, Paso 3.1).
+# libmagic: validación de MIME real (Paso 3.1). ghostscript: recompresión
+# agresiva de PDF sin firma al archivar una carga (ADR-0007) — el worker de
+# Celery lo invoca por subprocess, no hay wheel de Python que lo reemplace.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmagic1 \
+    && apt-get install -y --no-install-recommends libmagic1 ghostscript \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 amvarmar
 
