@@ -96,6 +96,9 @@ def _datos(entorno, **extra) -> gestion.DatosDeCarga:
     # Y peso, que el alta exige igual que lo exigía el sistema viejo: sin él la
     # carga entra al inventario como un bulto de masa desconocida.
     extra.setdefault("weight_kg", Decimal("10"))
+    # Y al menos una pieza: sin desglose, la carga podría almacenarse y entrar
+    # en un despacho sin que nadie sepa cuántos bultos se están moviendo.
+    extra.setdefault("packages", (gestion.DatosDeBulto(package_type="BOX", quantity=1),))
     return gestion.DatosDeCarga(
         company_id=entorno["empresa"],
         origin_location_id=entorno["origen"],
@@ -154,6 +157,7 @@ class TestCrear:
                     origin_location_id=entorno["origen"],
                     destination_location_id=entorno["destino"],
                     weight_kg=Decimal("10"),
+                    packages=(gestion.DatosDeBulto(package_type="BOX", quantity=1),),
                 ),
                 actor_user_id=entorno["ops"],
                 permisos=await _permisos(session, redis, entorno["ops"]),
@@ -183,6 +187,7 @@ class TestCrear:
                 destination_location_id=entorno["destino"],
                 origin_facility_id=bodega,
                 weight_kg=Decimal("10"),
+                packages=(gestion.DatosDeBulto(package_type="BOX", quantity=1),),
             ),
             actor_user_id=entorno["ops"],
             permisos=await _permisos(session, redis, entorno["ops"]),
@@ -600,6 +605,305 @@ class TestActualizar:
         assert nota.title == "Datos corregidos"
         assert "description" in nota.description
         assert "weight_kg" in nota.description
+
+
+class TestPiezasComoInvariante:
+    """Toda carga activa tiene al menos una pieza, y el conteo no miente.
+
+    Sin desglose, una carga puede almacenarse y entrar en un despacho sin que
+    nadie sepa cuántos bultos se están moviendo. El invariante vive en tres
+    capas: Pydantic, el servicio y un constraint diferible en la base.
+    """
+
+    async def _crear(self, session, redis, entorno, **extra):
+        return await gestion.crear(
+            session,
+            datos=_datos(entorno, **extra),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+    async def test_crear_sin_piezas_se_rechaza_sin_escribir_nada(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Y no queda una carga a medias: la transacción no llegó a insertarla."""
+        antes = (await session.execute(text("SELECT count(*) FROM shipments"))).scalar_one()
+
+        with pytest.raises(gestion.DatosInvalidos):
+            await self._crear(session, redis, entorno, packages=())
+
+        despues = (await session.execute(text("SELECT count(*) FROM shipments"))).scalar_one()
+        assert despues == antes
+
+    async def test_el_conteo_es_la_suma_de_las_cantidades(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """No la cantidad de filas: 3 pallets y 2 tambores son 5 bultos, no 2."""
+        creada = await self._crear(
+            session,
+            redis,
+            entorno,
+            packages=(
+                gestion.DatosDeBulto(package_type="PALLET", quantity=3),
+                gestion.DatosDeBulto(package_type="DRUM", quantity=2),
+            ),
+        )
+
+        total = (
+            await session.execute(
+                text("SELECT package_count FROM shipments WHERE id = :s"), {"s": creada.id}
+            )
+        ).scalar_one()
+        assert total == 5
+
+    async def test_el_conteo_lo_mantiene_la_base(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Escribir piezas por fuera del servicio también actualiza el contador.
+
+        El migrador y las correcciones a mano tocan `shipment_packages` directo.
+        Un contador que solo se actualiza por una de las tres vías es peor que
+        ninguno, porque parece confiable.
+        """
+        creada = await self._crear(session, redis, entorno)
+
+        await session.execute(
+            text("""
+                INSERT INTO shipment_packages (shipment_id, package_type, quantity)
+                VALUES (:s, 'DRUM', 7)
+            """),
+            {"s": creada.id},
+        )
+
+        total = (
+            await session.execute(
+                text("SELECT package_count FROM shipments WHERE id = :s"), {"s": creada.id}
+            )
+        ).scalar_one()
+        assert total == 8
+
+    async def test_reasignar_pieza_actualiza_origen_y_destino(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Mover una fila afecta dos agregados, no solo el destino nuevo."""
+        origen = await self._crear(
+            session,
+            redis,
+            entorno,
+            packages=(
+                gestion.DatosDeBulto(package_type="BOX", quantity=1),
+                gestion.DatosDeBulto(package_type="DRUM", quantity=4),
+            ),
+        )
+        destino = await self._crear(session, redis, entorno)
+
+        pieza = (
+            await session.execute(
+                text("""
+                    SELECT id FROM shipment_packages
+                    WHERE shipment_id = :s AND package_type = 'BOX'
+                """),
+                {"s": origen.id},
+            )
+        ).scalar_one()
+        await session.execute(
+            text("UPDATE shipment_packages SET shipment_id = :d WHERE id = :p"),
+            {"d": destino.id, "p": pieza},
+        )
+
+        conteos = dict(
+            (
+                await session.execute(
+                    text("""
+                        SELECT id, package_count FROM shipments
+                        WHERE id IN (:origen, :destino)
+                    """),
+                    {"origen": origen.id, "destino": destino.id},
+                )
+            ).all()
+        )
+        assert conteos[origen.id] == 4
+        assert conteos[destino.id] == 2
+
+    async def test_reasignar_la_ultima_pieza_no_deja_el_origen_vacio(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        origen = await self._crear(session, redis, entorno)
+        destino = await self._crear(session, redis, entorno)
+        pieza = (
+            await session.execute(
+                text("SELECT id FROM shipment_packages WHERE shipment_id = :s"),
+                {"s": origen.id},
+            )
+        ).scalar_one()
+
+        await session.execute(
+            text("UPDATE shipment_packages SET shipment_id = :d WHERE id = :p"),
+            {"d": destino.id, "p": pieza},
+        )
+        with pytest.raises(IntegrityError):
+            await session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+        await session.rollback()
+
+    async def test_reemplazar_cambia_el_desglose_completo(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        creada = await self._crear(session, redis, entorno)
+
+        nueva_version = await gestion.reemplazar_bultos(
+            session,
+            shipment_id=creada.id,
+            bultos=(gestion.DatosDeBulto(package_type="PALLET", quantity=2, description="Cajas"),),
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        filas = (
+            await session.execute(
+                text("SELECT package_type, quantity FROM shipment_packages WHERE shipment_id = :s"),
+                {"s": creada.id},
+            )
+        ).all()
+
+        assert [(f.package_type, f.quantity) for f in filas] == [("PALLET", 2)]
+        assert nueva_version == creada.row_version + 1
+
+    async def test_reemplazar_con_lista_vacia_conserva_las_anteriores(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Vaciar el desglose no es una corrección válida, es perderlo."""
+        creada = await self._crear(
+            session,
+            redis,
+            entorno,
+            packages=(gestion.DatosDeBulto(package_type="PALLET", quantity=3),),
+        )
+
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.reemplazar_bultos(
+                session,
+                shipment_id=creada.id,
+                bultos=(),
+                row_version=creada.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+        total = (
+            await session.execute(
+                text("SELECT package_count FROM shipments WHERE id = :s"), {"s": creada.id}
+            )
+        ).scalar_one()
+        assert total == 3
+
+    async def test_reemplazar_con_version_vieja_da_conflicto(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Dos personas editando piezas: la segunda no pisa a la primera."""
+        creada = await self._crear(session, redis, entorno)
+        permisos = await _permisos(session, redis, entorno["ops"])
+
+        await gestion.reemplazar_bultos(
+            session,
+            shipment_id=creada.id,
+            bultos=(gestion.DatosDeBulto(package_type="DRUM", quantity=1),),
+            row_version=creada.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=permisos,
+        )
+
+        with pytest.raises(gestion.VersionDesactualizada):
+            await gestion.reemplazar_bultos(
+                session,
+                shipment_id=creada.id,
+                bultos=(gestion.DatosDeBulto(package_type="BOX", quantity=9),),
+                row_version=creada.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=permisos,
+            )
+
+    async def test_una_pieza_de_cantidad_cero_se_rechaza(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        with pytest.raises(gestion.DatosInvalidos):
+            await self._crear(
+                session,
+                redis,
+                entorno,
+                packages=(gestion.DatosDeBulto(package_type="BOX", quantity=0),),
+            )
+
+    async def test_una_dimension_en_cero_se_rechaza(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Un bulto de cero centímetros es un dato mal capturado, no un bulto."""
+        with pytest.raises(gestion.DatosInvalidos):
+            await self._crear(
+                session,
+                redis,
+                entorno,
+                packages=(
+                    gestion.DatosDeBulto(package_type="BOX", quantity=1, length_cm=Decimal("0")),
+                ),
+            )
+
+    async def test_la_base_impide_dejar_una_carga_sin_piezas(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """La última defensa, para quien llegue por fuera del servicio.
+
+        El constraint es diferible y normalmente se comprueba al COMMIT, pero la
+        sesión de pruebas trabaja dentro de una transacción que nunca se
+        confirma. `SET CONSTRAINTS ALL IMMEDIATE` lo adelanta al DELETE, que es
+        lo que permite verificarlo sin salir del aislamiento de la prueba.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        creada = await self._crear(session, redis, entorno)
+        await session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text("DELETE FROM shipment_packages WHERE shipment_id = :s"), {"s": creada.id}
+            )
+
+        await session.rollback()
+
+    async def test_una_carga_legacy_sin_piezas_debe_repararse_antes_de_editarse(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        fila = (
+            await session.execute(
+                text("""
+                    INSERT INTO shipments
+                        (company_id, created_by, current_status_code,
+                         origin_location_id, destination_location_id,
+                         legacy_review_required)
+                    VALUES (:c, :u, 'PRE_ALERT', :o, :d, true)
+                    RETURNING id, row_version
+                """),
+                {
+                    "c": entorno["empresa"],
+                    "u": entorno["ops"],
+                    "o": entorno["origen"],
+                    "d": entorno["destino"],
+                },
+            )
+        ).one()
+
+        with pytest.raises(gestion.DatosInvalidos, match="no tiene piezas"):
+            await gestion.actualizar(
+                session,
+                shipment_id=fila.id,
+                cambios={"shipper": "Correccion prematura"},
+                row_version=fila.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
 
 
 class TestEditarIdentificadores:

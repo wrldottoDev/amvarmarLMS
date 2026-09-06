@@ -444,7 +444,8 @@ async def bultos(session: AsyncSession, shipment_id: UUID) -> list[Any]:
         (
             await session.execute(
                 text("""
-                    SELECT id, package_type, quantity, description, weight_kg
+                    SELECT id, package_type, quantity, description, weight_kg,
+                           length_cm, width_cm, height_cm
                     FROM shipment_packages
                     WHERE shipment_id = :s
                     ORDER BY created_at, id

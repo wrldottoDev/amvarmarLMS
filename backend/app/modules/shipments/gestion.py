@@ -129,6 +129,9 @@ class DatosDeBulto:
     quantity: int
     description: str | None = None
     weight_kg: Decimal | None = None
+    length_cm: Decimal | None = None
+    width_cm: Decimal | None = None
+    height_cm: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -183,11 +186,7 @@ async def crear(
     if datos.weight_kg is None and datos.weight_lb is None:
         raise DatosInvalidos("Indique el peso, en kilos o en libras.")
 
-    for bulto in datos.packages:
-        if bulto.quantity < 1:
-            raise DatosInvalidos("La cantidad de una pieza tiene que ser al menos 1.")
-        if bulto.package_type not in set(PackageType):
-            raise DatosInvalidos(f"El tipo de pieza {bulto.package_type} no existe.")
+    _validar_bultos(datos.packages)
 
     try:
         fila = (
@@ -295,21 +294,52 @@ async def crear(
     )
 
 
+def _validar_bultos(bultos: tuple[DatosDeBulto, ...]) -> None:
+    """Toda carga lleva al menos una pieza, y ninguna pieza es de cero.
+
+    Sin desglose, una carga puede almacenarse y entrar en un despacho sin que
+    nadie sepa cuántos bultos se están moviendo. La base tiene el mismo
+    invariante con un constraint diferible; esto lo comprueba antes para poder
+    devolver un mensaje que diga cuál pieza está mal.
+    """
+    if not bultos:
+        raise DatosInvalidos("Indique al menos una pieza: tipo y cantidad.")
+
+    for numero, bulto in enumerate(bultos, start=1):
+        if bulto.quantity < 1:
+            raise DatosInvalidos(f"La pieza {numero} tiene cantidad {bulto.quantity}; mínimo 1.")
+        if bulto.package_type not in set(PackageType):
+            raise DatosInvalidos(f"El tipo de pieza {bulto.package_type} no existe.")
+
+        # Opcionales, pero si vienen tienen que ser reales. Un bulto de cero
+        # kilos o cero centímetros es un dato mal capturado, no un bulto.
+        for etiqueta, valor in (
+            ("peso", bulto.weight_kg),
+            ("largo", bulto.length_cm),
+            ("ancho", bulto.width_cm),
+            ("alto", bulto.height_cm),
+        ):
+            if valor is not None and valor <= 0:
+                raise DatosInvalidos(f"El {etiqueta} de la pieza {numero} debe ser mayor que cero.")
+
+
 async def _guardar_bultos(
     session: AsyncSession, shipment_id: UUID, bultos: tuple[DatosDeBulto, ...]
 ) -> None:
     """Las piezas que trae la carga.
 
-    `package_count` de `shipments` no se toca acá: es un contador propio que
-    puede diferir —una carga puede tener 3 piezas declaradas y 40 bultos
-    físicos— y mezclarlos haría que corregir una cosa pisara la otra.
+    `package_count` no se escribe acá: lo mantiene el trigger
+    `trg_package_count` como la suma de las cantidades. En la base y no en el
+    servicio porque el migrador y las correcciones a mano también tocan piezas,
+    y un contador que solo actualiza una de las tres vías es peor que ninguno.
     """
     for bulto in bultos:
         await session.execute(
             text("""
                 INSERT INTO shipment_packages
-                    (shipment_id, package_type, quantity, description, weight_kg)
-                VALUES (:s, :tipo, :cantidad, :descripcion, :peso)
+                    (shipment_id, package_type, quantity, description,
+                     weight_kg, length_cm, width_cm, height_cm)
+                VALUES (:s, :tipo, :cantidad, :descripcion, :peso, :largo, :ancho, :alto)
             """),
             {
                 "s": shipment_id,
@@ -317,6 +347,9 @@ async def _guardar_bultos(
                 "cantidad": bulto.quantity,
                 "descripcion": (bulto.description or "").strip()[:255] or None,
                 "peso": bulto.weight_kg,
+                "largo": bulto.length_cm,
+                "ancho": bulto.width_cm,
+                "alto": bulto.height_cm,
             },
         )
 
@@ -401,7 +434,9 @@ async def actualizar(
     carga = (
         await session.execute(
             text("""
-                SELECT company_id, current_status_code, row_version
+                SELECT company_id, current_status_code, row_version,
+                       (SELECT count(*) FROM shipment_packages p
+                        WHERE p.shipment_id = shipments.id) AS package_rows
                 FROM shipments WHERE id = :id AND deleted_at IS NULL
                 FOR UPDATE
             """),
@@ -425,6 +460,12 @@ async def actualizar(
         raise VersionDesactualizada(
             "La carga fue modificada por otra persona. Recárguela y reintente.",
             details=[{"row_version_actual": carga.row_version}],
+        )
+
+    if carga.package_rows == 0:
+        raise DatosInvalidos(
+            "Esta carga legacy no tiene piezas. Agregue al menos una pieza antes de corregir "
+            "otros datos."
         )
 
     aplicables = {c: v for c, v in cambios.items() if c in _EDITABLES_CAMPOS}
@@ -543,6 +584,67 @@ async def _registrar_correccion(
             "actor": actor_user_id,
         },
     )
+
+
+async def reemplazar_bultos(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    bultos: tuple[DatosDeBulto, ...],
+    row_version: int,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+) -> int:
+    """Cambia el desglose completo de una carga. Devuelve la versión nueva.
+
+    Reemplazo y no parcheo pieza por pieza: el formulario muestra la lista
+    entera y quien la guarda cree estar guardando eso. Un `PATCH` por fila
+    dejaría al que quitó una pieza en la pantalla con la pieza todavía en la
+    base, sin que nada se lo dijera.
+
+    Todo va en la transacción del llamador. El constraint diferible de la base
+    comprueba al COMMIT que no quedó vacía, así que un fallo a mitad revierte el
+    borrado y la carga conserva su desglose anterior.
+    """
+    _validar_bultos(bultos)
+
+    carga = (
+        await session.execute(
+            text("""
+                SELECT company_id, current_status_code, row_version
+                FROM shipments WHERE id = :id AND deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"id": shipment_id},
+        )
+    ).one_or_none()
+
+    if carga is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    if not permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=carga.company_id):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_UPDATE)
+
+    if carga.current_status_code not in _EDITABLES:
+        raise NoSePuedeEditar(
+            "Esta carga ya salió de bodega y su desglose no se corrige desde acá."
+        )
+
+    if carga.row_version != row_version:
+        raise VersionDesactualizada(
+            "La carga fue modificada por otra persona. Recárguela y reintente.",
+            details=[{"row_version_actual": carga.row_version}],
+        )
+
+    await session.execute(
+        text("DELETE FROM shipment_packages WHERE shipment_id = :s"), {"s": shipment_id}
+    )
+    await _guardar_bultos(session, shipment_id, bultos)
+
+    nueva_version = await _subir_version(session, shipment_id, row_version)
+    await _registrar_correccion(session, shipment_id, ["piezas"], actor_user_id=actor_user_id)
+
+    return nueva_version
 
 
 # --- Revisión de lo migrado (ADR-0002 / Paso 5.7) ---
