@@ -8,6 +8,7 @@ servidor no confía en lo que declara el cliente**, ni en la extensión, ni en e
 import struct
 import uuid
 import zlib
+from typing import Any
 
 import pytest
 from scripts.seed_document_types import sembrar as sembrar_documentos
@@ -29,6 +30,10 @@ from app.modules.documents.validation import (
     validar_contenido,
     validar_tamano,
 )
+from app.modules.rbac.catalog import Perm
+from app.modules.rbac.models import ScopeType
+from app.modules.rbac.service import PermisoEfectivo, PermisosEfectivos
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.security
 
@@ -222,6 +227,8 @@ async def _entorno(session: AsyncSession) -> dict[str, uuid.UUID]:
             {"c": empresa, "u": usuario, "o": origen, "d": destino},
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, shipment)
 
     tipo = (
         await session.execute(
@@ -252,6 +259,29 @@ async def _ubicacion(session: AsyncSession, pais: str, ciudad: str, nombre: str)
     ).scalar_one()
 
 
+async def _preparar_subida(session: AsyncSession, **datos: Any) -> service.SubidaPreparada:
+    """Actor interno explícito para probar el servicio sin saltarse su política."""
+    empresa = datos["company_id"]
+    usuario = datos["actor_user_id"]
+    permisos = PermisosEfectivos(
+        user_id=usuario,
+        authz_version=0,
+        permisos=(
+            PermisoEfectivo(
+                code=Perm.DOCUMENTS_UPLOAD_INTERNAL,
+                scope_type=ScopeType.ORGANIZATION,
+                company_id=empresa,
+            ),
+        ),
+    )
+    return await service.preparar_subida(
+        session,
+        issued_by="PROVIDER",
+        permisos=permisos,
+        **datos,
+    )
+
+
 class TestFlujoEnDosTiempos:
     async def test_preparar_deja_el_documento_en_uploading(
         self, session: AsyncSession, storage_de_prueba: str
@@ -259,7 +289,7 @@ class TestFlujoEnDosTiempos:
         """Existe en la base pero no satisface nada hasta que se verifique."""
         ctx = await _entorno(session)
 
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -287,7 +317,7 @@ class TestFlujoEnDosTiempos:
         ctx = await _entorno(session)
 
         with pytest.raises(FormatoNoPermitido):
-            await service.preparar_subida(
+            await _preparar_subida(
                 session,
                 shipment_id=ctx["shipment"],
                 document_type_id=ctx["tipo_factura"],
@@ -302,7 +332,7 @@ class TestFlujoEnDosTiempos:
         """Sin esto, bastaría llamar a `complete` sin subir nada para dejar un
         documento fantasma marcado como válido."""
         ctx = await _entorno(session)
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -330,7 +360,7 @@ class TestFlujoEnDosTiempos:
         import hashlib
 
         ctx = await _entorno(session)
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -364,7 +394,7 @@ class TestFlujoEnDosTiempos:
         """El caso completo: el cliente pasó la validación de extensión al
         preparar, y sube otra cosa. La verificación sobre los bytes lo atrapa."""
         ctx = await _entorno(session)
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -391,7 +421,7 @@ class TestFlujoEnDosTiempos:
         from app.core.errors import Conflicto
 
         ctx = await _entorno(session)
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -412,7 +442,7 @@ class TestDescarga:
     async def _documento_listo(
         self, session: AsyncSession, ctx: dict, bucket: str, *, subida_estado: str = "READY"
     ) -> uuid.UUID:
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -499,7 +529,7 @@ class TestBucketPrivado:
         from app.core.config import get_settings
 
         ctx = await _entorno(session)
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],
@@ -524,7 +554,7 @@ class TestBucketPrivado:
         import httpx
 
         ctx = await _entorno(session)
-        subida = await service.preparar_subida(
+        subida = await _preparar_subida(
             session,
             shipment_id=ctx["shipment"],
             document_type_id=ctx["tipo_factura"],

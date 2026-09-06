@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
 from app.core.observability import metrics
 from app.infrastructure.storage import s3
-from app.modules.documents.models import UploadStatus
+from app.modules.documents.models import DocumentContext, ProvidedBy, UploadStatus
 from app.modules.documents.validation import (
     ArchivoInvalido,
     FormatoNoPermitido,
@@ -33,6 +33,8 @@ from app.modules.documents.validation import (
     validar_extension,
     validar_tamano,
 )
+from app.modules.rbac.catalog import Perm
+from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments.models import RequirementStatus
 from app.modules.shipments.service import CargaArchivada
 
@@ -57,9 +59,6 @@ class DocumentoNoDisponible(Conflicto):
 @dataclass(frozen=True)
 class SubidaPreparada:
     document_id: UUID
-    # La carga a la que quedó ligado el documento. Al subir desde un despacho
-    # quien llama no la conoce, y la necesita para cerrar la subida.
-    shipment_id: UUID
     storage_key: str
     upload_url: str
     expira_en: datetime
@@ -93,7 +92,8 @@ async def _tipo_de_documento(session: AsyncSession, document_type_id: UUID) -> A
     fila = (
         await session.execute(
             text("""
-                SELECT id, code, allowed_formats
+                SELECT id, code, allowed_formats, provided_by, context,
+                       issued_by_options
                 FROM document_types WHERE id = :id AND is_active
             """),
             {"id": document_type_id},
@@ -104,6 +104,60 @@ async def _tipo_de_documento(session: AsyncSession, document_type_id: UUID) -> A
         raise RecursoNoEncontrado("Tipo de documento no encontrado.")
 
     return fila
+
+
+def _tiene_codigo(permisos: PermisosEfectivos, code: str) -> bool:
+    return any(permiso.code == code for permiso in permisos.permisos)
+
+
+def _puede_subir_tipo(
+    tipo: Any,
+    *,
+    permisos: PermisosEfectivos,
+    company_id: UUID | None,
+    context: str,
+) -> bool:
+    if tipo.context != context:
+        return False
+
+    if company_id is None:
+        interno = _tiene_codigo(permisos, Perm.DOCUMENTS_UPLOAD_INTERNAL)
+        cliente = _tiene_codigo(permisos, Perm.DOCUMENTS_UPLOAD_CLIENT)
+    else:
+        interno = permisos.permite(Perm.DOCUMENTS_UPLOAD_INTERNAL, company_id=company_id)
+        cliente = permisos.permite(Perm.DOCUMENTS_UPLOAD_CLIENT, company_id=company_id)
+
+    if context == DocumentContext.DISPATCH:
+        return interno
+    if tipo.provided_by == ProvidedBy.STAFF:
+        return interno
+    if tipo.provided_by == ProvidedBy.CLIENT:
+        # Un rol interno no usa el permiso de cliente para saltarse la regla
+        # comercial del tipo, aunque por su matriz también posea ese permiso.
+        return cliente and not interno
+    return cliente or interno
+
+
+async def _validar_tipo_para_subida(
+    session: AsyncSession,
+    *,
+    document_type_id: UUID,
+    issued_by: str,
+    context: str,
+    company_id: UUID,
+    permisos: PermisosEfectivos,
+) -> Any:
+    tipo = await _tipo_de_documento(session, document_type_id)
+    if not _puede_subir_tipo(tipo, permisos=permisos, company_id=company_id, context=context):
+        # El tipo oculto e inexistente son indistinguibles para evitar revelar
+        # catálogos internos a clientes.
+        raise RecursoNoEncontrado("Tipo de documento no encontrado.")
+    if issued_by not in set(tipo.issued_by_options):
+        raise ReglaDeNegocioViolada(
+            f"El emisor {issued_by} no es válido para {tipo.code}.",
+            code="DOCUMENT_ISSUER_INVALID",
+        )
+    return tipo
 
 
 def _storage_key(company_id: UUID, document_id: UUID, safe_name: str) -> str:
@@ -124,9 +178,11 @@ async def preparar_subida(
     *,
     shipment_id: UUID,
     document_type_id: UUID,
+    issued_by: str,
     original_name: str,
     company_id: UUID,
     actor_user_id: UUID,
+    permisos: PermisosEfectivos,
 ) -> SubidaPreparada:
     """Primer tiempo: reserva el documento y emite la URL firmada.
 
@@ -144,7 +200,44 @@ async def preparar_subida(
     if carga.archived_at is not None:
         raise CargaArchivada("Esta carga fue archivada y ya no admite documentos nuevos.")
 
-    tipo = await _tipo_de_documento(session, document_type_id)
+    tipo = await _validar_tipo_para_subida(
+        session,
+        document_type_id=document_type_id,
+        issued_by=issued_by,
+        context=DocumentContext.SHIPMENT.value,
+        company_id=company_id,
+        permisos=permisos,
+    )
+
+    preparada = await _reservar_documento(
+        session,
+        tipo=tipo,
+        issued_by=issued_by,
+        original_name=original_name,
+        company_id=company_id,
+        actor_user_id=actor_user_id,
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
+            VALUES (:s, :d, :t)
+        """),
+        {"s": shipment_id, "d": preparada.document_id, "t": document_type_id},
+    )
+    return preparada
+
+
+async def _reservar_documento(
+    session: AsyncSession,
+    *,
+    tipo: Any,
+    issued_by: str,
+    original_name: str,
+    company_id: UUID,
+    actor_user_id: UUID,
+) -> SubidaPreparada:
+    """Crea solo `documents`; el servicio padre agrega exactamente un enlace."""
 
     # Validación temprana de extensión: evita emitir una URL para algo que se
     # va a rechazar igual, y le da al usuario el error antes de subir 200 MB.
@@ -167,12 +260,12 @@ async def preparar_subida(
             INSERT INTO documents (
                 id, company_id, uploaded_by, storage_provider, storage_key,
                 original_name, safe_name, media_type, size_bytes, sha256,
-                upload_status
+                upload_status, issued_by
             )
             VALUES (
                 :id, :company, :actor, 's3', :key,
                 :original, :safe, 'application/octet-stream', 1, :hash_vacio,
-                :upload_status
+                :upload_status, :issued_by
             )
         """),
         {
@@ -186,22 +279,14 @@ async def preparar_subida(
             # CHECK de la tabla exigen valores, y usar ceros los violaría.
             "hash_vacio": "0" * 64,
             "upload_status": UploadStatus.UPLOADING.value,
+            "issued_by": issued_by,
         },
-    )
-
-    await session.execute(
-        text("""
-            INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
-            VALUES (:s, :d, :t)
-        """),
-        {"s": shipment_id, "d": document_id, "t": document_type_id},
     )
 
     url = await s3.url_de_subida(storage_key)
 
     return SubidaPreparada(
         document_id=document_id,
-        shipment_id=shipment_id,
         storage_key=storage_key,
         upload_url=url,
         expira_en=datetime.now(UTC).replace(microsecond=0),
@@ -210,59 +295,82 @@ async def preparar_subida(
 
 
 @dataclass(frozen=True)
+class ProcesamientoPreparado:
+    document_id: UUID
+    upload_status: str
+
+
+@dataclass(frozen=True)
 class DocumentoCompletado:
     document_id: UUID
     media_type: str
     size_bytes: int
     sha256: str
-    # El estado real con el que quedó. Lo devuelve el servicio y no lo escribe
-    # el router: cuando el router lo tenía a mano, siguió respondiendo
-    # "PROCESSING" después de que el pipeline dejara de usar ese estado, y la
-    # API mintió sobre si el documento se podía descargar.
     upload_status: str
 
 
-async def completar(
-    session: AsyncSession, *, document_id: UUID, company_id: UUID
-) -> DocumentoCompletado:
-    """Segundo tiempo: verificar lo que realmente se subió.
+async def _documento_del_recurso(
+    session: AsyncSession,
+    *,
+    document_id: UUID,
+    company_id: UUID,
+    context: str,
+    resource_id: UUID,
+) -> Any:
+    if context == DocumentContext.SHIPMENT:
+        enlace = "shipment_documents"
+        columna = "shipment_id"
+    else:
+        enlace = "dispatch_documents"
+        columna = "dispatch_request_id"
 
-    Todo se mide sobre los bytes almacenados. Lo que el cliente haya declarado
-    en el primer tiempo no se usa para nada aquí.
-
-    Si algo falla, el documento queda en `FAILED` y el objeto se borra: una
-    subida rechazada no debe dejar basura en el bucket.
-    """
     fila = (
         await session.execute(
-            text("""
+            text(f"""
                 SELECT d.id, d.storage_key, d.original_name, d.upload_status,
-                       dt.allowed_formats
+                       dt.allowed_formats, dt.code AS document_type_code
                 FROM documents d
-                JOIN shipment_documents sd ON sd.document_id = d.id
-                JOIN document_types dt ON dt.id = sd.document_type_id
-                WHERE d.id = :id AND d.company_id = :company AND d.deleted_at IS NULL
+                JOIN {enlace} enlace ON enlace.document_id = d.id
+                JOIN document_types dt ON dt.id = enlace.document_type_id
+                WHERE d.id = :id AND d.company_id = :company
+                  AND d.deleted_at IS NULL AND enlace.{columna} = :resource_id
+                  AND dt.context = :context
                 FOR UPDATE OF d
-            """),
-            {"id": document_id, "company": company_id},
+            """),  # noqa: S608
+            {
+                "id": document_id,
+                "company": company_id,
+                "resource_id": resource_id,
+                "context": context,
+            },
         )
     ).one_or_none()
-
     if fila is None:
         raise RecursoNoEncontrado("Documento no encontrado.")
+    return fila
 
+
+async def preparar_procesamiento(
+    session: AsyncSession,
+    *,
+    document_id: UUID,
+    company_id: UUID,
+    context: str,
+    resource_id: UUID,
+) -> ProcesamientoPreparado:
+    """Valida metadata y cabecera, marca PROCESSING y devuelve de inmediato."""
+    fila = await _documento_del_recurso(
+        session,
+        document_id=document_id,
+        company_id=company_id,
+        context=context,
+        resource_id=resource_id,
+    )
     if fila.upload_status != UploadStatus.UPLOADING:
         raise Conflicto("Este documento ya fue procesado.", code="DOCUMENTO_YA_COMPLETADO")
 
     try:
         objeto = await s3.describir_objeto(fila.storage_key)
-    except s3.ObjetoNoEncontrado as error:
-        await _marcar_fallido(session, document_id)
-        raise ArchivoInvalido(
-            "No se encontró el archivo. Verificá que la subida haya terminado."
-        ) from error
-
-    try:
         cabecera = await s3.leer_rango(fila.storage_key, bytes_iniciales=_BYTES_CABECERA)
         resultado = validar_contenido(
             cabecera=cabecera,
@@ -273,52 +381,182 @@ async def completar(
             objeto.size_bytes,
             maximo=await _limite_para(session, resultado.formato),
         )
-    except Exception as error:
-        # Rechazado: se marca y se borra el objeto. Es el único caso en que un
-        # archivo se elimina del storage — nunca uno ya válido (ADR-0007).
+    except s3.ObjetoNoEncontrado as error:
+        await _marcar_fallido(session, document_id)
+        raise ArchivoInvalido(
+            "No se encontró el archivo. Verifique que la subida haya terminado."
+        ) from error
+    except ReglaDeNegocioViolada as error:
         await _marcar_fallido(session, document_id)
         await s3.eliminar(fila.storage_key)
         metrics.upload_rechazado_total.labels(motivo=type(error).__name__).inc()
         raise
 
-    contenido = await s3.leer_completo(fila.storage_key)
-    sha256 = hashlib.sha256(contenido).hexdigest()
-
     await session.execute(
         text("""
             UPDATE documents
-            SET media_type = :media_type,
-                size_bytes = :size,
-                sha256 = :sha256,
-                safe_name = :safe_name,
-                upload_status = :estado
+            SET media_type = :media_type, size_bytes = :size,
+                safe_name = :safe_name, upload_status = 'PROCESSING'
             WHERE id = :id
         """),
         {
             "media_type": resultado.media_type,
             "size": objeto.size_bytes,
-            "sha256": sha256,
             "safe_name": resultado.safe_name,
-            # READY: el documento queda descargable en cuanto termina la subida.
-            # Antes pasaba por PROCESSING esperando al antivirus, que se retiró
-            # por decisión de AMVARMAR (ver ADR-0009).
-            "estado": UploadStatus.READY.value,
             "id": document_id,
         },
     )
+    return ProcesamientoPreparado(
+        document_id=document_id, upload_status=UploadStatus.PROCESSING.value
+    )
 
-    await _marcar_requisito_subido(session, document_id)
 
+async def procesar_documento(session: AsyncSession, *, document_id: UUID) -> DocumentoCompletado:
+    """Worker idempotente: calcula SHA-256 por chunks y confirma READY."""
+    documento = (
+        await session.execute(
+            text("""
+                SELECT id, storage_key, original_name, media_type, size_bytes,
+                       upload_status
+                FROM documents WHERE id = :id AND deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"id": document_id},
+        )
+    ).one_or_none()
+    if documento is None:
+        raise RecursoNoEncontrado("Documento no encontrado.")
+    if documento.upload_status == UploadStatus.READY:
+        return DocumentoCompletado(
+            document_id=document_id,
+            media_type=documento.media_type,
+            size_bytes=documento.size_bytes,
+            sha256=(
+                await session.execute(
+                    text("SELECT sha256 FROM documents WHERE id = :id"),
+                    {"id": document_id},
+                )
+            ).scalar_one(),
+            upload_status=UploadStatus.READY.value,
+        )
+    if documento.upload_status != UploadStatus.PROCESSING:
+        raise Conflicto(
+            "El documento no está pendiente de procesamiento.",
+            code="DOCUMENTO_NO_ESTA_PROCESANDO",
+        )
+
+    enlaces = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT sd.shipment_id AS resource_id, 'SHIPMENT' AS context,
+                           dt.code AS document_type_code
+                    FROM shipment_documents sd
+                    JOIN document_types dt ON dt.id = sd.document_type_id
+                    WHERE sd.document_id = :id
+                    UNION ALL
+                    SELECT dd.dispatch_request_id, 'DISPATCH', dt.code
+                    FROM dispatch_documents dd
+                    JOIN document_types dt ON dt.id = dd.document_type_id
+                    WHERE dd.document_id = :id
+                """),
+                {"id": document_id},
+            )
+        ).all()
+    )
+    if len(enlaces) != 1:
+        raise Conflicto(
+            "El documento no tiene un único recurso padre.",
+            code="DOCUMENT_PARENT_INVALID",
+        )
+    enlace = enlaces[0]
+
+    objeto = await s3.describir_objeto(documento.storage_key)
+    digest = hashlib.sha256()
+    total = 0
+    async for chunk in s3.iterar_chunks(documento.storage_key):
+        digest.update(chunk)
+        total += len(chunk)
+    if total != objeto.size_bytes or total != documento.size_bytes:
+        await _marcar_fallido(session, document_id)
+        raise ArchivoInvalido("El tamaño del archivo cambió durante el procesamiento.")
+
+    sha256 = digest.hexdigest()
+    await session.execute(
+        text("""
+            UPDATE documents SET sha256 = :sha256, upload_status = 'READY'
+            WHERE id = :id AND upload_status = 'PROCESSING'
+        """),
+        {"sha256": sha256, "id": document_id},
+    )
+    if enlace.context == DocumentContext.SHIPMENT:
+        await marcar_requisito_subido(session, document_id)
+
+    from app.modules.audit.outbox import publicar
+
+    await publicar(
+        session,
+        aggregate_type="document",
+        aggregate_id=document_id,
+        event_type=(
+            "dispatch.document.ready"
+            if enlace.context == DocumentContext.DISPATCH
+            else "shipment.document.ready"
+        ),
+        payload={
+            "resource_id": str(enlace.resource_id),
+            "document_id": str(document_id),
+            "document_type_code": enlace.document_type_code,
+        },
+        dedup_key=f"document:{document_id}:ready",
+    )
     return DocumentoCompletado(
         document_id=document_id,
-        media_type=resultado.media_type,
-        size_bytes=objeto.size_bytes,
+        media_type=documento.media_type,
+        size_bytes=total,
         sha256=sha256,
         upload_status=UploadStatus.READY.value,
     )
 
 
-async def _marcar_requisito_subido(session: AsyncSession, document_id: UUID) -> None:
+async def completar(
+    session: AsyncSession, *, document_id: UUID, company_id: UUID
+) -> DocumentoCompletado:
+    """Compatibilidad para consumidores internos que necesitan ejecución inmediata.
+
+    La API pública no usa este camino: valida el recurso exacto, responde 202 y
+    delega el hash al worker. Este adaptador conserva una sola implementación
+    del procesamiento y también lee el objeto por bloques.
+    """
+    enlaces = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT sd.shipment_id AS resource_id, 'SHIPMENT' AS context
+                    FROM shipment_documents sd WHERE sd.document_id = :id
+                    UNION ALL
+                    SELECT dd.dispatch_request_id, 'DISPATCH'
+                    FROM dispatch_documents dd WHERE dd.document_id = :id
+                """),
+                {"id": document_id},
+            )
+        ).all()
+    )
+    if len(enlaces) != 1:
+        raise RecursoNoEncontrado("Documento no encontrado.")
+
+    enlace = enlaces[0]
+    await preparar_procesamiento(
+        session,
+        document_id=document_id,
+        company_id=company_id,
+        context=enlace.context,
+        resource_id=enlace.resource_id,
+    )
+    return await procesar_documento(session, document_id=document_id)
+
+
+async def marcar_requisito_subido(session: AsyncSession, document_id: UUID) -> None:
     """El requisito que este documento venía a satisfacer pasa a `UPLOADED`.
 
     NO pasa a `VERIFIED` (ADR-0003): subir un archivo no equivale a que
@@ -498,13 +736,21 @@ async def renombrar(
     return nombre
 
 
+@dataclass(frozen=True)
+class InvalidacionResultado:
+    context: str
+    resource_id: UUID
+
+
 async def invalidar(
     session: AsyncSession,
     *,
     document_id: UUID,
     company_ids: list[UUID] | None,
-) -> UUID:
-    """Saca un documento del expediente. Devuelve la carga a la que pertenecía.
+    actor_user_id: UUID,
+    motivo: str,
+) -> InvalidacionResultado:
+    """Saca un documento del expediente y conserva actor, motivo y evidencia.
 
     **No borra el objeto del storage.** Es la misma regla que para las cargas:
     un archivo que alguien subió y otro quitó puede ser evidencia de un error o
@@ -515,8 +761,19 @@ async def invalidar(
     pendiente: dejarlo por cumplido con el archivo fuera haría que la carga
     pasara a despacho sin el papel que la habilita.
     """
+    motivo_limpio = motivo.strip()
+    if len(motivo_limpio) < 3:
+        raise ReglaDeNegocioViolada(
+            "Debe indicar el motivo de invalidación.",
+            code="DOCUMENT_INVALIDATION_REASON_REQUIRED",
+        )
+
     condiciones = ["id = :id", "deleted_at IS NULL"]
-    parametros: dict[str, Any] = {"id": document_id}
+    parametros: dict[str, Any] = {
+        "id": document_id,
+        "actor": actor_user_id,
+        "motivo": motivo_limpio,
+    }
     if company_ids is not None:
         condiciones.append("company_id = ANY(:empresas)")
         parametros["empresas"] = company_ids
@@ -524,7 +781,9 @@ async def invalidar(
     fila = (
         await session.execute(
             text(f"""
-                UPDATE documents SET deleted_at = now()
+                UPDATE documents
+                SET deleted_at = now(), invalidated_by = :actor,
+                    invalidation_reason = :motivo
                 WHERE {" AND ".join(condiciones)}
                 RETURNING id
             """),  # noqa: S608
@@ -535,19 +794,33 @@ async def invalidar(
     if fila is None:
         raise RecursoNoEncontrado("Documento no encontrado.")
 
-    enlace = (
-        await session.execute(
-            text("""
-                SELECT shipment_id, document_type_id
-                FROM shipment_documents WHERE document_id = :d
-            """),
-            {"d": document_id},
+    enlaces = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT shipment_id AS resource_id, document_type_id,
+                           'SHIPMENT' AS context
+                    FROM shipment_documents WHERE document_id = :d
+                    UNION ALL
+                    SELECT dispatch_request_id, document_type_id, 'DISPATCH'
+                    FROM dispatch_documents WHERE document_id = :d
+                """),
+                {"d": document_id},
+            )
+        ).all()
+    )
+    if len(enlaces) != 1:
+        raise Conflicto(
+            "El documento no tiene un único recurso padre.",
+            code="DOCUMENT_PARENT_INVALID",
         )
-    ).one_or_none()
+    enlace = enlaces[0]
 
-    if enlace is None:
-        # Documento de despacho, sin carga asociada.
-        raise RecursoNoEncontrado("Documento no encontrado.")
+    if enlace.context == DocumentContext.DISPATCH:
+        return InvalidacionResultado(
+            context=DocumentContext.DISPATCH.value,
+            resource_id=enlace.resource_id,
+        )
 
     # El requisito vuelve a pendiente solo si no queda ningún otro documento
     # vivo de ese tipo. Con dos facturas subidas, quitar una no deja a la carga
@@ -556,29 +829,35 @@ async def invalidar(
     await session.execute(
         text("""
             UPDATE shipment_requirements r
-            SET status = :pendiente
+            SET status = CASE WHEN EXISTS (
+                    SELECT 1 FROM shipment_documents sd
+                    JOIN documents d ON d.id = sd.document_id
+                    WHERE sd.shipment_id = r.shipment_id
+                      AND sd.document_type_id = r.document_type_id
+                      AND d.deleted_at IS NULL
+                      AND d.upload_status = 'READY'
+                ) THEN :subido ELSE :pendiente END,
+                verified_document_id = NULL,
+                reviewed_document_id = NULL
             WHERE r.shipment_id = :carga
               AND r.document_type_id = :tipo
               AND r.requirement_type = 'DOCUMENT'
-              AND r.status = :subido
-              AND NOT EXISTS (
-                  SELECT 1 FROM shipment_documents sd
-                  JOIN documents d ON d.id = sd.document_id
-                  WHERE sd.shipment_id = r.shipment_id
-                    AND sd.document_type_id = r.document_type_id
-                    AND d.deleted_at IS NULL
-              )
+              AND (r.verified_document_id = :documento
+                   OR r.reviewed_document_id = :documento
+                   OR r.status IN ('UPLOADED', 'VERIFIED', 'REJECTED'))
         """),
         {
-            "carga": enlace.shipment_id,
+            "carga": enlace.resource_id,
             "tipo": enlace.document_type_id,
+            "documento": document_id,
             "pendiente": RequirementStatus.PENDING.value,
             "subido": RequirementStatus.UPLOADED.value,
         },
     )
-
-    carga: UUID = enlace.shipment_id
-    return carga
+    return InvalidacionResultado(
+        context=DocumentContext.SHIPMENT.value,
+        resource_id=enlace.resource_id,
+    )
 
 
 async def expediente(
@@ -689,19 +968,33 @@ async def expediente(
     )
 
 
-async def tipos_de_documento(session: AsyncSession) -> list[Any]:
-    """Catálogo activo, para que la interfaz sepa qué se puede subir."""
-    return list(
+async def tipos_de_documento(
+    session: AsyncSession,
+    *,
+    context: str,
+    permisos: PermisosEfectivos,
+    company_id: UUID | None = None,
+) -> list[Any]:
+    """Catálogo filtrado con la misma matriz que vuelve a validar `presign`."""
+    filas = list(
         (
             await session.execute(
                 text("""
-                    SELECT id, code, label, description, provided_by,
-                           allowed_formats, required_before_status
-                    FROM document_types WHERE is_active ORDER BY label
-                """)
+                    SELECT id, code, label, description, provided_by, context,
+                           issued_by_options, allowed_formats, required_before_status
+                    FROM document_types
+                    WHERE is_active AND context = :context
+                    ORDER BY label
+                """),
+                {"context": context},
             )
         ).all()
     )
+    return [
+        fila
+        for fila in filas
+        if _puede_subir_tipo(fila, permisos=permisos, company_id=company_id, context=context)
+    ]
 
 
 @dataclass(frozen=True)
@@ -855,6 +1148,13 @@ async def _despacho_visible(
     return resultado
 
 
+async def empresa_de_despacho_visible(
+    session: AsyncSession, *, dispatch_id: UUID, company_ids: list[UUID] | None
+) -> UUID:
+    """API pública del servicio para validar alcance antes de completar."""
+    return await _despacho_visible(session, dispatch_id=dispatch_id, company_ids=company_ids)
+
+
 async def documentos_de_despacho(
     session: AsyncSession, *, dispatch_id: UUID, company_ids: list[UUID] | None
 ) -> list[DocumentoDeDespacho]:
@@ -901,9 +1201,11 @@ async def preparar_subida_de_despacho(
     *,
     dispatch_id: UUID,
     document_type_id: UUID,
+    issued_by: str,
     original_name: str,
     company_ids: list[UUID] | None,
     actor_user_id: UUID,
+    permisos: PermisosEfectivos,
 ) -> SubidaPreparada:
     """Igual que la subida de una carga, colgando del despacho.
 
@@ -913,29 +1215,18 @@ async def preparar_subida_de_despacho(
     """
     empresa = await _despacho_visible(session, dispatch_id=dispatch_id, company_ids=company_ids)
 
-    # Se apoya en la primera carga del despacho para reutilizar el flujo de
-    # subida, y después se agrega el enlace con la solicitud.
-    carga = (
-        await session.execute(
-            text("""
-                SELECT shipment_id FROM dispatch_request_shipments
-                WHERE dispatch_request_id = :d
-                ORDER BY added_at LIMIT 1
-            """),
-            {"d": dispatch_id},
-        )
-    ).scalar_one_or_none()
-
-    if carga is None:
-        raise Conflicto(
-            "La solicitud no tiene cargas asociadas, así que no se le puede adjuntar un documento.",
-            code="DESPACHO_SIN_CARGAS",
-        )
-
-    preparada = await preparar_subida(
+    tipo = await _validar_tipo_para_subida(
         session,
-        shipment_id=carga,
         document_type_id=document_type_id,
+        issued_by=issued_by,
+        context=DocumentContext.DISPATCH.value,
+        company_id=empresa,
+        permisos=permisos,
+    )
+    preparada = await _reservar_documento(
+        session,
+        tipo=tipo,
+        issued_by=issued_by,
         original_name=original_name,
         company_id=empresa,
         actor_user_id=actor_user_id,

@@ -19,6 +19,7 @@ from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import service as cargas
 from app.modules.shipments.models import RequirementStatus, ShipmentStatus
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -123,7 +124,7 @@ async def _carga(
     permiso_especial: bool = False,
     empresa: str = "empresa",
 ) -> uuid.UUID:
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
@@ -142,6 +143,9 @@ async def _carga(
             },
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _permisos(session: AsyncSession, redis, user_id: uuid.UUID):
@@ -180,6 +184,46 @@ async def _requisito_de(session: AsyncSession, shipment_id: uuid.UUID, code: str
             {"s": shipment_id, "c": code},
         )
     ).scalar_one()
+
+
+async def _documento_listo(
+    session: AsyncSession, ctx: dict, shipment_id: uuid.UUID, code: str
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Crea evidencia READY enlazada al requisito, sin depender de MinIO."""
+    tipo = await _tipo(session, code)
+    document_id = (
+        await session.execute(
+            text("""
+                INSERT INTO documents
+                    (company_id, uploaded_by, storage_provider, storage_key,
+                     original_name, safe_name, media_type, size_bytes, sha256,
+                     upload_status, issued_by)
+                VALUES (:c, :u, 's3', :key, :nombre, :nombre,
+                        'application/pdf', 10, :sha, 'READY', 'PROVIDER')
+                RETURNING id
+            """),
+            {
+                "c": ctx["empresa"],
+                "u": ctx["admin"],
+                "key": f"test/{uuid.uuid4()}.pdf",
+                "nombre": f"{code.lower()}.pdf",
+                "sha": "a" * 64,
+            },
+        )
+    ).scalar_one()
+    await session.execute(
+        text("""
+            INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
+            VALUES (:s, :d, :t)
+        """),
+        {"s": shipment_id, "d": document_id, "t": tipo},
+    )
+    requisito = await _requisito_de(session, shipment_id, code)
+    await session.execute(
+        text("UPDATE shipment_requirements SET status = 'UPLOADED' WHERE id = :id"),
+        {"id": requisito},
+    )
+    return requisito, document_id
 
 
 class TestAperturaDesdeElCatalogo:
@@ -370,10 +414,12 @@ class TestBloqueoDelDespacho:
         carga = await self._carga_con_pendiente(session, ctx)
 
         for code in ("COMMERCIAL_INVOICE", "PACKING_LIST"):
-            await cargas.resolver_requisito(
+            requisito, documento = await _documento_listo(session, ctx, carga, code)
+            await cargas.verificar_requisito_documental(
                 session,
-                requirement_id=await _requisito_de(session, carga, code),
-                nuevo_estado=RequirementStatus.VERIFIED,
+                shipment_id=carga,
+                requirement_id=requisito,
+                document_id=documento,
                 actor_user_id=ctx["admin"],
                 permisos=await _permisos(session, redis, ctx["admin"]),
             )
@@ -473,10 +519,12 @@ class TestExoneracion:
             session, shipment_id=carga, actor_user_id=ctx["admin"]
         )
 
-        await cargas.resolver_requisito(
+        requisito, documento = await _documento_listo(session, ctx, carga, "COMMERCIAL_INVOICE")
+        await cargas.verificar_requisito_documental(
             session,
-            requirement_id=await _requisito_de(session, carga, "COMMERCIAL_INVOICE"),
-            nuevo_estado=RequirementStatus.VERIFIED,
+            shipment_id=carga,
+            requirement_id=requisito,
+            document_id=documento,
             actor_user_id=ctx["agente"],
             permisos=await _permisos(session, redis, ctx["agente"]),
         )
@@ -484,6 +532,50 @@ class TestExoneracion:
         assert (await _requisitos(session, carga))["COMMERCIAL_INVOICE"] == (
             RequirementStatus.VERIFIED
         )
+
+
+class TestRevisionDocumental:
+    async def test_no_verifica_un_documento_que_no_esta_ready(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx)
+        await cargas.sincronizar_requisitos_del_catalogo(
+            session, shipment_id=carga, actor_user_id=ctx["admin"]
+        )
+        requisito, documento = await _documento_listo(session, ctx, carga, "COMMERCIAL_INVOICE")
+        await session.execute(
+            text("UPDATE documents SET upload_status = 'PROCESSING' WHERE id = :id"),
+            {"id": documento},
+        )
+
+        with pytest.raises(cargas.EvidenciaDocumentalInvalida):
+            await cargas.verificar_requisito_documental(
+                session,
+                shipment_id=carga,
+                requirement_id=requisito,
+                document_id=documento,
+                actor_user_id=ctx["admin"],
+                permisos=await _permisos(session, redis, ctx["admin"]),
+            )
+
+    async def test_no_se_puede_marcar_verified_sin_seleccionar_evidencia(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx)
+        await cargas.sincronizar_requisitos_del_catalogo(
+            session, shipment_id=carga, actor_user_id=ctx["admin"]
+        )
+
+        with pytest.raises(cargas.TransicionDeRequisitoInvalida):
+            await cargas.resolver_requisito(
+                session,
+                requirement_id=await _requisito_de(session, carga, "COMMERCIAL_INVOICE"),
+                nuevo_estado=RequirementStatus.VERIFIED,
+                actor_user_id=ctx["admin"],
+                permisos=await _permisos(session, redis, ctx["admin"]),
+            )
 
 
 class TestAlcance:

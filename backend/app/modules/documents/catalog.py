@@ -2,7 +2,12 @@
 
 from dataclasses import dataclass
 
-from app.modules.documents.models import DocumentTypeCode, ProvidedBy
+from app.modules.documents.models import (
+    DocumentContext,
+    DocumentTypeCode,
+    IssuedBy,
+    ProvidedBy,
+)
 from app.modules.shipments.models import ShipmentStatus
 
 # Formatos base que acepta casi todo tipo. DOCX se convierte a PDF en el
@@ -16,6 +21,8 @@ class DefinicionTipoDocumento:
     label: str
     description: str
     provided_by: ProvidedBy
+    context: DocumentContext
+    issued_by_options: list[IssuedBy]
     allowed_formats: list[str]
     # En qué estado se exige. None = no bloquea ninguna transición.
     required_before_status: str | None
@@ -28,7 +35,9 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
             "Obligatoria para la carga. Si el proveedor la entrega directo a AMVARMAR, "
             "Operaciones la carga y deja de ser una acción pendiente del cliente."
         ),
-        provided_by=ProvidedBy.CLIENT,
+        provided_by=ProvidedBy.CLIENT_OR_STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.PROVIDER, IssuedBy.CLIENT],
         allowed_formats=_CON_DOCX,
         required_before_status=ShipmentStatus.DISPATCHED,
     ),
@@ -38,7 +47,9 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
             "Obligatoria solo para cargas originadas en una bodega que la exige "
             "(aplicabilidad automática, ligada a ADR-0005)."
         ),
-        provided_by=ProvidedBy.CLIENT,
+        provided_by=ProvidedBy.CLIENT_OR_STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.PROVIDER, IssuedBy.CLIENT],
         allowed_formats=_CON_DOCX,
         required_before_status=ShipmentStatus.DISPATCHED,
     ),
@@ -49,6 +60,8 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
             "pero nunca aparece como pendiente suyo."
         ),
         provided_by=ProvidedBy.STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.PROVIDER],
         # Único tipo que acepta hoja de cálculo (ADR-0009, confirmado).
         allowed_formats=[*_CON_DOCX, "XLSX", "CSV"],
         required_before_status=ShipmentStatus.DISPATCHED,
@@ -57,6 +70,8 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
         label="Bill of Lading",
         description="Se genera y carga después del despacho, para consulta del cliente.",
         provided_by=ProvidedBy.STAFF,
+        context=DocumentContext.DISPATCH,
+        issued_by_options=[IssuedBy.CARRIER, IssuedBy.AMVARMAR],
         allowed_formats=_PDF_E_IMAGENES,
         # No bloquea nada: existe después de DISPATCHED (ADR-0006).
         required_before_status=None,
@@ -68,6 +83,8 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
             "inspección o autorización. El cliente no puede descartar la advertencia."
         ),
         provided_by=ProvidedBy.CLIENT,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.CLIENT, IssuedBy.AUTHORITY],
         allowed_formats=_PDF_E_IMAGENES,
         required_before_status=ShipmentStatus.DISPATCHED,
     ),
@@ -78,6 +95,8 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
             "Operaciones; el cliente lo consulta."
         ),
         provided_by=ProvidedBy.STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.AMVARMAR],
         # Sin ZIP a propósito. El sistema anterior guardaba 190 de estos como
         # comprimidos y esos se traen igual —el migrador escribe en `documents`
         # directo, sin pasar por la validación de formato—, pero de acá en
@@ -96,7 +115,18 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
             "confirmación electrónica. Obligatoria para registrar la entrega."
         ),
         provided_by=ProvidedBy.STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.AMVARMAR, IssuedBy.CARRIER],
         allowed_formats=_PDF_E_IMAGENES,
         required_before_status=ShipmentStatus.DELIVERED,
+    ),
+    DocumentTypeCode.LEGACY_UNCLASSIFIED: DefinicionTipoDocumento(
+        label="Documento legacy sin clasificar",
+        description=("Archivo migrado cuyo tipo no se puede determinar sin inventar información."),
+        provided_by=ProvidedBy.STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[IssuedBy.OTHER],
+        allowed_formats=[*_CON_DOCX, "XLSX", "CSV"],
+        required_before_status=None,
     ),
 }

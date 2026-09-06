@@ -31,6 +31,7 @@ class DocumentTypeCode(StrEnum):
     SPECIAL_PERMIT = "SPECIAL_PERMIT"
     PROOF_OF_DELIVERY = "PROOF_OF_DELIVERY"
     WAREHOUSE_RECEIPT = "WAREHOUSE_RECEIPT"
+    LEGACY_UNCLASSIFIED = "LEGACY_UNCLASSIFIED"
 
 
 class ProvidedBy(StrEnum):
@@ -43,6 +44,21 @@ class ProvidedBy(StrEnum):
 
     CLIENT = "CLIENT"
     STAFF = "STAFF"
+    CLIENT_OR_STAFF = "CLIENT_OR_STAFF"
+
+
+class DocumentContext(StrEnum):
+    SHIPMENT = "SHIPMENT"
+    DISPATCH = "DISPATCH"
+
+
+class IssuedBy(StrEnum):
+    PROVIDER = "PROVIDER"
+    CLIENT = "CLIENT"
+    AMVARMAR = "AMVARMAR"
+    CARRIER = "CARRIER"
+    AUTHORITY = "AUTHORITY"
+    OTHER = "OTHER"
 
 
 class DocumentType(Base, TimestampMixin):
@@ -54,6 +70,8 @@ class DocumentType(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
 
     provided_by: Mapped[str] = mapped_column(String(16))
+    context: Mapped[str] = mapped_column(String(16))
+    issued_by_options: Mapped[list[str]] = mapped_column(ARRAY(String(16)))
 
     # Formatos aceptados POR TIPO, no una lista global (ADR-0003 + ADR-0009):
     # solo el packing list admite hoja de cálculo.
@@ -66,7 +84,12 @@ class DocumentType(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(server_default=text("true"))
 
     __table_args__ = (
-        CheckConstraint("provided_by IN ('CLIENT', 'STAFF')", name="provided_by_valido"),
+        CheckConstraint(
+            "provided_by IN ('CLIENT', 'STAFF', 'CLIENT_OR_STAFF')",
+            name="provided_by_valido",
+        ),
+        CheckConstraint("context IN ('SHIPMENT', 'DISPATCH')", name="contexto_valido"),
+        CheckConstraint("cardinality(issued_by_options) > 0", name="al_menos_un_emisor"),
         CheckConstraint("cardinality(allowed_formats) > 0", name="al_menos_un_formato"),
     )
 
@@ -113,6 +136,7 @@ class Document(Base):
     sha256: Mapped[str] = mapped_column(String(64))
 
     upload_status: Mapped[str] = mapped_column(String(20))
+    issued_by: Mapped[str] = mapped_column(String(16))
 
     # ADR-0007: los archivos NO se eliminan. A los 6 meses se recomprimen y se
     # archivan; estas columnas dejan trazabilidad de cuánto se redujo.
@@ -126,6 +150,8 @@ class Document(Base):
     # Invalidación lógica (ADR-0004): el archivo sigue existiendo, deja de
     # aparecer en el uso normal.
     deleted_at: Mapped[datetime | None]
+    invalidated_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    invalidation_reason: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint(
@@ -134,6 +160,14 @@ class Document(Base):
         ),
         CheckConstraint("size_bytes > 0", name="archivo_no_vacio"),
         CheckConstraint("length(sha256) = 64", name="sha256_completo"),
+        CheckConstraint(
+            "issued_by IN ('PROVIDER', 'CLIENT', 'AMVARMAR', 'CARRIER', 'AUTHORITY', 'OTHER')",
+            name="issued_by_valido",
+        ),
+        CheckConstraint(
+            "deleted_at IS NULL OR invalidation_reason IS NOT NULL",
+            name="invalidacion_exige_motivo",
+        ),
         Index("ix_documents_empresa_creacion", "company_id", text("created_at DESC")),
         # Para detectar duplicados dentro de una empresa sin recorrer todo.
         Index("ix_documents_empresa_hash", "company_id", "sha256"),

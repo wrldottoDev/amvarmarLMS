@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -24,6 +24,7 @@ from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
 from app.modules.documents import service
+from app.modules.documents.models import DocumentContext, IssuedBy
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
 from app.modules.shipments.queries import alcance_de_lectura
@@ -37,15 +38,13 @@ ActorDep = Annotated[Actor, Depends(actor_actual)]
 
 class PresignRequest(BaseModel):
     document_type_id: UUID
+    issued_by: IssuedBy
     # El nombre original se conserva para mostrárselo al usuario; el que se usa
     # al servir se saneó aparte (`safe_name`).
     original_name: str = Field(min_length=1, max_length=255)
 
 
 class PresignResponse(BaseModel):
-    # `shipment_id` va en la respuesta porque al adjuntar un documento a un
-    # despacho quien llama no sabe a qué carga quedó ligado, y lo necesita para
-    # llamar a `complete`.
     """El cliente sube con `PUT` a `upload_url` y después llama a `complete`.
 
     `storage_key` NO se devuelve: es detalle interno y exponerlo daría una pista
@@ -53,7 +52,6 @@ class PresignResponse(BaseModel):
     """
 
     document_id: UUID
-    shipment_id: UUID
     upload_url: str
     expires_in_seconds: int
     max_bytes: int
@@ -65,9 +63,6 @@ class CompleteRequest(BaseModel):
 
 class CompleteResponse(BaseModel):
     document_id: UUID
-    media_type: str
-    size_bytes: int
-    sha256: str
     upload_status: str
 
 
@@ -80,6 +75,38 @@ class DownloadResponse(BaseModel):
 
 def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+def _encolar_documento(document_id: UUID) -> None:
+    # Import local para evitar cargar Celery durante la generación de OpenAPI.
+    from app.workers.tasks.documents import encolar_procesamiento
+
+    encolar_procesamiento(document_id)
+
+
+async def _confirmar_y_encolar(
+    db: AsyncSession,
+    *,
+    document_id: UUID,
+) -> None:
+    """Publica después del commit y revierte PROCESSING si el broker no acepta."""
+    await db.commit()
+    try:
+        _encolar_documento(document_id)
+    except Exception as error:
+        await db.execute(
+            text("""
+                UPDATE documents SET upload_status = 'UPLOADING'
+                WHERE id = :id AND upload_status = 'PROCESSING'
+            """),
+            {"id": document_id},
+        )
+        await db.commit()
+        raise ErrorDeAplicacion(
+            "No fue posible iniciar el procesamiento. Intente completar la subida nuevamente.",
+            code="DOCUMENT_PROCESSING_UNAVAILABLE",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        ) from error
 
 
 async def _empresa_de_la_carga(
@@ -131,21 +158,15 @@ async def preparar_subida(
     permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
     company_id = await _empresa_de_la_carga(db, shipment_id, permisos)
 
-    # Cualquiera de los dos permisos habilita subir: el cliente sube los suyos,
-    # Operaciones además los internos (packing list, BL).
-    if not (
-        permisos.permite(Perm.DOCUMENTS_UPLOAD_CLIENT, company_id=company_id)
-        or permisos.permite(Perm.DOCUMENTS_UPLOAD_INTERNAL, company_id=company_id)
-    ):
-        raise RecursoNoEncontrado("Carga no encontrada.")
-
     subida = await service.preparar_subida(
         db,
         shipment_id=shipment_id,
         document_type_id=datos.document_type_id,
+        issued_by=datos.issued_by.value,
         original_name=datos.original_name,
         company_id=company_id,
         actor_user_id=actor.user_id,
+        permisos=permisos,
     )
 
     await registrar(
@@ -164,14 +185,17 @@ async def preparar_subida(
 
     return PresignResponse(
         document_id=subida.document_id,
-        shipment_id=shipment_id,
         upload_url=subida.upload_url,
         expires_in_seconds=TTL_SUBIDA_SEGUNDOS,
         max_bytes=subida.max_bytes,
     )
 
 
-@router.post("/shipments/{shipment_id}/documents/complete", response_model=CompleteResponse)
+@router.post(
+    "/shipments/{shipment_id}/documents/complete",
+    response_model=CompleteResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def completar_subida(
     shipment_id: UUID,
     datos: CompleteRequest,
@@ -180,7 +204,7 @@ async def completar_subida(
     db: SesionDb,
     redis: RedisDep,
 ) -> CompleteResponse:
-    """Segundo tiempo: verifica lo que realmente se subió.
+    """Valida metadata y cabecera; el worker calcula el hash por bloques.
 
     Si algo falla, el documento queda en `FAILED`, el objeto se borra y el
     intento queda auditado: una subida rechazada suele ser un error del cliente,
@@ -190,8 +214,12 @@ async def completar_subida(
     company_id = await _empresa_de_la_carga(db, shipment_id, permisos)
 
     try:
-        resultado = await service.completar(
-            db, document_id=datos.document_id, company_id=company_id
+        resultado = await service.preparar_procesamiento(
+            db,
+            document_id=datos.document_id,
+            company_id=company_id,
+            context=DocumentContext.SHIPMENT.value,
+            resource_id=shipment_id,
         )
     except ErrorDeAplicacion as error:
         # Solo errores de dominio: un fallo de infraestructura dejaría la
@@ -207,34 +235,24 @@ async def completar_subida(
             reason=error.message,
             ip_address=_ip(request),
         )
-        # El rechazo y la marca de FAILED sí se confirman; el archivo ya se
-        # borró del storage dentro del servicio.
+        # El rechazo y la marca de FAILED sí se confirman.
         await db.commit()
         raise
 
     await registrar(
         db,
-        action="document.upload.completed",
+        action="document.processing.queued",
         resource_type="document",
         resource_id=datos.document_id,
         actor_user_id=actor.user_id,
         company_id=company_id,
-        after_data={
-            "media_type": resultado.media_type,
-            "size_bytes": resultado.size_bytes,
-            # El SHA-256 es la huella que permite verificar que el archivo no
-            # cambió después. No es un secreto.
-            "sha256": resultado.sha256,
-        },
+        after_data={"upload_status": resultado.upload_status},
         ip_address=_ip(request),
     )
-    await db.commit()
+    await _confirmar_y_encolar(db, document_id=datos.document_id)
 
     return CompleteResponse(
         document_id=resultado.document_id,
-        media_type=resultado.media_type,
-        size_bytes=resultado.size_bytes,
-        sha256=resultado.sha256,
         upload_status=resultado.upload_status,
     )
 
@@ -318,6 +336,8 @@ class TipoDocumentoResponse(BaseModel):
     label: str
     description: str | None
     provided_by: str
+    context: str
+    issued_by_options: list[str]
     allowed_formats: list[str]
 
 
@@ -347,12 +367,18 @@ async def expediente_de_carga(
         # 404 y no 403: confirmar que la carga existe ya es información.
         raise RecursoNoEncontrado("Carga no encontrada.")
 
+    company_id = await _empresa_de_la_carga(db, shipment_id, permisos)
     datos = await service.expediente(
         db,
         shipment_id=shipment_id,
         company_ids=None if alcance.global_ else alcance.company_ids,
     )
-    tipos = await service.tipos_de_documento(db)
+    tipos = await service.tipos_de_documento(
+        db,
+        context=DocumentContext.SHIPMENT.value,
+        permisos=permisos,
+        company_id=company_id,
+    )
 
     return ExpedienteResponse(
         requisitos=[RequisitoResponse(**vars(r)) for r in datos.requisitos],
@@ -364,11 +390,37 @@ async def expediente_de_carga(
                 label=t.label,
                 description=t.description,
                 provided_by=t.provided_by,
+                context=t.context,
+                issued_by_options=list(t.issued_by_options),
                 allowed_formats=list(t.allowed_formats),
             )
             for t in tipos
         ],
     )
+
+
+@router.get("/document-types", response_model=list[TipoDocumentoResponse])
+async def catalogo_de_tipos_documentales(
+    context: DocumentContext,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> list[TipoDocumentoResponse]:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    tipos = await service.tipos_de_documento(db, context=context.value, permisos=permisos)
+    return [
+        TipoDocumentoResponse(
+            id=t.id,
+            code=t.code,
+            label=t.label,
+            description=t.description,
+            provided_by=t.provided_by,
+            context=t.context,
+            issued_by_options=list(t.issued_by_options),
+            allowed_formats=list(t.allowed_formats),
+        )
+        for t in tipos
+    ]
 
 
 class RenombrarDocumentoRequest(BaseModel):
@@ -432,6 +484,7 @@ async def invalidar_documento(
     actor: ActorDep,
     db: SesionDb,
     redis: RedisDep,
+    motivo: Annotated[str, Query(min_length=3, max_length=1000)],
 ) -> None:
     """Saca un documento del expediente.
 
@@ -453,10 +506,12 @@ async def invalidar_documento(
     if alcance.no_ve_nada:
         raise RecursoNoEncontrado("Documento no encontrado.")
 
-    carga = await service.invalidar(
+    resultado = await service.invalidar(
         db,
         document_id=document_id,
         company_ids=None if alcance.global_ else alcance.company_ids,
+        actor_user_id=actor.user_id,
+        motivo=motivo,
     )
 
     await registrar(
@@ -465,8 +520,11 @@ async def invalidar_documento(
         resource_type="document",
         resource_id=document_id,
         actor_user_id=actor.user_id,
-        after_data={"shipment_id": str(carga)},
-        reason="Quitado del expediente. El archivo sigue en el storage.",
+        after_data={
+            "context": resultado.context,
+            "resource_id": str(resultado.resource_id),
+        },
+        reason=motivo,
         ip_address=_ip(request),
     )
     await db.commit()
@@ -579,22 +637,15 @@ async def presign_documento_de_despacho(
     if alcance.no_ve_nada:
         raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
 
-    # Mismo criterio que al subir a una carga: cualquiera de los dos permisos
-    # habilita. El alcance sobre la empresa lo comprueba el servicio, que es
-    # quien conoce a qué empresa pertenece este despacho.
-    if not any(
-        p.code in (Perm.DOCUMENTS_UPLOAD_CLIENT, Perm.DOCUMENTS_UPLOAD_INTERNAL)
-        for p in permisos.permisos
-    ):
-        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
-
     preparada = await service.preparar_subida_de_despacho(
         db,
         dispatch_id=dispatch_id,
         document_type_id=datos.document_type_id,
+        issued_by=datos.issued_by.value,
         original_name=datos.original_name,
         company_ids=None if alcance.global_ else alcance.company_ids,
         actor_user_id=actor.user_id,
+        permisos=permisos,
     )
 
     await registrar(
@@ -610,10 +661,72 @@ async def presign_documento_de_despacho(
 
     return PresignResponse(
         document_id=preparada.document_id,
-        shipment_id=preparada.shipment_id,
         upload_url=preparada.upload_url,
         expires_in_seconds=TTL_SUBIDA_SEGUNDOS,
         max_bytes=preparada.max_bytes,
+    )
+
+
+@router.post(
+    "/dispatch-requests/{dispatch_id}/documents/complete",
+    response_model=CompleteResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def completar_documento_de_despacho(
+    dispatch_id: UUID,
+    datos: CompleteRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> CompleteResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+    if alcance.no_ve_nada:
+        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+
+    company_id = await service.empresa_de_despacho_visible(
+        db,
+        dispatch_id=dispatch_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+    try:
+        resultado = await service.preparar_procesamiento(
+            db,
+            document_id=datos.document_id,
+            company_id=company_id,
+            context=DocumentContext.DISPATCH.value,
+            resource_id=dispatch_id,
+        )
+    except ErrorDeAplicacion as error:
+        await registrar(
+            db,
+            action="dispatch.document.upload.rejected",
+            resource_type="document",
+            resource_id=datos.document_id,
+            actor_user_id=actor.user_id,
+            company_id=company_id,
+            outcome=Outcome.FAILED,
+            reason=error.message,
+            ip_address=_ip(request),
+        )
+        await db.commit()
+        raise
+
+    await registrar(
+        db,
+        action="dispatch.document.processing.queued",
+        resource_type="document",
+        resource_id=datos.document_id,
+        actor_user_id=actor.user_id,
+        company_id=company_id,
+        after_data={"dispatch_id": str(dispatch_id)},
+        ip_address=_ip(request),
+    )
+    await _confirmar_y_encolar(db, document_id=datos.document_id)
+    return CompleteResponse(
+        document_id=resultado.document_id,
+        upload_status=resultado.upload_status,
     )
 
 
