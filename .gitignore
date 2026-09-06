@@ -76,6 +76,7 @@ uploads/
 storage/
 !backend/app/infrastructure/storage/
 !backend/app/infrastructure/storage/**
+backend/app/infrastructure/storage/__pycache__/
 minio-data/
 pgdata/
 postgres-data/
