@@ -99,10 +99,14 @@ body.theme-dark {
 
 html {
   min-width: 320px;
+  max-width: 100%;
+  overflow-x: clip;
   background: var(--fondo);
 }
 
 body {
+  max-width: 100%;
+  overflow-x: clip;
   min-height: 100vh;
   margin: 0;
   background: var(--fondo);
