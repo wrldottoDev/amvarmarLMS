@@ -1,6 +1,6 @@
 # Guía completa del código de AMVARMAR LMS
 
-Estado leído: 25 de agosto de 2026.
+Estado leído: 25 de agosto de 2026, actualizado el 2 de septiembre de 2026 (ver sección 12).
 
 Esta guía describe el proyecto nuevo `amvarmarLMS`. No describe como código activo el WMS
 legacy de Django: ese sistema solo es el origen de los datos y está conservado en
@@ -304,7 +304,7 @@ Cada archivo de `docs/adr/` congela una decisión que prevalece sobre la arquite
 | `modules/admin/router.py` | API para listar/crear/editar/desactivar empresas y usuarios. |
 | `modules/admin/service.py` | Aplica alcance RBAC, memberships, roles, desactivación y reset administrativo. |
 
-No existen aún páginas frontend para esta API administrativa.
+Interfaz frontend en `app/(admin)/empresas/page.tsx` y `app/(admin)/usuarios/page.tsx`.
 
 ### Auditoría y outbox
 
@@ -328,6 +328,7 @@ No existen aún páginas frontend para esta API administrativa.
 | `modules/shipments/queries.py` | Listado, detalle, timeline y dashboard con aislamiento en SQL. |
 | `modules/shipments/router.py` | Contrato HTTP para CRUD, transiciones, requisitos y lecturas. |
 | `modules/shipments/dashboard_router.py` | Dashboards cliente/operaciones reutilizando `queries.py`. |
+| `modules/shipments/peso.py` | Conversión canónica kg/lb con `Decimal` y redondeo uniforme a tres decimales. |
 
 ### Documentos
 
@@ -399,6 +400,15 @@ Los `__init__.py` están vacíos salvo el de security; marcan paquetes Python y 
 | `99010939fc42` | Estado, deduplicación e índices del outbox. |
 | `f6d833ce5fed` | Notificaciones y entregas. |
 | `f28bcab77643` | Mapeo de migración y passwords legacy pendientes. |
+| `d82146036c33` | Campos comerciales del sistema legacy y ocultamiento de cargas. |
+| `d98e024bf210` | Preferencias de columnas por usuario. |
+| `1f93eb9be376` | Retira el escaneo antivirus de documentos. |
+| `8d73b0b79c53` | Retira `PICKUP` de los métodos de despacho (ADR-0016). |
+| `f9329a7c5d0f` | Piezas obligatorias y `package_count` consistente. |
+| `4c2a6e91d7b8` | Peso canónico (fuente kg/lb) y búsqueda de referencias (índices trigram). |
+| `7a31c4f09d22` | Contexto y seguridad documental (`provided_by` vs `issued_by`). |
+| `6f0f9c2be8d1` | Salida física del despacho (`DISPATCHED` alcanzable). |
+| `d8e4f7a12c30` | Trabajos de exportación documental (ZIP asíncrono). |
 
 `backend/alembic/env.py` importa todos los modelos para que autogenerate/check conozcan el esquema.
 `alembic.ini`, `alembic/README` y `script.py.mako` configuran el entorno y plantilla de revisiones.
@@ -545,34 +555,43 @@ Los `__init__.py` de pruebas solo marcan paquetes.
 
 ## 12. Hallazgos importantes del estado actual
 
-Estos puntos describen el árbol leído; no se corrigieron como parte de esta guía:
+Estado leído: 2 de septiembre de 2026, tras la verificación operativa registrada en
+`docs/reescritura/06-implementacion-y-verificacion.md`. Ver ese documento para evidencia y conteos
+exactos.
 
-1. **`backend/app/infrastructure/storage/` está ignorado por Git.** La regla genérica
-   `storage/` de `.gitignore` alcanza también al código fuente `storage/s3.py`. El backend local lo
-   puede importar, pero un clon nuevo no recibirá ese módulo y fallará al importar documentos o
-   workers.
-2. **Hay trabajo nuevo sin commit.** Administración, migración legacy, varias pantallas frontend y
-   su migración Alembic aparecen como cambios locales. Esta guía los trata como código actual, pero
-   aún no forman parte de una versión reproducible del repositorio.
-3. **La administración contradice la política de invitaciones.** `admin/service.py` genera y
-   devuelve contraseñas temporales, aunque el Paso 1.5 y la arquitectura prohíben enviarlas y piden
-   enlaces de invitación de un solo uso.
-4. **Los estados administrativos de empresa no coinciden con la tabla.** El modelo acepta
-   `ACTIVE`, `SUSPENDED`, `CLOSED`, mientras router/service usan también `INACTIVE`; PostgreSQL lo
-   rechazará.
-5. **Recuperación todavía no entrega el enlace.** `password_forgot` crea el token, pero no publica
-   un evento de outbox ni manda el correo. La pantalla existe, pero el usuario no recibe el token.
-6. **Hay rutas de correo que no existen en Next.** El catálogo construye `/cargas/{id}` y
-   `/cuenta/seguridad`; el frontend real usa `/shipments/{id}` y `/sesiones`. La bandeja in-app sí
-   corrige la primera mediante `features/notificaciones/rutas.ts`, pero el correo no.
-7. **La API admin no tiene interfaz.** Está montada en FastAPI, pero PortalShell no enlaza pantallas
-   de empresas/usuarios y esas páginas no existen todavía.
+Resuelto desde la lectura anterior (25 de agosto de 2026):
+
+1. **`backend/app/infrastructure/storage/`.** `.gitignore` ahora tiene una excepción explícita
+   (`!backend/app/infrastructure/storage/` y `/**`) para el código fuente; un clon nuevo sí recibe
+   `storage/s3.py` y `storage/__init__.py`.
+2. **Rutas de correo.** `notifications/catalog.py` usa `/shipments/{id}` y `/sesiones` en todos los
+   eventos; no quedan rutas `/cargas/{id}` ni `/cuenta/seguridad`.
+3. **La API admin ya tiene interfaz.** `app/(admin)/empresas/page.tsx` y
+   `app/(admin)/usuarios/page.tsx` existen y están montadas bajo `PortalShell`.
+4. **Estado de usuario `DISABLED` inexistente.** `ActualizarUsuarioRequest.status` en
+   `admin/router.py` aceptaba `DISABLED`, un valor que el `CHECK` de `users.status`
+   (`INVITED`, `ACTIVE`, `SUSPENDED`) nunca tuvo; una actualización con ese valor rompía en el
+   `UPDATE` con un error de integridad no controlado. Corregido: el patrón ahora es
+   `^(ACTIVE|SUSPENDED)$` y `admin/service.py` ya no referencia `DISABLED`.
+5. **Migrador legacy.** `scripts/migrate_legacy.py` (1249 líneas) existe y migra empresas, usuarios,
+   cargas, bultos, despachos y metadata documental; no es un paso pendiente.
+
+Siguen abiertos, y quedan fuera de esta corrección porque tocan la política de contraseñas o
+exceden el alcance de un defecto puntual:
+
+6. **La administración contradice la política de invitaciones.** `admin/service.py` genera y
+   devuelve contraseñas temporales en `UsuarioCreadoResponse.password_temporal`, aunque la
+   arquitectura pide enlaces de invitación de un solo uso. Es parte de la política administrativa de
+   contraseñas, fuera de alcance de la reescritura operativa.
+7. **Recuperación todavía no entrega el enlace.** `password_forgot` crea el token, pero no publica
+   un evento de outbox ni manda el correo. Mismo motivo: es flujo de autenticación, fuera de alcance.
 8. **`rbac/dependencies.py` quedó obsoleto.** Su `_user_id_actual()` siempre responde 401. No rompe
    los routers actuales porque estos usan `auth.dependencies.actor_actual`, pero no debe reutilizarse
-   sin actualizarlo.
+   sin actualizarlo. Es código de autenticación; no se toca en esta corrección.
 9. **Los hooks de acciones de despacho no envían `row_version`.** El backend lo acepta como
-   opcional, por lo que actualmente esas acciones no aprovechan el bloqueo optimista que muestra el
-   detalle.
+   opcional, por lo que esas acciones no aprovechan el bloqueo optimista que sí muestra el detalle
+   de carga. No es una regresión de datos (el backend sigue siendo la fuente de verdad), es una
+   mejora de UX pendiente.
 10. **La observabilidad asume servicios externos.** Prometheus apunta a `backend:8000` y a exporters
     que no están definidos en este compose; esa topología debe completarse en el despliegue.
 

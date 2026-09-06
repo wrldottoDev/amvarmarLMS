@@ -70,15 +70,16 @@ los WR mal capturados, con el contexto para decidir uno por uno.
 
 ## 3. Ver los datos viejos DENTRO del sistema nuevo
 
-Esto todavía no se puede: hace falta el migrador, que es el **Paso 5.2** y aún
-no está construido. El orden es:
+El orden es:
 
 1. **5.1** — corregir en el sistema viejo lo que impide migrar (nueve usuarios
    con correos vacíos o duplicados, diecisiete cargas sin cliente). Los scripts
    están en `docs/migration/correcciones/` y probados; falta tomar las
    decisiones y ejecutarlos.
-2. **5.2** — el migrador con `legacy_id_map` y modo `--dry-run`, que traduce
-   `core_warehouse` a `shipments` y todo lo demás.
+2. **5.2** — el migrador. **Ya está construido**: `backend/scripts/migrate_legacy.py`
+   lee el esquema Django con psycopg, escribe el LMS con SQLAlchemy, usa
+   `legacy_id_map` para ser repetible y admite `--dry-run`. Traduce
+   `core_warehouse` a `shipments` y el resto de las tablas relevantes.
 3. **5.3** — subir los archivos de `media/` al storage privado. **Ya está
    construido**, ver abajo. Son casi 10 GB: es la etapa larga en tiempo de
    ejecución.
@@ -91,13 +92,12 @@ correr.
 
 ## Qué muestra hoy la interfaz
 
-Está construida hasta la Fase 2. Funciona el inicio de sesión, la recuperación
-de contraseña, el tablero, el listado y detalle de cargas con su línea de
-tiempo, y las sesiones activas.
-
-**Falta interfaz** para lo de Fase 3 y 4, aunque la API ya lo tiene: despachos,
-subida y descarga de documentos, requisitos documentales y bandeja de
-notificaciones.
+Funciona el inicio de sesión, la recuperación de contraseña, el tablero, el
+listado y detalle de cargas con su línea de tiempo, piezas y peso, las
+sesiones activas, subida/descarga de documentos con requisitos documentales,
+despachos completos (creación, aprobación, preparación, despacho, cierre) con
+sus propios documentos, exportaciones ZIP asíncronas, la bandeja de
+notificaciones y la administración de empresas/usuarios.
 
 ## Paso 5.3 — subir los archivos del sistema viejo
 
