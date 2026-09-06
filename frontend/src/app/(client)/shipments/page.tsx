@@ -2,14 +2,20 @@
 
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Boxes, Download, PackagePlus } from "lucide-react";
-import { useMemo, useState } from "react";
-import { FiltrosCargas, filtrosIniciales, type FiltrosCarga } from "@/components/shipments/filtros-cargas";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useMemo, useState } from "react";
+import {
+  FiltrosCargas,
+  filtrosDesdeParametros,
+  parametrosDeFiltros,
+  type FiltrosCarga,
+} from "@/components/shipments/filtros-cargas";
 import { ListadoCargas } from "@/components/shipments/listado-cargas";
 import { SelectorColumnas } from "@/components/shipments/selector-columnas";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
-import Link from "next/link";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
 
@@ -30,10 +36,40 @@ export default function PaginaCargas({
    * lectura — sin alta, sin cambio de estado. */
   archivadas?: boolean;
 }) {
-  const [filtros, setFiltros] = useState<FiltrosCarga>(filtrosIniciales);
+  return (
+    <Suspense fallback={<CargandoPagina texto="Preparando cargas" />}>
+      <ContenidoCargas inventario={inventario} archivadas={archivadas} />
+    </Suspense>
+  );
+}
+
+function ContenidoCargas({
+  inventario,
+  archivadas,
+}: {
+  inventario: boolean;
+  archivadas: boolean;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const cadenaParametros = searchParams.toString();
+  const filtros = useMemo(
+    () => filtrosDesdeParametros(new URLSearchParams(cadenaParametros)),
+    [cadenaParametros],
+  );
   const [verOcultas, setVerOcultas] = useState(false);
   const { usuario } = useSesion();
   const esCliente = Boolean(usuario?.empresa);
+  const puedeCrear = usuario?.permisos.includes("shipments.create");
+
+  const aplicarFiltros = useCallback(
+    (nuevos: FiltrosCarga) => {
+      const parametros = parametrosDeFiltros(nuevos).toString();
+      router.replace(parametros ? `${pathname}?${parametros}` : pathname, { scroll: false });
+    },
+    [pathname, router],
+  );
 
   const consulta = useInfiniteQuery({
     queryKey: ["cargas", filtros, inventario, archivadas, verOcultas],
@@ -53,6 +89,13 @@ export default function PaginaCargas({
               eta_from: inicioDia(filtros.etaDesde),
               eta_to: finalDia(filtros.etaHasta),
               q: filtros.q || undefined,
+              shipment_number: filtros.shipmentNumber || undefined,
+              wr: filtros.wr || undefined,
+              shipper: filtros.shipper || undefined,
+              carrier: filtros.carrier || undefined,
+              reference: filtros.reference || undefined,
+              reference_type: filtros.referenceType || undefined,
+              company_id: filtros.companyId || undefined,
               only_archived: archivadas || undefined,
             },
           },
@@ -82,7 +125,7 @@ export default function PaginaCargas({
                 : `${cargas.length} cargadas en esta vista`}
           </p>
         </div>
-        {archivadas ? null : usuario?.empresa ? (
+        {archivadas ? null : !puedeCrear ? (
           <span className="hidden size-11 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)] sm:grid">
             <Boxes className="size-5" aria-hidden="true" />
           </span>
@@ -101,7 +144,12 @@ export default function PaginaCargas({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex-1">
-          <FiltrosCargas aplicar={setFiltros} />
+          <FiltrosCargas
+            key={cadenaParametros}
+            valor={filtros}
+            aplicar={aplicarFiltros}
+            mostrarEmpresa={!esCliente}
+          />
         </div>
         <div className="flex items-center gap-2">
           {esCliente ? null : (

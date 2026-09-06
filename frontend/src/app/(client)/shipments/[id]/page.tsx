@@ -1,9 +1,24 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Archive, ArrowLeft, ArrowRight, CalendarDays, MapPin, Package, Pencil, Route, Ship, Tag } from "lucide-react";
+import {
+  Archive,
+  ArrowLeft,
+  ArrowRight,
+  CalendarDays,
+  FileText,
+  History,
+  LayoutList,
+  MapPin,
+  Package,
+  Pencil,
+  Route,
+  Ship,
+  Tag,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useState } from "react";
 import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carga";
 import { TimelineCarga } from "@/components/shipments/timeline-carga";
 import { TransicionCarga } from "@/components/shipments/transicion-carga";
@@ -46,6 +61,7 @@ export default function PaginaDetalleCarga() {
   const parametros = useParams<{ id: string }>();
   const cargaId = parametros.id;
   const { usuario } = useSesion();
+  const [vista, setVista] = useState<"resumen" | "documentos" | "historial">("resumen");
   const consulta = useQuery({
     queryKey: ["carga", cargaId],
     queryFn: async () =>
@@ -141,13 +157,42 @@ export default function PaginaDetalleCarga() {
         </div>
       </header>
 
-      <Expediente
-        cargaId={carga.id}
-        esCliente={Boolean(usuario?.empresa)}
-        soloLectura={Boolean(carga.archived_at)}
-      />
+      <nav className="flex overflow-x-auto border-b" aria-label="Secciones de la carga">
+        {(
+          [
+            ["resumen", "Resumen", LayoutList],
+            ["documentos", "Documentos", FileText],
+            ["historial", "Historial", History],
+          ] as const
+        ).map(([valor, etiqueta, Icono]) => (
+          <button
+            key={valor}
+            type="button"
+            onClick={() => setVista(valor)}
+            aria-current={vista === valor ? "page" : undefined}
+            className={`flex h-11 shrink-0 items-center gap-2 border-b-2 px-4 text-sm font-semibold ${
+              vista === valor
+                ? "border-[var(--marca)] text-[var(--mar)]"
+                : "border-transparent text-[var(--texto-secundario)] hover:text-[var(--texto)]"
+            }`}
+          >
+            <Icono className="size-4" aria-hidden="true" />
+            {etiqueta}
+          </button>
+        ))}
+      </nav>
 
-      <section aria-labelledby="ruta-carga">
+      {vista === "documentos" ? (
+        <Expediente
+          cargaId={carga.id}
+          esCliente={Boolean(usuario?.empresa)}
+          soloLectura={Boolean(carga.archived_at)}
+        />
+      ) : null}
+
+      {vista === "resumen" ? (
+        <>
+          <section aria-labelledby="ruta-carga">
         <div className="mb-4 flex items-center gap-2">
           <Route className="size-5 text-[var(--marca)]" aria-hidden="true" />
           <h2 id="ruta-carga" className="text-base font-bold">Ruta</h2>
@@ -167,9 +212,9 @@ export default function PaginaDetalleCarga() {
             <p className="mt-1 text-sm text-[var(--texto-secundario)]">{carga.destination.location_code} · {carga.destination.country_code}</p>
           </div>
         </div>
-      </section>
+          </section>
 
-      <section className="grid gap-8 xl:grid-cols-2">
+          <section className="grid gap-8 xl:grid-cols-2">
         <div>
           <h2 className="border-b pb-3 text-base font-bold">Datos de la carga</h2>
           <dl className="grid grid-cols-2 divide-x border-b">
@@ -265,12 +310,18 @@ export default function PaginaDetalleCarga() {
             <span>Versión {carga.row_version}</span>
           </div>
         </div>
-      </section>
+          </section>
+        </>
+      ) : null}
 
-      <section className="border-t pt-7" aria-labelledby="historial-carga">
-        <h2 id="historial-carga" className="mb-6 text-base font-bold">Línea de tiempo</h2>
-        <TimelineCarga cargaId={carga.id} />
-      </section>
+      {vista === "historial" ? (
+        <section aria-labelledby="historial-carga">
+          <h2 id="historial-carga" className="mb-6 text-base font-bold">
+            Línea de tiempo
+          </h2>
+          <TimelineCarga cargaId={carga.id} />
+        </section>
+      ) : null}
     </div>
   );
 }

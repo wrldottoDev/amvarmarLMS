@@ -3,6 +3,7 @@
 import { ArrowRight, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { BadgeEstado, BadgePendientes } from "./badges-carga";
+import { TransicionCarga } from "./transicion-carga";
 import {
   columnasNumericas,
   contenidoColumna,
@@ -30,13 +31,13 @@ export function ListadoCargas({
   cargas,
   esCliente,
   empresaVisible = false,
+  soloLectura = false,
 }: {
   cargas: CargaResumen[];
   esCliente: boolean;
   empresaVisible?: boolean;
-  /** Historial de despachos (ADR-0007): reservado para cuando el badge de
-   * estado sea interactivo — hoy siempre se ve como acá, así que no cambia
-   * nada todavía. */
+  /** Historial de despachos (ADR-0007): una carga archivada no admite cambios
+   * de estado, así que el badge de estado no abre el modal de transición. */
   soloLectura?: boolean;
 }) {
   const { data: preferencia } = usePreferenciaColumnas();
@@ -52,7 +53,7 @@ export function ListadoCargas({
   return (
     <>
       <div className="hidden overflow-hidden rounded-lg border bg-[var(--superficie)] md:block">
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead className="border-b bg-[var(--hover)] text-xs font-bold uppercase text-[var(--texto-secundario)]">
               <tr>
@@ -86,7 +87,7 @@ export function ListadoCargas({
                         columnasNumericas.has(clave) && "text-right tabular-nums",
                       )}
                     >
-                      <Celda clave={clave} carga={carga} esCliente={esCliente} />
+                      <Celda clave={clave} carga={carga} esCliente={esCliente} soloLectura={soloLectura} />
                     </td>
                   ))}
                   <td className="px-3 py-3.5">
@@ -111,22 +112,30 @@ export function ListadoCargas({
       <ul className="grid gap-2 md:hidden">
         {cargas.map((carga) => (
           <li key={carga.id}>
-            <Link
-              href={`/shipments/${carga.id}`}
+            <div
               className={clases(
                 "flex items-center gap-3 rounded-lg border bg-[var(--superficie)] px-4 py-3.5",
                 carga.hidden_at && "opacity-55",
               )}
             >
-              <span className="min-w-0 flex-1">
+              <Link href={`/shipments/${carga.id}`} className="min-w-0 flex-1">
                 <strong className="block text-sm">{referencia(carga)}</strong>
                 <span className="block text-xs text-[var(--texto-secundario)]">
                   {carga.origin.location_code} → {carga.destination.location_code} ·{" "}
                   {formatearFecha(carga.created_at)}
                 </span>
-              </span>
-              <BadgeEstado estado={carga.status} />
-            </Link>
+              </Link>
+              {soloLectura ? (
+                <BadgeEstado estado={carga.status} />
+              ) : (
+                <TransicionCarga
+                  cargaId={carga.id}
+                  estado={carga.status}
+                  rowVersion={carga.row_version}
+                  modo="badge"
+                />
+              )}
+            </div>
           </li>
         ))}
       </ul>
@@ -138,10 +147,12 @@ function Celda({
   clave,
   carga,
   esCliente,
+  soloLectura,
 }: {
   clave: string;
   carga: CargaResumen;
   esCliente: boolean;
+  soloLectura: boolean;
 }) {
   if (clave === "identificador") {
     return (
@@ -162,7 +173,18 @@ function Celda({
     );
   }
 
-  if (clave === "estado") return <BadgeEstado estado={carga.status} />;
+  if (clave === "estado") {
+    return soloLectura ? (
+      <BadgeEstado estado={carga.status} />
+    ) : (
+      <TransicionCarga
+        cargaId={carga.id}
+        estado={carga.status}
+        rowVersion={carga.row_version}
+        modo="badge"
+      />
+    );
+  }
   if (clave === "pendientes")
     return <BadgePendientes cantidad={cantidadPendiente(carga, esCliente)} />;
 
