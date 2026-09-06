@@ -14,9 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.errors import RecursoNoEncontrado
 from app.modules.dispatches import service
 from app.modules.dispatches.models import DispatchMethod, DispatchStatus
+from app.modules.dispatches.router import _detalle
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments.models import ShipmentStatus
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -105,7 +107,7 @@ async def _ubicacion(session: AsyncSession, pais: str, ciudad: str, nombre: str)
 async def _carga_almacenada(
     session: AsyncSession, ctx: dict, *, empresa: str = "empresa"
 ) -> uuid.UUID:
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
@@ -121,6 +123,9 @@ async def _carga_almacenada(
             },
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _permisos(session: AsyncSession, redis, user_id: uuid.UUID):
@@ -146,6 +151,40 @@ async def _estado_carga(session: AsyncSession, shipment_id: uuid.UUID) -> str:
             text("SELECT current_status_code FROM shipments WHERE id = :id"), {"id": shipment_id}
         )
     ).scalar_one()
+
+
+async def _agregar_bl_listo(session: AsyncSession, ctx: dict, dispatch_id: uuid.UUID) -> uuid.UUID:
+    tipo = (
+        await session.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
+    ).scalar_one()
+    documento = (
+        await session.execute(
+            text("""
+                INSERT INTO documents
+                    (company_id, uploaded_by, storage_provider, storage_key,
+                     original_name, safe_name, media_type, size_bytes, sha256,
+                     upload_status, issued_by)
+                VALUES (:c, :u, 's3', :key, 'bl.pdf', 'bl.pdf',
+                        'application/pdf', 10, :sha, 'READY', 'CARRIER')
+                RETURNING id
+            """),
+            {
+                "c": ctx["empresa"],
+                "u": ctx["operaciones"],
+                "key": f"test/bl-{uuid.uuid4()}.pdf",
+                "sha": "b" * 64,
+            },
+        )
+    ).scalar_one()
+    await session.execute(
+        text("""
+            INSERT INTO dispatch_documents
+                (dispatch_request_id, document_id, document_type_id)
+            VALUES (:d, :doc, :tipo)
+        """),
+        {"d": dispatch_id, "doc": documento, "tipo": tipo},
+    )
+    return documento
 
 
 class TestMetodosDeTransporte:
@@ -207,6 +246,29 @@ class TestCreacion:
         assert len(eventos) == 1
         assert eventos[0].to_status == DispatchStatus.PENDING
 
+    async def test_el_detalle_incluye_resumenes_de_las_cargas(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga_almacenada(session, ctx)
+        await session.execute(
+            text("""
+                INSERT INTO shipment_references
+                    (shipment_id, reference_type, value, is_primary)
+                VALUES (:carga, 'INVOICE', 'FAC-DETALLE-001', true)
+            """),
+            {"carga": carga},
+        )
+        solicitud = await _crear(session, redis, ctx, [carga])
+
+        detalle = await _detalle(session, solicitud.id, None)
+
+        assert detalle.shipment_count == 1
+        assert detalle.shipments[0].id == carga
+        assert detalle.shipments[0].invoice == "FAC-DETALLE-001"
+        assert detalle.shipments[0].status == ShipmentStatus.DISPATCH_REQUESTED
+        assert detalle.shipments[0].package_count == 1
+
     async def test_una_carga_no_almacenada_se_rechaza(self, session: AsyncSession, redis) -> None:
         """Solo se despacha lo que está en bodega."""
         ctx = await _entorno(session)
@@ -247,7 +309,7 @@ class TestCreacion:
 
 
 class TestFlujoCompleto:
-    async def test_aprobar_preparar_completar(self, session: AsyncSession, redis) -> None:
+    async def test_aprobar_preparar_despachar_completar(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         carga = await _carga_almacenada(session, ctx)
         solicitud = await _crear(session, redis, ctx, [carga])
@@ -265,10 +327,52 @@ class TestFlujoCompleto:
         await service.preparar(session, **comun)
         assert await _estado_carga(session, carga) == ShipmentStatus.PREPARING
 
+        despachada = await service.despachar(session, **comun)
+        assert despachada.hacia == DispatchStatus.DISPATCHED
+        assert await _estado_carga(session, carga) == ShipmentStatus.DISPATCHED
+
+        await _agregar_bl_listo(session, ctx, solicitud.id)
         resultado = await service.completar(session, **comun)
 
         assert resultado.hacia == DispatchStatus.COMPLETED
+        # COMPLETED cierra el despacho; DELIVERED sigue siendo de cada carga.
         assert await _estado_carga(session, carga) == ShipmentStatus.DISPATCHED
+        fechas = (
+            await session.execute(
+                text("""
+                    SELECT dispatched_at, completed_at
+                    FROM dispatch_requests WHERE id = :id
+                """),
+                {"id": solicitud.id},
+            )
+        ).one()
+        assert fechas.dispatched_at is not None
+        assert fechas.completed_at is not None
+
+    async def test_completar_exige_un_bl_ready(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga_almacenada(session, ctx)
+        solicitud = await _crear(session, redis, ctx, [carga])
+        comun = {
+            "dispatch_id": solicitud.id,
+            "actor_user_id": ctx["operaciones"],
+            "permisos": await _permisos(session, redis, ctx["operaciones"]),
+            "company_ids": None,
+        }
+        await service.aprobar(session, **comun)
+        await service.preparar(session, **comun)
+        await service.despachar(session, **comun)
+
+        with pytest.raises(service.DespachoSinBL):
+            await service.completar(session, **comun)
+
+        estado = (
+            await session.execute(
+                text("SELECT status FROM dispatch_requests WHERE id = :id"),
+                {"id": solicitud.id},
+            )
+        ).scalar_one()
+        assert estado == DispatchStatus.DISPATCHED
 
     async def test_completar_libera_las_cargas(self, session: AsyncSession, redis) -> None:
         """El despacho terminó: ya no las retiene."""
@@ -284,6 +388,8 @@ class TestFlujoCompleto:
         }
         await service.aprobar(session, **comun)
         await service.preparar(session, **comun)
+        await service.despachar(session, **comun)
+        await _agregar_bl_listo(session, ctx, solicitud.id)
         await service.completar(session, **comun)
 
         liberada = (
@@ -326,6 +432,8 @@ class TestFlujoCompleto:
         }
         await service.aprobar(session, **comun)
         await service.preparar(session, **comun)
+        await service.despachar(session, **comun)
+        await _agregar_bl_listo(session, ctx, solicitud.id)
         await service.completar(session, **comun)
 
         tipos = list(
@@ -342,7 +450,7 @@ class TestFlujoCompleto:
             .all()
         )
 
-        assert tipos == ["CREATED", "APPROVED", "PREPARING", "COMPLETED"]
+        assert tipos == ["CREATED", "APPROVED", "PREPARING", "DISPATCHED", "COMPLETED"]
 
 
 class TestRechazo:
@@ -532,6 +640,46 @@ class TestCancelacion:
         assert resultado.hacia == DispatchStatus.CANCELLED
         assert await _estado_carga(session, carga) == ShipmentStatus.STORED
 
+    async def test_cancelar_en_preparacion_recorre_ambos_retornos(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga_almacenada(session, ctx)
+        solicitud = await _crear(session, redis, ctx, [carga])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
+        comun = {
+            "dispatch_id": solicitud.id,
+            "actor_user_id": ctx["operaciones"],
+            "permisos": permisos,
+            "company_ids": None,
+        }
+        await service.aprobar(session, **comun)
+        await service.preparar(session, **comun)
+
+        await service.cancelar(
+            session,
+            **comun,
+            motivo="El cliente pidió detener la coordinación.",
+        )
+
+        assert await _estado_carga(session, carga) == ShipmentStatus.STORED
+        retornos = list(
+            (
+                await session.execute(
+                    text("""
+                        SELECT to_status_code FROM shipment_events
+                        WHERE shipment_id = :id
+                          AND to_status_code IN ('DISPATCH_REQUESTED', 'STORED')
+                        ORDER BY occurred_at, id
+                    """),
+                    {"id": carga},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert retornos[-2:] == [ShipmentStatus.DISPATCH_REQUESTED, ShipmentStatus.STORED]
+
     async def test_no_se_cancela_una_solicitud_ya_completada(
         self, session: AsyncSession, redis
     ) -> None:
@@ -546,6 +694,8 @@ class TestCancelacion:
         }
         await service.aprobar(session, **comun)
         await service.preparar(session, **comun)
+        await service.despachar(session, **comun)
+        await _agregar_bl_listo(session, ctx, solicitud.id)
         await service.completar(session, **comun)
 
         with pytest.raises(service.TransicionDeDespachoInvalida):

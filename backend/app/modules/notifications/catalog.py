@@ -157,6 +157,22 @@ EVENTOS: dict[str, DefinicionEvento] = {
         ),
         ruta="/despachos/{id}",
     ),
+    "dispatch.dispatched": DefinicionEvento(
+        codigo="dispatch.dispatched",
+        critico=True,
+        asunto="Su despacho salió de bodega",
+        mensaje=f"Las cargas de una solicitud salieron de bodega. {_ENTRAR}",
+        con_referencia=f"El despacho {{ref}} salió de bodega. {_ENTRAR}",
+        ruta="/despachos/{id}",
+    ),
+    "dispatch.completed": DefinicionEvento(
+        codigo="dispatch.completed",
+        critico=True,
+        asunto="Su despacho fue completado",
+        mensaje=f"Una solicitud de despacho quedó completada. {_ENTRAR}",
+        con_referencia=f"El despacho {{ref}} quedó completado. {_ENTRAR}",
+        ruta="/despachos/{id}",
+    ),
     "dispatch.bol_available": DefinicionEvento(
         # Reemplaza `dispatch_bol.html`. El original adjuntaba los PDF del Bill
         # of Lading; acá el correo avisa y los documentos se descargan desde el
@@ -164,13 +180,9 @@ EVENTOS: dict[str, DefinicionEvento] = {
         codigo="dispatch.bol_available",
         critico=True,
         asunto="Bill of Lading disponible",
-        mensaje=(
-            "Se completó un despacho suyo y el Bill of Lading ya está disponible "
-            f"para descargar. {_ENTRAR}"
-        ),
+        mensaje=(f"El Bill of Lading de un despacho ya está disponible para descargar. {_ENTRAR}"),
         con_referencia=(
-            "Se completó el despacho {ref} y el Bill of Lading ya está disponible "
-            f"para descargar. {_ENTRAR}"
+            f"El Bill of Lading del despacho {{ref}} ya está disponible para descargar. {_ENTRAR}"
         ),
         ruta="/despachos/{id}",
     ),

@@ -33,13 +33,12 @@ _ESTADOS_DE_CORRECCION: frozenset[str] = frozenset(
     {ShipmentStatus.CANCELLED, ShipmentStatus.PRE_ALERT}
 )
 
-# Estados de despacho con su propio aviso, heredados de las plantillas del
-# sistema anterior. `COMPLETED` es el que en Django mandaba `dispatch_bol.html`
-# con los PDF adjuntos; acá avisa que están disponibles y el cliente los baja
-# del sistema.
+# Estados de despacho con aviso propio. El BL se notifica por su evento READY,
+# no por completar: son hechos distintos y pueden ocurrir en cualquier orden.
 _EVENTO_POR_ESTADO_DE_DESPACHO: dict[str, str] = {
     DispatchStatus.APPROVED: "dispatch.approved",
-    DispatchStatus.COMPLETED: "dispatch.bol_available",
+    DispatchStatus.DISPATCHED: "dispatch.dispatched",
+    DispatchStatus.COMPLETED: "dispatch.completed",
 }
 
 
@@ -187,6 +186,38 @@ async def solicitud_de_despacho_creada(session: AsyncSession, evento: EventoPend
     )
 
 
+async def documento_de_despacho_listo(session: AsyncSession, evento: EventoPendiente) -> None:
+    """Avisa por el BL cuando sus bytes están READY, no por cerrar el despacho."""
+    if str(evento.payload.get("document_type_code", "")).upper() != "BL":
+        return
+
+    fila = (
+        await session.execute(
+            text("""
+                SELECT dr.id, dr.company_id, dr.dispatch_number
+                FROM dispatch_documents dd
+                JOIN dispatch_requests dr ON dr.id = dd.dispatch_request_id
+                JOIN documents d ON d.id = dd.document_id
+                WHERE dd.document_id = :document_id
+                  AND d.upload_status = 'READY' AND d.deleted_at IS NULL
+            """),
+            {"document_id": evento.aggregate_id},
+        )
+    ).one_or_none()
+    if fila is None:
+        return
+
+    await service.notificar(
+        session,
+        event_code="dispatch.bol_available",
+        destinatarios=await service.destinatarios_de_empresa(session, fila.company_id),
+        resource_type="dispatch_request",
+        resource_id=fila.id,
+        referencia=fila.dispatch_number,
+        dedup_key=f"outbox:{evento.id}",
+    )
+
+
 # El worker (`app.workers.tasks.outbox`) arma su registro a partir de esto. Se
 # declara acá, junto a los manejadores, para que agregar un evento nuevo sea
 # tocar un solo archivo.
@@ -194,4 +225,5 @@ POR_EVENTO = {
     "shipment.status_changed": cambio_de_estado_de_carga,
     "dispatch.status_changed": cambio_de_estado_de_despacho,
     "dispatch.created": solicitud_de_despacho_creada,
+    "dispatch.document.ready": documento_de_despacho_listo,
 }

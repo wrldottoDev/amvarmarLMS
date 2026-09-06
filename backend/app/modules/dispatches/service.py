@@ -51,6 +51,14 @@ class DespachoSinCargas(ReglaDeNegocioViolada):
     code = "DISPATCH_SIN_CARGAS"
 
 
+class DespachoSinBL(Conflicto):
+    code = "DISPATCH_BL_REQUIRED"
+
+
+class CargasNoDespachadas(Conflicto):
+    code = "DISPATCH_SHIPMENTS_NOT_DISPATCHED"
+
+
 class SinPermisoParaDespacho(Exception):
     """El router decide si responder 403 o 404 y registra el intento."""
 
@@ -80,7 +88,7 @@ _TRANSICIONES: dict[str, frozenset[str]] = {
         {DispatchStatus.APPROVED, DispatchStatus.REJECTED, DispatchStatus.CANCELLED}
     ),
     DispatchStatus.APPROVED: frozenset({DispatchStatus.PREPARING, DispatchStatus.CANCELLED}),
-    DispatchStatus.PREPARING: frozenset({DispatchStatus.COMPLETED, DispatchStatus.CANCELLED}),
+    DispatchStatus.PREPARING: frozenset({DispatchStatus.DISPATCHED, DispatchStatus.CANCELLED}),
     DispatchStatus.DISPATCHED: frozenset({DispatchStatus.COMPLETED}),
     DispatchStatus.COMPLETED: frozenset(),
     DispatchStatus.REJECTED: frozenset(),
@@ -89,11 +97,13 @@ _TRANSICIONES: dict[str, frozenset[str]] = {
 
 # Estado al que se mueven las cargas con cada acción del despacho.
 # Estados de la solicitud que exigen tener los documentos obligatorios listos.
-_EXIGEN_REQUISITOS: frozenset[str] = frozenset({DispatchStatus.APPROVED, DispatchStatus.COMPLETED})
+_EXIGEN_REQUISITOS: frozenset[str] = frozenset(
+    {DispatchStatus.APPROVED, DispatchStatus.DISPATCHED, DispatchStatus.COMPLETED}
+)
 
 _ESTADO_DE_CARGA: dict[str, str] = {
     DispatchStatus.PREPARING: ShipmentStatus.PREPARING,
-    DispatchStatus.COMPLETED: ShipmentStatus.DISPATCHED,
+    DispatchStatus.DISPATCHED: ShipmentStatus.DISPATCHED,
 }
 
 
@@ -380,14 +390,19 @@ async def _cambiar_estado(
             details=[{"row_version_actual": solicitud.row_version}],
         )
 
-    if hacia == DispatchStatus.REJECTED and not (motivo or "").strip():
-        raise MotivoRequerido("Rechazar una solicitud exige indicar el motivo.")
+    if hacia in {DispatchStatus.REJECTED, DispatchStatus.CANCELLED} and not (motivo or "").strip():
+        accion = "Rechazar" if hacia == DispatchStatus.REJECTED else "Cancelar"
+        raise MotivoRequerido(f"{accion} una solicitud exige indicar el motivo.")
 
     cargas = await _cargas_activas(session, dispatch_id)
 
     if hacia == DispatchStatus.COMPLETED and not cargas:
         # Cerrar una solicitud vacía dejaría un despacho que no despachó nada.
         raise DespachoSinCargas("La solicitud no tiene cargas asociadas.")
+
+    if hacia == DispatchStatus.COMPLETED:
+        await _validar_cargas_despachadas(session, cargas)
+        await _validar_bl_listo(session, dispatch_id)
 
     # Los documentos obligatorios se exigen al APROBAR, no solo al completar.
     # Aprobar es lo que dispara la coordinación real (contenedor, transporte),
@@ -413,6 +428,8 @@ async def _cambiar_estado(
                                        THEN :actor ELSE approved_by END,
                     approved_at = CASE WHEN CAST(:hacia AS VARCHAR) = 'APPROVED'
                                        THEN now() ELSE approved_at END,
+                    dispatched_at = CASE WHEN CAST(:hacia AS VARCHAR) = 'DISPATCHED'
+                                         THEN now() ELSE dispatched_at END,
                     completed_at = CASE WHEN CAST(:hacia AS VARCHAR) = 'COMPLETED'
                                         THEN now() ELSE completed_at END
                 WHERE id = :id
@@ -465,10 +482,9 @@ async def _cambiar_estado(
         )
         etiqueta = "rechazado" if hacia == DispatchStatus.REJECTED else "cancelado"
         for shipment_id in cargas:
-            await _mover_carga(
+            await _devolver_carga_a_stored(
                 session,
                 shipment_id=shipment_id,
-                hacia=ShipmentStatus.STORED,
                 actor_user_id=actor_user_id,
                 permisos=permisos_devolucion,
                 nota=(
@@ -505,6 +521,90 @@ async def _cargas_activas(session: AsyncSession, dispatch_id: UUID) -> list[UUID
         .scalars()
         .all()
     )
+
+
+async def _validar_cargas_despachadas(session: AsyncSession, shipment_ids: list[UUID]) -> None:
+    pendientes = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT shipment_number, current_status_code
+                    FROM shipments
+                    WHERE id = ANY(:ids) AND current_status_code <> 'DISPATCHED'
+                    ORDER BY shipment_number
+                """),
+                {"ids": shipment_ids},
+            )
+        ).all()
+    )
+    if pendientes:
+        raise CargasNoDespachadas(
+            "Todas las cargas deben haber salido de bodega antes del cierre.",
+            details=[
+                {"shipment_number": fila.shipment_number, "status": fila.current_status_code}
+                for fila in pendientes
+            ],
+        )
+
+
+async def _validar_bl_listo(session: AsyncSession, dispatch_id: UUID) -> None:
+    existe = (
+        await session.execute(
+            text("""
+                SELECT 1
+                FROM dispatch_documents dd
+                JOIN documents d ON d.id = dd.document_id
+                JOIN document_types dt ON dt.id = dd.document_type_id
+                WHERE dd.dispatch_request_id = :id
+                  AND upper(dt.code) = 'BL'
+                  AND d.upload_status = 'READY'
+                  AND d.deleted_at IS NULL
+                LIMIT 1
+            """),
+            {"id": dispatch_id},
+        )
+    ).scalar_one_or_none()
+    if existe is None:
+        raise DespachoSinBL(
+            "Debe existir al menos un Bill of Lading listo antes de completar el despacho."
+        )
+
+
+async def _devolver_carga_a_stored(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+    nota: str,
+) -> None:
+    """Retrocede por el grafo normal; cada paso conserva evento y auditoría."""
+    while True:
+        estado = (
+            await session.execute(
+                text("SELECT current_status_code FROM shipments WHERE id = :id FOR UPDATE"),
+                {"id": shipment_id},
+            )
+        ).scalar_one()
+        if estado == ShipmentStatus.STORED:
+            return
+        destinos = {
+            ShipmentStatus.PREPARING: ShipmentStatus.DISPATCH_REQUESTED,
+            ShipmentStatus.DISPATCH_REQUESTED: ShipmentStatus.STORED,
+        }
+        destino = destinos.get(estado)
+        if destino is None:
+            raise TransicionDeDespachoInvalida(
+                f"No se puede devolver una carga en {estado} a STORED."
+            )
+        await _mover_carga(
+            session,
+            shipment_id=shipment_id,
+            hacia=destino,
+            actor_user_id=actor_user_id,
+            permisos=permisos,
+            nota=nota,
+        )
 
 
 async def _liberar_cargas(session: AsyncSession, dispatch_id: UUID) -> None:
@@ -633,11 +733,7 @@ async def completar(
     notas: str | None = None,
     row_version: int | None = None,
 ) -> ResultadoAccion:
-    """Cierra la solicitud y despacha las cargas.
-
-    Las cargas pasan a `DISPATCHED` y se liberan: el despacho terminó, así que
-    ya no las retiene.
-    """
+    """Cierra administrativamente un despacho ya salido de bodega."""
     return await _cambiar_estado(
         session,
         dispatch_id=dispatch_id,
@@ -646,6 +742,30 @@ async def completar(
         permisos=permisos,
         company_ids=company_ids,
         tipo_evento=DispatchEventType.COMPLETED,
+        motivo=notas,
+        row_version=row_version,
+    )
+
+
+async def despachar(
+    session: AsyncSession,
+    *,
+    dispatch_id: UUID,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+    company_ids: list[UUID] | None,
+    notas: str | None = None,
+    row_version: int | None = None,
+) -> ResultadoAccion:
+    """Confirma la salida física y mueve cada carga a DISPATCHED."""
+    return await _cambiar_estado(
+        session,
+        dispatch_id=dispatch_id,
+        hacia=DispatchStatus.DISPATCHED.value,
+        actor_user_id=actor_user_id,
+        permisos=permisos,
+        company_ids=company_ids,
+        tipo_evento=DispatchEventType.DISPATCHED,
         motivo=notas,
         row_version=row_version,
     )

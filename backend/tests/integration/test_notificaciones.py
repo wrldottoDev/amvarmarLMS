@@ -9,6 +9,7 @@ import uuid
 
 import httpx
 import pytest
+from scripts.seed_document_types import sembrar as sembrar_documentos
 from scripts.seed_rbac import sembrar as sembrar_rbac
 from scripts.seed_shipment_statuses import sembrar as sembrar_estados
 from sqlalchemy import text
@@ -259,6 +260,8 @@ _CRITICOS_ESPERADOS = frozenset(
         "dispatch.requested",
         "dispatch.requested_internal",
         "dispatch.approved",
+        "dispatch.dispatched",
+        "dispatch.completed",
         "dispatch.bol_available",
         "account.invitation",
         # El correo que `/password/forgot` prometía y no mandaba
@@ -675,10 +678,7 @@ class TestSeisCorreosDelSistemaAnterior:
 
         assert "F-2026-0088" in await _cuerpo_de_aviso(session, usuario)
 
-    async def test_completar_un_despacho_avisa_del_bill_of_lading(
-        self, session: AsyncSession
-    ) -> None:
-        """Reemplaza `dispatch_bol.html`, que adjuntaba los PDF al correo."""
+    async def test_completar_un_despacho_tiene_su_propio_aviso(self, session: AsyncSession) -> None:
         await sembrar_rbac(session)
         empresa = await _empresa(session)
         usuario, _ = await _usuario(session, empresa)
@@ -688,7 +688,55 @@ class TestSeisCorreosDelSistemaAnterior:
             session,
             _evento_de_outbox(
                 aggregate_id=dispatch_id,
-                payload={"company_id": str(empresa), "desde": "PREPARING", "hacia": "COMPLETED"},
+                payload={"company_id": str(empresa), "desde": "DISPATCHED", "hacia": "COMPLETED"},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "dispatch.completed"
+
+    async def test_un_bl_ready_avisa_que_esta_disponible(self, session: AsyncSession) -> None:
+        """Reemplaza dispatch_bol.html sin confundir archivo listo con cierre."""
+        await sembrar_rbac(session)
+        await sembrar_documentos(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        dispatch_id, _ = await _solicitud(session, empresa, usuario)
+        tipo_bl = (
+            await session.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
+        ).scalar_one()
+        documento = (
+            await session.execute(
+                text("""
+                    INSERT INTO documents
+                        (company_id, uploaded_by, storage_provider, storage_key,
+                         original_name, safe_name, media_type, size_bytes, sha256,
+                         upload_status, issued_by)
+                    VALUES (:c, :u, 's3', :key, 'bl.pdf', 'bl.pdf',
+                            'application/pdf', 10, :sha, 'READY', 'CARRIER')
+                    RETURNING id
+                """),
+                {
+                    "c": empresa,
+                    "u": usuario,
+                    "key": f"test/{uuid.uuid4()}.pdf",
+                    "sha": "c" * 64,
+                },
+            )
+        ).scalar_one()
+        await session.execute(
+            text("""
+                INSERT INTO dispatch_documents
+                    (dispatch_request_id, document_id, document_type_id)
+                VALUES (:d, :doc, :tipo)
+            """),
+            {"d": dispatch_id, "doc": documento, "tipo": tipo_bl},
+        )
+
+        await handlers.documento_de_despacho_listo(
+            session,
+            _evento_de_outbox(
+                aggregate_id=documento,
+                payload={"document_type_code": "BL", "resource_id": str(dispatch_id)},
             ),
         )
 

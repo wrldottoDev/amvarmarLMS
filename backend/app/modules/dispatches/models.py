@@ -16,13 +16,7 @@ class DispatchMethod(StrEnum):
 
 
 class DispatchStatus(StrEnum):
-    """Estados de una solicitud de despacho.
-
-    `DISPATCHED` existe en el esquema aprobado pero hoy no lo alcanza ningún
-    endpoint: `complete` va directo de `PREPARING` a `COMPLETED` y mueve las
-    cargas a `DISPATCHED`. Se conserva para poder separar "salió de bodega" de
-    "expediente cerrado" sin migración.
-    """
+    """Estados de una solicitud de despacho."""
 
     PENDING = "PENDING"
     APPROVED = "APPROVED"
@@ -46,6 +40,7 @@ class DispatchEventType(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     PREPARING = "PREPARING"
+    DISPATCHED = "DISPATCHED"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
     NOTE = "NOTE"
@@ -75,6 +70,7 @@ class DispatchRequest(Base):
 
     requested_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
     approved_at: Mapped[datetime | None]
+    dispatched_at: Mapped[datetime | None]
     completed_at: Mapped[datetime | None]
 
     # Bloqueo optimista, igual que en `shipments`.

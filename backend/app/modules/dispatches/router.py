@@ -1,6 +1,7 @@
 """Endpoints de solicitudes de despacho (Paso 3.3)."""
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -18,12 +19,12 @@ from app.core.idempotency import (
     hash_de_solicitud,
     reservar,
 )
-from app.core.pagination import Cursor, Pagina, armar_pagina, normalizar_limite
+from app.core.pagination import Pagina
 from app.core.redis import get_redis
 from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
-from app.modules.dispatches import service
+from app.modules.dispatches import queries, service
 from app.modules.dispatches.models import DispatchMethod, DispatchStatus
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
@@ -66,14 +67,26 @@ class SolicitudResponse(BaseModel):
     row_version: int
 
 
+class CargaIncluidaResponse(BaseModel):
+    id: UUID
+    shipment_number: str
+    wr: str | None
+    invoice: str | None
+    status: str
+    package_count: int
+    weight_kg: Decimal | None
+
+
 class DetalleSolicitudResponse(SolicitudResponse):
     delivery_address: str | None
     instructions: str | None
     requested_pickup_date: date | None
     rejected_reason: str | None
     approved_at: datetime | None
+    dispatched_at: datetime | None
     completed_at: datetime | None
     shipment_ids: list[UUID]
+    shipments: list[CargaIncluidaResponse]
 
 
 class AccionResponse(BaseModel):
@@ -212,31 +225,10 @@ async def crear_solicitud(
 async def _detalle(
     db: AsyncSession, dispatch_id: UUID, empresas: list[UUID] | None
 ) -> DetalleSolicitudResponse:
-    condiciones = ["d.id = :id"]
-    parametros: dict[str, Any] = {"id": dispatch_id}
-    if empresas is not None:
-        condiciones.append("d.company_id = ANY(:empresas)")
-        parametros["empresas"] = empresas
-
-    consulta = f"""
-        SELECT d.id, d.dispatch_number, d.status, d.method, d.company_id,
-               d.delivery_address, d.instructions, d.requested_pickup_date,
-               d.rejected_reason, d.requested_at, d.approved_at, d.completed_at,
-               d.row_version,
-               COALESCE(
-                   array_agg(s.shipment_id ORDER BY s.shipment_id)
-                   FILTER (WHERE s.shipment_id IS NOT NULL AND s.released_at IS NULL),
-                   '{{}}'
-               ) AS shipment_ids
-        FROM dispatch_requests d
-        LEFT JOIN dispatch_request_shipments s ON s.dispatch_request_id = d.id
-        WHERE {" AND ".join(condiciones)}
-        GROUP BY d.id
-    """  # noqa: S608
-
-    fila = (await db.execute(text(consulta), parametros)).one_or_none()
-    if fila is None:
-        raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
+    # La consulta vive en queries.py (Fase 3, ADR-0012): las herramientas de
+    # lectura del asistente la reusan, y dos copias de este SQL solo pueden
+    # divergir con el tiempo.
+    fila = await queries.detalle(db, dispatch_id=dispatch_id, empresas=empresas)
 
     return DetalleSolicitudResponse(
         id=fila.id,
@@ -252,8 +244,10 @@ async def _detalle(
         requested_pickup_date=fila.requested_pickup_date,
         rejected_reason=fila.rejected_reason,
         approved_at=fila.approved_at,
+        dispatched_at=fila.dispatched_at,
         completed_at=fila.completed_at,
         shipment_ids=list(fila.shipment_ids),
+        shipments=fila.shipments,
     )
 
 
@@ -269,45 +263,12 @@ async def listar(
     permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
     empresas = _empresas_del_actor(permisos)
 
-    if empresas is not None and not empresas:
-        return PaginaSolicitudes(items=[], next_cursor=None, has_more=False)
-
-    limite = normalizar_limite(limit)
-    condiciones: list[str] = []
-    parametros: dict[str, Any] = {"limite": limite + 1}
-
-    if empresas is not None:
-        condiciones.append("d.company_id = ANY(:empresas)")
-        parametros["empresas"] = empresas
-
-    if status_filtro:
-        condiciones.append("d.status = ANY(:estados)")
-        parametros["estados"] = [e.value for e in status_filtro]
-
-    if cursor:
-        posicion = Cursor.decodificar(cursor)
-        condiciones.append("(d.requested_at, d.id) < (:cursor_fecha, :cursor_id)")
-        parametros["cursor_fecha"] = posicion.created_at
-        parametros["cursor_id"] = posicion.id
-
-    where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
-    consulta = f"""
-        SELECT d.id, d.dispatch_number, d.status, d.method, d.company_id,
-               d.requested_at, d.row_version,
-               count(s.shipment_id) FILTER (WHERE s.released_at IS NULL) AS cargas
-        FROM dispatch_requests d
-        LEFT JOIN dispatch_request_shipments s ON s.dispatch_request_id = d.id
-        {where}
-        GROUP BY d.id
-        ORDER BY d.requested_at DESC, d.id DESC
-        LIMIT :limite
-    """  # noqa: S608
-
-    filas = list((await db.execute(text(consulta), parametros)).all())
-    pagina: Pagina[Any] = armar_pagina(
-        filas,
-        limite=limite,
-        cursor_de=lambda f: Cursor(created_at=f.requested_at, id=f.id),
+    pagina: Pagina[Any] = await queries.listar(
+        db,
+        empresas=empresas,
+        limit=limit,
+        cursor=cursor,
+        status_filtro=[e.value for e in status_filtro] if status_filtro else None,
     )
 
     return PaginaSolicitudes(
@@ -514,6 +475,36 @@ async def completar(
         permiso=Perm.DISPATCH_REQUESTS_COMPLETE,
         accion="completed",
         ejecutar=lambda empresas: service.completar(
+            db,
+            dispatch_id=dispatch_id,
+            actor_user_id=actor.user_id,
+            permisos=permisos,
+            company_ids=empresas,
+            notas=datos.notes,
+            row_version=datos.row_version,
+        ),
+    )
+
+
+@router.post("/{dispatch_id}/dispatch", response_model=AccionResponse)
+async def despachar(
+    dispatch_id: UUID,
+    datos: AccionRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> AccionResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    return await _ejecutar_accion(
+        db,
+        request,
+        actor,
+        permisos,
+        dispatch_id,
+        permiso=Perm.DISPATCH_REQUESTS_DISPATCH,
+        accion="dispatched",
+        ejecutar=lambda empresas: service.despachar(
             db,
             dispatch_id=dispatch_id,
             actor_user_id=actor.user_id,
