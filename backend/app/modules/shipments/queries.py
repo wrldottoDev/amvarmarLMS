@@ -501,3 +501,38 @@ async def bultos(session: AsyncSession, shipment_id: UUID) -> list[Any]:
             )
         ).all()
     )
+
+
+async def listar_ubicaciones(session: AsyncSession) -> list[Any]:
+    """Catálogo de puertos y ciudades activos, para los selectores del alta.
+
+    Extraída del router (Fase 4, ADR-0012): `copilot/executors_escritura.py`
+    necesita la misma consulta para resolver el código legible que trae un
+    borrador de prealerta — dos copias de este SQL solo pueden divergir.
+    """
+    return list(
+        (
+            await session.execute(
+                text("""
+                    SELECT id, location_code, name, country_code
+                    FROM locations WHERE is_active ORDER BY country_code, name
+                """)
+            )
+        ).all()
+    )
+
+
+async def ubicacion_por_codigo(session: AsyncSession, codigo: str) -> Any | None:
+    """Resuelve un código legible (`US-MIA`) a la fila real. El modelo del
+    asistente nunca recibe ni inventa un UUID de ubicación — siempre pasa por
+    acá, igual que el `<select>` del formulario de alta pasa por
+    `listar_ubicaciones`."""
+    return (
+        await session.execute(
+            text("""
+                SELECT id, location_code, name, country_code
+                FROM locations WHERE location_code = :codigo AND is_active
+            """),
+            {"codigo": codigo},
+        )
+    ).one_or_none()
