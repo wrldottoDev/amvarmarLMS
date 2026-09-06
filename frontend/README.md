@@ -35,5 +35,28 @@ npm run lint
 npm run build
 ```
 
+## Pruebas end-to-end (Playwright)
+
+`playwright.config.ts` levanta backend y frontend solo, sin sembrar datos.
+Los specs de `e2e/` esperan la base de datos de demostración (empresa
+"Importaciones Alfa S.A.", WR "DEMO-WR-0001", despachos "DSP-...", las
+cuentas `*@demo.amvarmar.com`), así que hay que sembrarla una vez antes de
+correr las pruebas:
+
+```bash
+cd ../backend && ENVIRONMENT=local ./.venv/bin/python -m scripts.seed_demo
+cd ../frontend && npm run test:e2e
+```
+
+`seed_demo` es idempotente: correrlo de nuevo no duplica nada.
+
+`e2e/asistente.spec.ts` prueba el chat AMVI contra `ProveedorFalsoDeterministico`
+(`app/modules/copilot/provider_falso.py`), no contra la API real de OpenAI —
+`playwright.config.ts` ya arranca el backend con `COPILOT_PROVEEDOR_FALSO=true`.
+Si en cambio corrés Playwright contra un backend que ya tenías levantado a
+mano (`reuseExistingServer` lo reusa tal cual), ese proceso necesita la misma
+variable (y `ENVIRONMENT=local`), o ese spec termina llamando al proveedor
+real.
+
 El access token vive solo en memoria. `src/lib/api/refresh-mutex.ts` coordina solicitudes y pestañas
 para que una ráfaga de respuestas `401` produzca una única rotación del refresh token.

@@ -175,9 +175,145 @@ así que haría falta resolver identidad y confirmación humana de otra forma. N
 
 ## Pendiente antes de implementar
 
-1. Confirmar que `gpt-5.6-luna` es el identificador exacto del proveedor.
+1. ~~Confirmar que `gpt-5.6-luna` es el identificador exacto del proveedor.~~ **Resuelto — ver Enmienda 2026-09.**
 2. Decidir si el asistente puede leer el contenido de documentos (Fase 3) o solo su metadata.
 3. Escribir el contenido de la base de conocimiento para las herramientas de guía (ver abajo).
+
+## Enmienda 2026-09 — auditoría previa a la implementación
+
+Antes de escribir código se auditó el estado real de `app/modules/copilot/` contra este ADR. Quedaron
+trece hallazgos; los que cambian una decisión de este documento están acá.
+
+### Se retira `copilot.tools.read`
+
+El catálogo RBAC (`rbac/catalog.py`) nunca lo implementó, y no hace falta: cada herramienta ya exige el
+permiso de la operación de dominio que hace (`consultar_estado_carga` exige `shipments.read`, no un
+permiso genérico de copiloto). Un permiso adicional sería redundante y una segunda fuente de verdad que
+divergir. Quedan dos: `copilot.use` y `copilot.tools.draft`.
+
+### Se retira `cotizar_envio` del catálogo
+
+Verificado: no existe tarifario determinista en el backend (`grep -ri "tarifa\|precio\|rate_card"` sobre
+`app/` y `scripts/`, cero coincidencias). Una herramienta de cotización sin fuente de datos obliga al
+modelo a inventar precios. Se borra `CotizarEnvioArgs` y la entrada del catálogo; vuelve el día que exista
+un tarifario real.
+
+### `endpoint_confirmacion` se reemplaza por `action_code`
+
+El contrato original le pedía al frontend construir `{"method","path"}` para la confirmación. Eso permite
+que un cliente arme una llamada a cualquier endpoint. Se reemplaza por `action_code`, un valor de un
+`StrEnum` cerrado que el backend resuelve contra un registro de ejecutores de confirmación. El cliente
+nunca aporta ruta ni método.
+
+### Las propuestas se persisten
+
+`PropuestaAccion` era un modelo Pydantic sin tabla: no había estado, vencimiento real, ni consumo único.
+Se agrega `copilot_action_proposals` (migración de Fase 2) con estado `PENDING/CONFIRMED/REJECTED/EXPIRED/FAILED`,
+`resource_versions` para detectar cambios concurrentes, e `idempotency_key`. El chat sigue sin
+persistirse — esto es la propuesta de acción, no la conversación.
+
+### La autorización de una herramienta pasa de un permiso a una regla
+
+`DefinicionHerramienta.permiso: str` no cubre tres casos reales encontrados al diseñar el catálogo
+completo: herramientas que autorizan solo por alcance sin permiso de dominio (`consultar_despacho`, no
+existe `dispatch_requests.read`), herramientas con permiso alternativo según dirección
+(`proponer_cambio_estado` necesita `transition.forward` o `transition.backward`), y herramientas con
+permisos combinados (`proponer_carga_desde_documento` necesita `documents.upload.internal` **y**
+`shipments.create`). Se reemplaza por una regla evaluable (`SoloAlcance`, `Requiere`, `RequiereAlguno`,
+`RequiereTodos`).
+
+### Pendiente #1 resuelto — `gpt-5.6-luna` verificado contra la API real
+
+Con la clave de `.env`, se instaló el SDK oficial (`openai==3.7.0`) y se hicieron tres llamadas reales
+contra `client.responses.create(model="gpt-5.6-luna", ...)`:
+
+1. **El modelo existe y responde.** Una petición simple sin herramientas devolvió texto normal.
+2. **El tool calling estricto funciona con la forma plana documentada** —
+   `{"type":"function","name","description","parameters","strict":true}`, sin envoltorio anidado. El
+   modelo emitió un `function_call` con `call_id`, `name` y `arguments`, exactamente como documenta la
+   guía de function calling de la Responses API.
+3. **El schema roto que generaba `model_json_schema()` sin ajustar fue rechazado por la API real**, con
+   este error exacto:
+
+   ```
+   400 invalid_function_parameters: In context=(), 'additionalProperties' is required to be
+   supplied and to be false.
+   ```
+
+   Esto confirma en producción lo que se había detectado leyendo el código: el generador de esquemas
+   actual (`esquema_para_proveedor`) no es compatible con `strict:true` en la Responses API y hay que
+   reescribirlo.
+4. **El patrón "opcional = requerido + nullable" funciona.** Un schema con
+   `"peso_kg": {"type": ["number", "null"]}` en `required` fue aceptado, y ante un dato ausente el modelo
+   devolvió `"peso_kg": null"` en vez de inventar un valor.
+5. **El ciclo completo funciona**: `function_call` → ejecutar → `function_call_output` con
+   `previous_response_id` → el modelo integra el resultado en una respuesta de texto final.
+
+`gpt-5.6-luna` queda confirmado como identificador válido y compatible con Responses API + `strict`. La
+Fase 2 puede proceder.
+
+**Hallazgo adicional: `gpt-5.6-luna` es un modelo de razonamiento y no acepta `temperature`.** La misma
+llamada con `temperature=0.2` devolvió `400 Unsupported parameter: 'temperature' is not supported with
+this model`. `copilot_temperature` queda en `Settings` sin usarse contra el proveedor — se documenta acá
+en vez de borrarlo, por si el modelo configurado cambia a uno que sí lo admita. El control real de
+determinismo para este modelo es `reasoning: {"effort": "low"}`, verificado contra la API real. Se agrega
+`copilot_reasoning_effort` a `Settings` (default `"low"`, coherente con la intención original de baja
+creatividad para datos logísticos) y `provider.py` lo envía en vez de `temperature`.
+
+### Pendiente #2 resuelto — el cliente sí recibe `copilot.tools.draft`
+
+`CLIENT_USER` y `CLIENT_ADMIN` reciben `copilot.tools.draft` además de `copilot.use`. No amplía sus
+capacidades: cada herramienta de propuesta sigue exigiendo el permiso de dominio de la operación
+correspondiente (`proponer_despacho` exige `dispatch_requests.create`, que el cliente ya tiene), y la
+escritura sigue pasando por confirmación humana. Sin este permiso, AMVI podía conversar con un cliente
+pero nunca prepararle un despacho ni una preferencia de columnas. Aplicado en `rbac/catalog.py`
+(`_CLIENT_PERMS`) y `scripts/seed_rbac.py` no necesita cambios: sincroniza desde el catálogo.
+
+### Pendiente #3 resuelto — AMVI puede leer contenido completo de documentos
+
+Para `proponer_carga_desde_documento` (Fase 6), AMVI puede leer el contenido completo de una factura o
+packing list ya subida y verificada — no solo su metadata. Esto envía bytes del documento al proveedor de
+IA vía la Responses API. Condiciones que se mantienen invariables: el documento tiene que estar ya
+`READY` (pasó la validación de MIME/tamaño/firma del flujo normal, Paso 3.1); AMVI nunca es una vía
+alterna para subir contenido que se salte esa validación; y la extracción sigue devolviendo una propuesta
+para revisión humana, nunca escribe directo. La Fase 6 diseña en detalle el mecanismo de envío (referencia
+al `document_id`, no una copia adicional del archivo).
+
+### Hallazgo mayor: `store=false` también rompe `previous_response_id`
+
+Probado en integración real, no solo en aislado: un turno con una llamada a herramienta hace mínimo dos
+peticiones a la Responses API (la que pide la herramienta, y la que le devuelve el resultado). El diseño
+original encadenaba la segunda con `previous_response_id` de la primera. Con `store=false` esa cadena
+falla siempre, con el proveedor real:
+
+```
+400 previous_response_not_found: Previous response with id 'resp_...' not found.
+```
+
+Tiene sentido: `store=false` le dice a OpenAI que no retenga la respuesta, y `previous_response_id`
+necesita justamente esa retención. No es un caso raro — es el flujo central del asistente, porque
+`consultar_estado_carga` es una herramienta y toda herramienta implica ese segundo viaje.
+
+**Diseño corregido, verificado contra la API real:** en vez de encadenar por id, cada llamada al
+proveedor manda el array `input` completo — system prompt, mensajes previos del usuario, y los ítems de
+salida de la vuelta anterior (incluido el `function_call`) más el `function_call_output` correspondiente.
+Es el patrón sin estado que la propia documentación de OpenAI describe como alternativa cuando no se usa
+almacenamiento server-side. Confirmado con una llamada real: la segunda respuesta integra el resultado de
+la herramienta sin necesitar `previous_response_id`.
+
+**Consecuencia en el contrato HTTP:** `previous_response_id` sale de `RespondRequest`. No hay id de
+proveedor que el frontend pueda reenviar de forma útil — la continuidad de la conversación ya la daba
+`mensajes` (hasta 20, ADR original) y sigue siendo la única vía. El frontend mantiene el historial de la
+pestaña (coherente con "el chat no se persiste": efímero del lado del cliente, nunca en el backend) y lo
+reenvía completo en cada `POST /respond`. Dentro de un mismo turno, `service.py` es quien acumula el
+array `input` a medida que van llegando resultados de herramientas — eso sí vive solo en memoria del
+request, nunca en una tabla.
+
+### Sigue pendiente
+
+Pendiente #3 original del ADR (base de conocimiento de `como_hago`): decisión de contenido, no técnica.
+Fase 3 la trata como opcional — si no está escrita, la herramienta responde que no tiene esa guía en vez
+de inventar cómo funciona la interfaz.
 
 ## Herramientas de guía — pendientes de agregar
 
