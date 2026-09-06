@@ -53,19 +53,21 @@ def construir_manejador(session: AsyncSession) -> Manejador:
 
 
 async def _ejecutar_lote() -> ResultadoLote:
-    async with get_sessionmaker()() as session:
-        resultado = await procesar_lote(session, construir_manejador(session), limite=LOTE)
-        # El commit va acá y no dentro del lote: reclamo, entrega y marcado
-        # comparten transacción, así que un corte deja las filas pendientes en
-        # vez de marcadas sin haberse entregado.
-        await session.commit()
-    return resultado
+    try:
+        async with get_sessionmaker()() as session:
+            resultado = await procesar_lote(session, construir_manejador(session), limite=LOTE)
+            # El commit va acá y no dentro del lote: reclamo, entrega y marcado
+            # comparten transacción, así que un corte deja las filas pendientes en
+            # vez de marcadas sin haberse entregado.
+            await session.commit()
+        return resultado
+    finally:
+        await get_engine().dispose()
 
 
 @celery_app.task(name="outbox.procesar_pendientes")
 def tarea_procesar_pendientes() -> dict[str, int]:
     resultado = asyncio.run(_ejecutar_lote())
-    asyncio.run(get_engine().dispose())
 
     return {
         "entregados": resultado.entregados,
