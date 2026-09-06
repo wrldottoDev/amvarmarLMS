@@ -24,6 +24,56 @@ class TestSeed:
         assert conteos[0]["permissions"] == len(PERMISSIONS)
         assert conteos[0]["roles"] == len(ROLES)
 
+    async def test_los_dos_roles_de_cliente_tienen_la_misma_matriz(
+        self, session: AsyncSession
+    ) -> None:
+        """Decisión de AMVARMAR: dentro de una empresa cliente todos pueden lo mismo.
+
+        Se comprueba contra la base y no contra el catálogo: lo que autoriza es
+        la fila de `role_permissions`, y un seed que no propague el cambio
+        dejaría el código diciendo una cosa y la base haciendo otra.
+        """
+        await sembrar(session)
+
+        por_rol = {}
+        for codigo in (RoleCode.CLIENT_ADMIN, RoleCode.CLIENT_USER):
+            por_rol[codigo] = set(
+                (
+                    await session.execute(
+                        text("""
+                            SELECT p.code FROM role_permissions rp
+                            JOIN roles r ON r.id = rp.role_id
+                            JOIN permissions p ON p.id = rp.permission_id
+                            WHERE r.code = :rol
+                        """),
+                        {"rol": codigo.value},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        assert por_rol[RoleCode.CLIENT_ADMIN] == por_rol[RoleCode.CLIENT_USER]
+        assert por_rol[RoleCode.CLIENT_USER], "un rol de cliente sin permisos no sirve"
+
+    async def test_ningun_rol_de_cliente_transiciona_cargas(self, session: AsyncSession) -> None:
+        """Igualar los dos roles no puede colarles permisos de Operaciones.
+
+        Mover una carga por la cadena logística es trabajo de quien la tiene
+        físicamente. Un cliente que pudiera marcarla `STORED` estaría afirmando
+        que llegó a una bodega que no maneja.
+        """
+        await sembrar(session)
+
+        prohibidos = {
+            Perm.SHIPMENTS_TRANSITION_FORWARD,
+            Perm.SHIPMENTS_TRANSITION_BACKWARD,
+        }
+
+        for codigo in (RoleCode.CLIENT_ADMIN, RoleCode.CLIENT_USER):
+            otorgados = set(ROLES[codigo].permissions)
+            assert not (otorgados & prohibidos), codigo
+
     async def test_siembra_los_29_permisos_del_catalogo(self, session: AsyncSession) -> None:
         await sembrar(session)
 
