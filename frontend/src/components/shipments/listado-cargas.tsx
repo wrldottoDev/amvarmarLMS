@@ -34,6 +34,10 @@ export function ListadoCargas({
   cargas: CargaResumen[];
   esCliente: boolean;
   empresaVisible?: boolean;
+  /** Historial de despachos (ADR-0007): reservado para cuando el badge de
+   * estado sea interactivo — hoy siempre se ve como acá, así que no cambia
+   * nada todavía. */
+  soloLectura?: boolean;
 }) {
   const { data: preferencia } = usePreferenciaColumnas();
 
