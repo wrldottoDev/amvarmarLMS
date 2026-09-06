@@ -12,7 +12,9 @@ la API real (ver `tests/copilot/proveedor_falso.py`).
 
 from __future__ import annotations
 
+import json
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -26,6 +28,22 @@ class LlamadaHerramienta:
     call_id: str
     nombre: str
     argumentos_json: str
+
+
+@dataclass(frozen=True)
+class DescripcionFactura:
+    """Lo que el proveedor pudo leer de una factura (imagen o PDF).
+
+    Todo campo es `None` cuando el documento no lo trae — nunca se inventa un
+    valor para completar el esquema (verificado contra la API real: con
+    `strict=True` y tipo `["string","null"]`/`["number","null"]` el modelo
+    responde `null` en vez de alucinar, ver ADR-0012)."""
+
+    numero_guia: str | None
+    proveedor: str | None
+    monto: float | None
+    moneda: str | None
+    cliente: str | None
 
 
 @dataclass(frozen=True)
@@ -56,6 +74,20 @@ class ProveedorIA(Protocol):
     async def responder(
         self, *, entrada: list[dict[str, Any]], herramientas: list[dict[str, Any]]
     ) -> RespuestaProveedor: ...
+
+    async def describir_factura(
+        self, *, media_type: str, contenido_base64: str
+    ) -> DescripcionFactura: ...
+
+
+# ContextVar y no un parámetro de `EjecutorHerramienta`: así el ejecutor de
+# `procesar_factura_ocr` (el único que necesita hablarle al proveedor, para
+# leer un documento) lo toma acá en vez de que las otras ocho herramientas
+# cargaran con un parámetro que nunca usan — mismo patrón que
+# `request_id_actual` en `core/logging.py`. `service.procesar_turno` lo fija
+# al principio del turno, con el proveedor ya resuelto por la fábrica de
+# `router.py` (real o falso, según el entorno).
+proveedor_actual: ContextVar[ProveedorIA] = ContextVar("proveedor_actual")
 
 
 class _CircuitBreaker:
@@ -188,4 +220,98 @@ class ProveedorOpenAI:
             items_salida=items_salida,
             tokens_entrada=uso.input_tokens if uso else 0,
             tokens_salida=uso.output_tokens if uso else 0,
+        )
+
+    async def describir_factura(
+        self, *, media_type: str, contenido_base64: str
+    ) -> DescripcionFactura:
+        """Una sola llamada, fuera del bucle de tool calling (ADR-0012, Fase
+        6): a diferencia de `responder()`, esto nunca se reenvía en una
+        vuelta siguiente, así que el archivo no se re-envía turno tras turno
+        bajo `store=false` — el resultado (chico) es lo único que entra a la
+        conversación, vía la propuesta que arma el ejecutor.
+
+        Acepta imagen o PDF — verificado contra la API real que
+        `gpt-5.6-luna` lee ambos (`input_image` / `input_file`) y que
+        `text.format: json_schema` con `strict=True` devuelve `null` en vez
+        de inventar un valor que el documento no trae."""
+        breaker = _obtener_breaker()
+        if not breaker.disponible():
+            raise ProveedorNoDisponible("El proveedor está temporalmente deshabilitado.")
+
+        if media_type.startswith("image/"):
+            parte_archivo: dict[str, Any] = {
+                "type": "input_image",
+                "image_url": f"data:{media_type};base64,{contenido_base64}",
+            }
+        elif media_type == "application/pdf":
+            parte_archivo = {
+                "type": "input_file",
+                "filename": "factura.pdf",
+                "file_data": f"data:{media_type};base64,{contenido_base64}",
+            }
+        else:
+            raise ProveedorNoDisponible(f"Tipo de archivo no soportado para lectura: {media_type}")
+
+        try:
+            respuesta = await self._cliente.responses.create(  # type: ignore[call-overload]
+                model=self._modelo,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "Extraé de esta factura: número de guía, proveedor, "
+                                    "monto, moneda y cliente. Si un dato no aparece, "
+                                    "dejalo en null — no lo inventes."
+                                ),
+                            },
+                            parte_archivo,
+                        ],
+                    }
+                ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "descripcion_factura",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "numero_guia": {"type": ["string", "null"]},
+                                "proveedor": {"type": ["string", "null"]},
+                                "monto": {"type": ["number", "null"]},
+                                "moneda": {"type": ["string", "null"]},
+                                "cliente": {"type": ["string", "null"]},
+                            },
+                            "required": [
+                                "numero_guia",
+                                "proveedor",
+                                "monto",
+                                "moneda",
+                                "cliente",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                reasoning={"effort": self._reasoning_effort},
+                max_output_tokens=self._max_tokens_salida,
+                store=False,
+            )
+        except OpenAIError as error:
+            breaker.registrar_fallo()
+            raise ProveedorNoDisponible(f"El proveedor de IA no respondió: {error}") from error
+
+        breaker.registrar_exito()
+
+        datos = json.loads(respuesta.output_text)
+        return DescripcionFactura(
+            numero_guia=datos["numero_guia"],
+            proveedor=datos["proveedor"],
+            monto=datos["monto"],
+            moneda=datos["moneda"],
+            cliente=datos["cliente"],
         )

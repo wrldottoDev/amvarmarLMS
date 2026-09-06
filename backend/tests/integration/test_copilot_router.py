@@ -426,12 +426,14 @@ class TestPropuestas:
         assert estado == "EXPIRED"
 
     async def test_confirmar_sin_ejecutor_conectado_da_409_controlado(
-        self, cliente: AsyncClient, db_directa: AsyncSession
+        self, cliente: AsyncClient, db_directa: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`procesar_factura_ocr` sigue sin ejecutor de confirmación (Fase 4
-        conectó `crear_prealerta_borrador`, no las dos). El mecanismo de
-        bloqueo y verificación es el definitivo; la ejecución real de esta
-        acción llega en una fase posterior."""
+        """Las dos acciones de ESCRITURA del catálogo real ya tienen ejecutor
+        de confirmación conectado — esta rama queda para el día que se
+        agregue una nueva y todavía no lo tenga. `monkeypatch` simula ese
+        hueco sacando un ejecutor real del registro por la duración del
+        test, en vez de inventar una acción que no existe."""
+        monkeypatch.delitem(REGISTRO_DE_CONFIRMACION, AccionCopilot.PROCESAR_FACTURA_OCR)
         await sembrar_rbac(db_directa)
         actor, email = await _usuario_interno(db_directa)
         await db_directa.commit()

@@ -20,7 +20,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from app.modules.copilot.provider import LlamadaHerramienta, RespuestaProveedor
+from app.modules.copilot.provider import DescripcionFactura, LlamadaHerramienta, RespuestaProveedor
 
 _PATRON_CARGA = re.compile(r"\bSHP-\d{4}-\d{6}\b")
 
@@ -77,6 +77,20 @@ class ProveedorFalsoDeterministico:
             return _llamada_a_buscar_cargas(coincidencia.group(0))
 
         return _respuesta_de_texto(_TEXTO_SIN_CODIGO)
+
+    async def describir_factura(
+        self, *, media_type: str, contenido_base64: str
+    ) -> DescripcionFactura:
+        """Determinístico: siempre el mismo resultado, sin mirar el archivo —
+        Playwright no necesita variar esto, solo que el flujo completo
+        (preview → propuesta → confirmar) corra sin tocar la API real."""
+        return DescripcionFactura(
+            numero_guia="INV-FALSA-0001",
+            proveedor="Proveedor de pruebas",
+            monto=100.0,
+            moneda="USD",
+            cliente="Cliente de pruebas",
+        )
 
 
 def _llamada_a_buscar_cargas(codigo: str) -> RespuestaProveedor:

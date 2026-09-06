@@ -8,12 +8,28 @@ si el proveedor cambia qué acepta `strict`, o el modelo configurado deja de
 soportar `reasoning.effort`, esto lo detecta antes de un despliegue.
 """
 
+import base64
+
 import pytest
 
 from app.core.config import get_settings
 from app.modules.copilot.esquemas_openai import esquemas_openai
 from app.modules.copilot.provider import ProveedorOpenAI
 from app.modules.copilot.tools import HERRAMIENTAS
+
+# PNG 1x1 y PDF mínimo válido — solo para probar que el proveedor acepta el
+# tipo de contenido, no para verificar qué tan bien lee una imagen real.
+_PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+_PDF_MINIMO = (
+    b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Resources<</Font<</F1 4 0 R>>>>"
+    b"/Contents 5 0 R>>endobj\n4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n"
+    b"5 0 obj<</Length 44>>stream\nBT /F1 18 Tf 10 50 Td (Hola factura) Tj ET\nendstream\nendobj\n"
+    b"xref\n0 6\n0000000000 65535 f\ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n0\n%%EOF"
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.smoke]
 
@@ -102,3 +118,46 @@ class TestContratoDelProveedorReal:
                 temperature=0.2,
                 max_output_tokens=20,
             )
+
+
+class TestDescribirFacturaContraLaApiReal:
+    """Regression test real del hallazgo de Fase 6 (`procesar_factura_ocr`):
+    si el modelo configurado deja de aceptar `input_image`, `input_file`, o
+    `text.format: json_schema` con tipos nullable, esto lo detecta antes de
+    un despliegue — no depende de la memoria de la sesión que lo verificó."""
+
+    async def test_lee_una_imagen(self) -> None:
+        _requiere_clave()
+        proveedor = ProveedorOpenAI()
+
+        descripcion = await proveedor.describir_factura(
+            media_type="image/png", contenido_base64=base64.b64encode(_PNG_1X1).decode()
+        )
+
+        assert descripcion is not None
+
+    async def test_lee_un_pdf(self) -> None:
+        _requiere_clave()
+        proveedor = ProveedorOpenAI()
+
+        descripcion = await proveedor.describir_factura(
+            media_type="application/pdf",
+            contenido_base64=base64.b64encode(_PDF_MINIMO).decode(),
+        )
+
+        assert descripcion is not None
+
+    async def test_campos_no_encontrados_vienen_null_no_inventados(self) -> None:
+        """El PDF mínimo no trae número de guía, proveedor, monto ni
+        cliente — si el modelo empezara a alucinar esos campos en vez de
+        devolver `null`, esto lo detecta."""
+        _requiere_clave()
+        proveedor = ProveedorOpenAI()
+
+        descripcion = await proveedor.describir_factura(
+            media_type="application/pdf",
+            contenido_base64=base64.b64encode(_PDF_MINIMO).decode(),
+        )
+
+        assert descripcion.numero_guia is None
+        assert descripcion.monto is None

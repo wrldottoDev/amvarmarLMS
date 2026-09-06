@@ -14,6 +14,7 @@ escritura de dominio durante el turno del modelo).
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -21,12 +22,23 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.infrastructure.storage import s3
 from app.modules.copilot import propuestas
 from app.modules.copilot.acciones import AccionCopilot
 from app.modules.copilot.executors import EjecutorHerramienta
+from app.modules.copilot.provider import proveedor_actual
 from app.modules.copilot.tools import CampoPropuesto, PropuestaAccion
+from app.modules.documents import queries as documents_queries
+from app.modules.documents.models import UploadStatus
+from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments import queries as shipments_queries
+
+# Base64 infla ~33%; esto acota el tamaño del payload que se manda al
+# proveedor en una sola llamada (ADR-0012, Fase 6) — muy por debajo del tope
+# de subida (`documents.service.LIMITES_POR_DEFECTO`, hasta 250 MB), que
+# gobierna qué se puede GUARDAR, no qué es razonable mandarle a un modelo.
+_LIMITE_OCR_BYTES = 15 * 1024 * 1024
 
 
 def _campo_texto(nombre: str, etiqueta: str, valor: str | None) -> CampoPropuesto:
@@ -158,6 +170,131 @@ async def crear_prealerta_borrador(
     return propuesta.model_dump(mode="json")
 
 
+async def procesar_factura_ocr(
+    session: AsyncSession,
+    permisos: PermisosEfectivos,
+    actor_user_id: UUID,
+    company_id: UUID | None,  # sin usar: el alcance sale del documento, no del actor
+    argumentos: dict[str, Any],
+) -> dict[str, Any]:
+    """Lee una factura YA subida — todo documento se sube ya atado a una
+    carga (`documents.service.preparar_subida` exige `shipment_id` desde el
+    primer tiempo, ver `documents/queries.py::factura_de_carga`) — y arma un
+    borrador para corregir ESA carga. Nunca crea una carga nueva: a
+    diferencia de `crear_prealerta_borrador`, acá siempre hay una carga
+    dueña del documento desde el principio.
+
+    Solo `numero_guia` tiene un destino claro en el modelo de datos
+    (`shipment_references`, tipo INVOICE, ver `shipments/gestion.py`).
+    Proveedor, monto y cliente se muestran como referencia para que la
+    persona los verifique a mano — no hay una columna de `shipments` a la
+    que mapearlos sin inventar una regla que el negocio no definió.
+    """
+    documento = await documents_queries.factura_de_carga(
+        session, UUID(str(argumentos["document_id"]))
+    )
+    if documento is None:
+        return {"error": "No encontré ese documento, o no pertenece a ninguna carga."}
+
+    if not permisos.permite(Perm.DOCUMENTS_UPLOAD_INTERNAL, company_id=documento.company_id):
+        return {"error": "No tenés permiso para leer ese documento."}
+
+    if documento.upload_status != UploadStatus.READY:
+        return {"error": "Ese documento todavía no terminó de procesarse."}
+
+    try:
+        tamano = (await s3.describir_objeto(documento.storage_key)).size_bytes
+    except s3.ObjetoNoEncontrado:
+        return {"error": "El archivo del documento ya no está disponible."}
+    if tamano > _LIMITE_OCR_BYTES:
+        return {"error": "El documento es demasiado grande para que AMVI lo lea."}
+
+    contenido = bytearray()
+    async for fragmento in s3.iterar_chunks(documento.storage_key):
+        contenido.extend(fragmento)
+
+    descripcion = await proveedor_actual.get().describir_factura(
+        media_type=documento.media_type,
+        contenido_base64=base64.b64encode(bytes(contenido)).decode(),
+    )
+
+    advertencias: list[str] = []
+    if not descripcion.numero_guia:
+        advertencias.append("No pude leer el número de factura de este documento.")
+    if not descripcion.proveedor:
+        advertencias.append("No pude leer el proveedor de este documento.")
+    if descripcion.monto is None:
+        advertencias.append("No pude leer el monto de este documento.")
+    if not descripcion.cliente:
+        advertencias.append("No pude leer el cliente de este documento.")
+
+    monto_texto = (
+        f"{descripcion.monto} {descripcion.moneda or ''}".strip()
+        if descripcion.monto is not None
+        else None
+    )
+
+    campos = [
+        CampoPropuesto(
+            nombre="carga",
+            etiqueta="Carga",
+            valor=documento.shipment_number,
+            confianza=1.0,
+            editable=False,
+        ),
+        _campo_texto("factura", "Número de factura", descripcion.numero_guia),
+        CampoPropuesto(
+            nombre="proveedor_detectado",
+            etiqueta="Proveedor (referencia, no se guarda)",
+            valor=descripcion.proveedor,
+            confianza=1.0 if descripcion.proveedor else 0.0,
+            editable=False,
+        ),
+        CampoPropuesto(
+            nombre="monto_detectado",
+            etiqueta="Monto (referencia, no se guarda)",
+            valor=monto_texto,
+            confianza=1.0 if monto_texto else 0.0,
+            editable=False,
+        ),
+        CampoPropuesto(
+            nombre="cliente_detectado",
+            etiqueta="Cliente (referencia, no se guarda)",
+            valor=descripcion.cliente,
+            confianza=1.0 if descripcion.cliente else 0.0,
+            editable=False,
+        ),
+    ]
+
+    payload = {
+        "shipment_id": str(documento.shipment_id),
+        "row_version": documento.row_version,
+        "factura": descripcion.numero_guia,
+    }
+
+    expira_en = datetime.now(UTC) + timedelta(minutes=get_settings().copilot_propuesta_ttl_minutos)
+    propuesta_id = await propuestas.crear(
+        session,
+        creador=actor_user_id,
+        company_id=documento.company_id,
+        action_code=AccionCopilot.PROCESAR_FACTURA_OCR,
+        payload=payload,
+        expira_en=expira_en,
+    )
+
+    propuesta = PropuestaAccion(
+        id=str(propuesta_id),
+        action_code=AccionCopilot.PROCESAR_FACTURA_OCR,
+        titulo="Datos leídos de la factura",
+        resumen_efecto=f"Actualiza el número de factura de {documento.shipment_number}.",
+        expira_en=expira_en.isoformat(),
+        campos=campos,
+        advertencias=advertencias,
+    )
+    return propuesta.model_dump(mode="json")
+
+
 REGISTRO_EJECUTORES_ESCRITURA: dict[str, EjecutorHerramienta] = {
     "crear_prealerta_borrador": crear_prealerta_borrador,
+    "procesar_factura_ocr": procesar_factura_ocr,
 }

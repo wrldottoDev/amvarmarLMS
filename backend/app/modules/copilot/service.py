@@ -5,13 +5,13 @@ ESCRITURA solo puede terminar en una propuesta `PENDING` — nunca en un cambio
 de datos. Confirmar es una llamada HTTP aparte (`router.confirmar`), con su
 propio permiso revalidado y su `Idempotency-Key`.
 
-Fase 3 conectó las de LECTURA (`copilot/executors.py`). Fase 4 conecta la
-primera de ESCRITURA, `crear_prealerta_borrador` (`executors_escritura.py` +
-`confirmaciones.py`), para probar la infraestructura genérica de propuestas
-de punta a punta. El resto de las de ESCRITURA (`procesar_factura_ocr`)
-sigue sin ejecutor — una herramienta permitida sin ejecutor registrado
-responde con un error controlado, nunca con datos inventados ni con un
-crash.
+Fase 3 conectó las de LECTURA (`copilot/executors.py`). Fase 4 conectó la
+primera de ESCRITURA, `crear_prealerta_borrador`, y luego `procesar_factura_ocr`
+(`executors_escritura.py` + `confirmaciones.py`), sobre la misma
+infraestructura genérica de propuestas. Una herramienta permitida sin ejecutor
+registrado responde con un error controlado, nunca con datos inventados ni
+con un crash — así sigue funcionando cualquier ESCRITURA futura que todavía
+no tenga ejecutor.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from app.modules.copilot.executors_escritura import (
     REGISTRO_EJECUTORES_ESCRITURA as _EJECUTORES_ESCRITURA,
 )
 from app.modules.copilot.provider import ProveedorIA, ProveedorNoDisponible
+from app.modules.copilot.provider import proveedor_actual as _proveedor_actual
 from app.modules.copilot.tools import (
     HERRAMIENTAS,
     ClaseHerramienta,
@@ -168,6 +169,7 @@ async def procesar_turno(
     from app.modules.copilot.prompts import construir_system_prompt
 
     settings = get_settings()
+    token_proveedor = _proveedor_actual.set(proveedor)
 
     if len(mensajes) > settings.copilot_max_mensajes_por_turno:
         yield EventoSSE(
@@ -260,6 +262,7 @@ async def procesar_turno(
         )
 
     await session.commit()
+    _proveedor_actual.reset(token_proveedor)
 
     yield EventoSSE(
         "fin",

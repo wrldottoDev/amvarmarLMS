@@ -110,3 +110,17 @@ class TestProveedorFalso:
 
         assert respuesta.texto is not None
         assert "No tenés permiso" in respuesta.texto
+
+    async def test_describir_factura_es_deterministico_sin_mirar_el_archivo(self) -> None:
+        """Playwright necesita el flujo completo de `procesar_factura_ocr`
+        (preview → propuesta → confirmar) sin tocar la API real — el
+        contenido del archivo no importa, el resultado siempre es el mismo."""
+        proveedor = ProveedorFalsoDeterministico()
+
+        descripcion = await proveedor.describir_factura(
+            media_type="application/pdf", contenido_base64="cualquier-cosa"
+        )
+
+        assert descripcion.numero_guia
+        assert descripcion.proveedor
+        assert descripcion.monto is not None

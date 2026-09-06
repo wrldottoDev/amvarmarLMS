@@ -339,7 +339,16 @@ HERRAMIENTAS: dict[str, DefinicionHerramienta] = {
             "cargada. Devuelve una propuesta para revisión humana; no registra nada."
         ),
         argumentos=ProcesarFacturaOcrArgs,
-        autorizacion=Requiere(Perm.DOCUMENTS_UPLOAD_INTERNAL),
+        # RequiereTodos, no solo el permiso de dominio (mismo criterio que
+        # `crear_prealerta_borrador`, ADR-0012 enmienda 2026-09):
+        # `COPILOT_TOOLS_DRAFT` es "puede pedirle propuestas al asistente";
+        # `DOCUMENTS_UPLOAD_INTERNAL` es lo que ya exigía leer el documento;
+        # `SHIPMENTS_UPDATE` es lo que `gestion.actualizar` igual revalida al
+        # confirmar — la herramienta lo exige desde el preview para no
+        # ofrecerla a quien de todos modos no podría confirmarla nunca.
+        autorizacion=RequiereTodos(
+            (Perm.COPILOT_TOOLS_DRAFT, Perm.DOCUMENTS_UPLOAD_INTERNAL, Perm.SHIPMENTS_UPDATE)
+        ),
         clase=ClaseHerramienta.ESCRITURA,
         action_code=AccionCopilot.PROCESAR_FACTURA_OCR,
     ),

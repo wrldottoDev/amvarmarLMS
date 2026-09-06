@@ -282,12 +282,15 @@ class TestRevalidacionAlEjecutar:
         assert fila.after_data["motivo"] == "argumentos_invalidos"
 
     async def test_herramienta_permitida_sin_ejecutor_responde_controlado(
-        self, session: AsyncSession
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Fase 3 conectó las de LECTURA y Fase 4 conectó la primera de
-        ESCRITURA (`crear_prealerta_borrador`); `procesar_factura_ocr` sigue
-        sin ejecutor. Debe fallar limpio, nunca inventar datos."""
+        """Todas las herramientas del catálogo real ya tienen ejecutor — esta
+        rama queda para el día que se agregue una nueva y todavía no esté
+        conectada. `monkeypatch` simula ese hueco sacando un ejecutor real
+        del registro por la duración del test, en vez de inventar una
+        herramienta que no existe."""
         actor = await _usuario(session)
+        monkeypatch.delitem(copilot_service.REGISTRO_EJECUTORES, "procesar_factura_ocr")
         proveedor = ProveedorFalso(
             guion=[
                 _llamada_herramienta("resp_1", "procesar_factura_ocr", '{"document_id": "x"}'),
@@ -296,7 +299,12 @@ class TestRevalidacionAlEjecutar:
         )
 
         eventos = await _correr(
-            session, proveedor, _permisos(Perm.DOCUMENTS_UPLOAD_INTERNAL), actor
+            session,
+            proveedor,
+            _permisos(
+                Perm.COPILOT_TOOLS_DRAFT, Perm.DOCUMENTS_UPLOAD_INTERNAL, Perm.SHIPMENTS_UPDATE
+            ),
+            actor,
         )
 
         assert any(e.evento == "token" for e in eventos)

@@ -89,8 +89,15 @@ class TestVerificacionAlEjecutar:
         )
 
     def test_con_el_permiso_si_se_ejecuta(self) -> None:
+        # RequiereTodos (ADR-0012 enmienda 2026-09): los tres, no solo el de
+        # dominio — igual que `crear_prealerta_borrador`.
         assert (
-            puede_ejecutar("procesar_factura_ocr", _permisos(Perm.DOCUMENTS_UPLOAD_INTERNAL))
+            puede_ejecutar(
+                "procesar_factura_ocr",
+                _permisos(
+                    Perm.COPILOT_TOOLS_DRAFT, Perm.DOCUMENTS_UPLOAD_INTERNAL, Perm.SHIPMENTS_UPDATE
+                ),
+            )
             is True
         )
 

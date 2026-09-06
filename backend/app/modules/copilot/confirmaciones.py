@@ -4,14 +4,14 @@ Un ejecutor de este módulo corre cuando la persona confirma una propuesta
 (`POST /copilot/proposals/{id}/confirm`) — nunca durante el turno del modelo.
 Es acá, y solo acá, donde una propuesta de AMVI puede terminar tocando datos
 de dominio, y siempre a través del mismo service/command que usa el resto de
-la API (`shipments.gestion.crear`) — nunca con un `INSERT` propio: dos
-caminos hacia el mismo efecto de dominio solo pueden divergir con el tiempo,
-y `gestion.crear` ya trae su propia revalidación de permiso
-(`permisos.permite(Perm.SHIPMENTS_CREATE, company_id=...)`), así que
-confirmar por acá pasa por el mismo control que crear una carga a mano.
+la API (`shipments.gestion.crear` o `.actualizar`) — nunca con un `INSERT`/
+`UPDATE` propio: dos caminos hacia el mismo efecto de dominio solo pueden
+divergir con el tiempo, y esos commands ya traen su propia revalidación de
+permiso, así que confirmar por acá pasa por el mismo control que un PATCH o
+un alta a mano.
 
 `router.confirmar_propuesta` importa este módulo por su efecto de registrar
-`REGISTRO_DE_CONFIRMACION[AccionCopilot.CREAR_PREALERTA_BORRADOR]` — igual que
+`REGISTRO_DE_CONFIRMACION` (una entrada por `AccionCopilot`) — igual que
 `service.py` arma `REGISTRO_EJECUTORES` a partir de `executors_escritura.py`.
 """
 
@@ -27,7 +27,13 @@ from app.modules.copilot import propuestas
 from app.modules.copilot.acciones import REGISTRO_DE_CONFIRMACION, AccionCopilot
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments import queries as shipments_queries
-from app.modules.shipments.gestion import DatosDeBulto, DatosDeCarga, DatosInvalidos, crear
+from app.modules.shipments.gestion import (
+    DatosDeBulto,
+    DatosDeCarga,
+    DatosInvalidos,
+    actualizar,
+    crear,
+)
 
 
 async def confirmar_crear_prealerta_borrador(
@@ -91,6 +97,45 @@ async def confirmar_crear_prealerta_borrador(
     }
 
 
+async def confirmar_procesar_factura_ocr(
+    session: AsyncSession,
+    permisos: PermisosEfectivos,
+    propuesta_id: UUID,
+    campos: dict[str, Any],
+) -> dict[str, Any]:
+    """Actualiza la carga DUEÑA de la factura — nunca crea una carga nueva
+    (a diferencia de `confirmar_crear_prealerta_borrador`, acá siempre parte
+    de un documento que ya pertenece a una carga existente). Reusa
+    `shipments.gestion.actualizar`, el mismo command que usa el PATCH normal:
+    revalida `SHIPMENTS_UPDATE`, el estado editable de la carga y la versión
+    optimista, todo de nuevo acá — no solo al proponer.
+    """
+    propuesta = await propuestas.obtener(session, propuesta_id)
+    datos = dict(propuesta.payload)
+    # `shipment_id` y `row_version` salen SIEMPRE de la propuesta ya
+    # persistida, nunca de `campos`: la persona corrige el número de
+    # factura, no a qué carga ni sobre qué versión se aplica.
+    datos.update(
+        {c: v for c, v in campos.items() if c not in ("company_id", "shipment_id", "row_version")}
+    )
+
+    factura = datos.get("factura")
+    if not factura:
+        raise DatosInvalidos("No hay ningún número de factura para guardar.")
+
+    nueva_version = await actualizar(
+        session,
+        shipment_id=UUID(str(datos["shipment_id"])),
+        cambios={"invoice": factura},
+        row_version=int(datos["row_version"]),
+        actor_user_id=propuesta.created_by,
+        permisos=permisos,
+    )
+
+    return {"shipment_id": str(datos["shipment_id"]), "row_version": nueva_version}
+
+
 REGISTRO_DE_CONFIRMACION[AccionCopilot.CREAR_PREALERTA_BORRADOR] = (
     confirmar_crear_prealerta_borrador
 )
+REGISTRO_DE_CONFIRMACION[AccionCopilot.PROCESAR_FACTURA_OCR] = confirmar_procesar_factura_ocr
