@@ -74,6 +74,8 @@ logs/
 media/
 uploads/
 storage/
+!backend/app/infrastructure/storage/
+!backend/app/infrastructure/storage/**
 minio-data/
 pgdata/
 postgres-data/

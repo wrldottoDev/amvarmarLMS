@@ -69,6 +69,43 @@ jobs:
         # Corren igual en la suite completa antes de desplegar.
         run: pytest -q -m "not slow" --cov=app --cov-report=term-missing
 
+  frontend:
+    name: Frontend — lint, tipos, pruebas y build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # No hay .nvmrc ni "engines" en package.json que fije la versión;
+          # 22 es la LTS activa al momento de escribir este job. Si el
+          # proyecto fija una versión más adelante, hay que leerla de ahí en
+          # vez de este número suelto.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm ci
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
+      - name: Tipos (tsc)
+        working-directory: frontend
+        run: npm run types
+      - name: Vitest
+        working-directory: frontend
+        run: npm test
+      - name: Build de producción
+        working-directory: frontend
+        run: npm run build
+      # Playwright (npm run test:e2e) queda fuera de CI a propósito: el
+      # webServer que arranca (ver frontend/playwright.config.ts) necesita
+      # PostgreSQL, Redis y MinIO reales más datos de seed_demo, y hoy eso
+      # significa levantar el stack completo dentro del runner. Vale la pena
+      # sumarlo cuando el spec de escritura (tests/e2e) demuestre ser estable
+      # corriendo así en CI, no antes: un e2e frágil en CI entrena a ignorar
+      # el rojo, que es peor que no tenerlo.
+
   migraciones:
     name: Migraciones al día
     runs-on: ubuntu-latest
