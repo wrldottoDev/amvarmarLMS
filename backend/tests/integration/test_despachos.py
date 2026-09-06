@@ -8,6 +8,7 @@ from scripts.seed_document_types import sembrar as sembrar_documentos
 from scripts.seed_rbac import sembrar as sembrar_rbac
 from scripts.seed_shipment_statuses import sembrar as sembrar_estados
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.errors import RecursoNoEncontrado
@@ -145,6 +146,37 @@ async def _estado_carga(session: AsyncSession, shipment_id: uuid.UUID) -> str:
             text("SELECT current_status_code FROM shipments WHERE id = :id"), {"id": shipment_id}
         )
     ).scalar_one()
+
+
+class TestMetodosDeTransporte:
+    """Solo `SEA`, `AIR` y `LAND`.
+
+    `PICKUP` nunca describió un modo de transporte sino quién retiraba la
+    mercancía, que es otra dimensión. Mezclarlos hacía imposible saber si un
+    despacho salió por mar o por aire.
+    """
+
+    def test_el_catalogo_tiene_exactamente_tres_metodos(self) -> None:
+        assert {m.value for m in DispatchMethod} == {"SEA", "AIR", "LAND"}
+
+    async def test_la_base_rechaza_un_metodo_fuera_del_catalogo(
+        self, session: AsyncSession
+    ) -> None:
+        """El CHECK es la última defensa.
+
+        Si mañana alguien reintroduce el valor en un enum de Python, o escribe
+        directo contra la base, la restricción lo frena igual.
+        """
+        ctx = await _entorno(session)
+
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text("""
+                    INSERT INTO dispatch_requests (company_id, requested_by, method, status)
+                    VALUES (:c, :u, 'PICKUP', 'PENDING')
+                """),
+                {"c": ctx["empresa"], "u": ctx["cliente"]},
+            )
 
 
 class TestCreacion:

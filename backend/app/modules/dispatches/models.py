@@ -13,7 +13,6 @@ class DispatchMethod(StrEnum):
     SEA = "SEA"
     AIR = "AIR"
     LAND = "LAND"
-    PICKUP = "PICKUP"
 
 
 class DispatchStatus(StrEnum):
@@ -85,7 +84,7 @@ class DispatchRequest(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("method IN ('SEA', 'AIR', 'LAND', 'PICKUP')", name="method_valido"),
+        CheckConstraint("method IN ('SEA', 'AIR', 'LAND')", name="method_valido"),
         CheckConstraint(
             "status IN ('PENDING', 'APPROVED', 'PREPARING', 'DISPATCHED', "
             "'COMPLETED', 'REJECTED', 'CANCELLED')",
