@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada, SinPermiso
 from app.modules.audit.outbox import publicar
 from app.modules.audit.service import registrar
+from app.modules.notifications import service as notificaciones
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments.models import (
@@ -92,6 +93,11 @@ _COLUMNA_DE_FECHA: dict[str, str] = {
 # ADR-0007: retención operativa de 6 meses desde que la carga llega a
 # cualquiera de estos dos estados finales.
 _DISPARA_RETENCION: frozenset[str] = frozenset({ShipmentStatus.DELIVERED, ShipmentStatus.CANCELLED})
+
+# ADR-0008 no fija un número — una semana de aviso es el mismo margen que se
+# usa en la industria para expiraciones de este tipo, y alcanza para que el
+# cliente pida una copia antes de que se recomprima.
+_DIAS_DE_AVISO_ARCHIVADO = 7
 
 
 @dataclass(frozen=True)
@@ -902,6 +908,62 @@ async def archivar_pendientes(session: AsyncSession, *, limite: int = 500) -> in
             resource_id=fila.id,
             company_id=fila.company_id,
             # `actor_user_id=None`: lo ejecutó el barrido, no una persona.
+        )
+
+    return len(filas)
+
+
+async def avisar_archivado_proximo(session: AsyncSession, *, limite: int = 500) -> int:
+    """Barrido de aviso previo (ADR-0008): "documentos por archivar".
+
+    Mismas exclusiones que `archivar_pendientes` (legal hold, revisión legacy,
+    disputa abierta) — avisar de un archivado que en realidad no va a ocurrir
+    todavía sería una falsa alarma. La diferencia es la ventana: acá se agarra
+    lo que está por vencer, no lo que ya venció.
+
+    Un aviso por carga, no uno por día: `dedup_key` incluye `retention_until`,
+    así que si la carga vuelve a abrirse (reversión por disputa) y luego se
+    vuelve a entregar, el nuevo plazo de retención genera su propio aviso.
+    """
+    filas = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT s.id, s.company_id, s.retention_until,
+                           (
+                               SELECT r.value FROM shipment_references r
+                               WHERE r.shipment_id = s.id AND r.reference_type IN ('WR', 'INVOICE')
+                               ORDER BY CASE r.reference_type WHEN 'WR' THEN 0 ELSE 1 END, r.created_at
+                               LIMIT 1
+                           ) AS referencia
+                    FROM shipments s
+                    WHERE s.current_status_code IN ('DELIVERED', 'CANCELLED')
+                      AND s.retention_until > now()
+                      AND s.retention_until <= now() + make_interval(days => :dias)
+                      AND s.archived_at IS NULL
+                      AND s.legal_hold = false
+                      AND s.legacy_review_required = false
+                      AND NOT EXISTS (
+                          SELECT 1 FROM delivery_disputes d
+                          WHERE d.shipment_id = s.id AND d.status = 'OPEN'
+                      )
+                    ORDER BY s.retention_until
+                    LIMIT :limite
+                """),
+                {"dias": _DIAS_DE_AVISO_ARCHIVADO, "limite": limite},
+            )
+        ).all()
+    )
+
+    for fila in filas:
+        await notificaciones.notificar(
+            session,
+            event_code="document.archiving_soon",
+            destinatarios=await notificaciones.destinatarios_de_empresa(session, fila.company_id),
+            resource_type="shipment",
+            resource_id=fila.id,
+            referencia=fila.referencia,
+            dedup_key=f"archiving_soon:{fila.id}:{fila.retention_until.isoformat()}",
         )
 
     return len(filas)

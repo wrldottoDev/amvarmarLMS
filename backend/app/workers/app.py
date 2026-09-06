@@ -71,6 +71,12 @@ def crear_celery() -> Celery:
                 "task": "copilot.expire_proposals",
                 "schedule": 600.0,
             },
+            # ADR-0008: aviso de "documentos por archivar", una semana antes
+            # de que `archive-pending-shipments-daily` los archive de verdad.
+            "notify-archiving-soon-daily": {
+                "task": "shipments.notify_archiving_soon",
+                "schedule": crontab(hour=2, minute=45),
+            },
             # ADR-0007: "un barrido periódico (ej. diario)" — a las 3am, fuera
             # de horario de oficina, distinto del patrón reactivo del outbox.
             "archive-pending-shipments-daily": {
