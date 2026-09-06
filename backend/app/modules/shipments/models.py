@@ -103,7 +103,6 @@ class TransportMode(StrEnum):
     SEA = "SEA"
     AIR = "AIR"
     LAND = "LAND"
-    COURIER = "COURIER"
 
 
 class Location(Base, TimestampMixin):
@@ -216,12 +215,12 @@ class Shipment(Base, TimestampMixin):
     # Pies cúbicos (CFTS en el sistema viejo). Se usa para cubicaje.
     foots_cft: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
-    # El legacy pedía kilos y libras por separado, no uno calculado del otro:
-    # quien recibe la carga anota lo que dice la báscula o el documento, y los
-    # dos números no siempre convierten exacto. Convertirlos acá inventaría una
-    # precisión que nadie midió.
+    # El legacy conserva ambos valores tal como se migraron y deja la fuente en
+    # NULL. En una carga nueva o al editar su peso, el backend recibe una sola
+    # fuente y recalcula ambas representaciones.
     weight_lb: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
     weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
+    weight_source_unit: Mapped[str | None] = mapped_column(String(2))
     volumetric_weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
     volume_m3: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
     package_count: Mapped[int] = mapped_column(server_default=text("0"))
@@ -257,10 +256,15 @@ class Shipment(Base, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "transport_mode IS NULL OR transport_mode IN ('SEA', 'AIR', 'LAND', 'COURIER')",
+            "transport_mode IS NULL OR transport_mode IN ('SEA', 'AIR', 'LAND')",
             name="transport_mode_valido",
         ),
         CheckConstraint("weight_kg IS NULL OR weight_kg >= 0", name="peso_no_negativo"),
+        CheckConstraint(
+            "weight_source_unit IS NULL OR (weight_source_unit IN ('KG', 'LB') "
+            "AND weight_kg > 0 AND weight_lb > 0)",
+            name="peso_fuente_valido",
+        ),
         CheckConstraint(
             "volumetric_weight_kg IS NULL OR volumetric_weight_kg >= 0",
             name="peso_volumetrico_no_negativo",
@@ -317,6 +321,26 @@ class Shipment(Base, TimestampMixin):
             "retention_until",
             postgresql_where=text("archived_at IS NULL AND retention_until IS NOT NULL"),
         ),
+        # Búsqueda combinada por similitud (q=...): gin_trgm_ops soporta ILIKE
+        # parcial sin escanear toda la tabla.
+        Index(
+            "ix_shipments_numero_trgm",
+            "shipment_number",
+            postgresql_using="gin",
+            postgresql_ops={"shipment_number": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_shipments_shipper_trgm",
+            "shipper",
+            postgresql_using="gin",
+            postgresql_ops={"shipper": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_shipments_carrier_trgm",
+            "carrier",
+            postgresql_using="gin",
+            postgresql_ops={"carrier": "gin_trgm_ops"},
+        ),
     )
 
 
@@ -352,6 +376,8 @@ class EventType(StrEnum):
     DOCUMENT_ADDED = "DOCUMENT_ADDED"
     REQUIREMENT_OPENED = "REQUIREMENT_OPENED"
     REQUIREMENT_FULFILLED = "REQUIREMENT_FULFILLED"
+    DELIVERY_DISPUTED = "DELIVERY_DISPUTED"
+    DELIVERY_DISPUTE_RESOLVED = "DELIVERY_DISPUTE_RESOLVED"
     NOTE = "NOTE"
     # Una corrección NO edita el evento equivocado: agrega uno nuevo que lo
     # explica. La tabla es append-only.
@@ -373,6 +399,12 @@ class ShipmentReference(Base):
 
     reference_type: Mapped[str] = mapped_column(String(24))
     value: Mapped[str] = mapped_column(String(180))
+    # WR se compara normalizado dentro de la facility que lo emitió. Un trigger
+    # deriva ambos campos también para inserciones del migrador o SQL directo.
+    facility_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("facilities.id", ondelete="RESTRICT")
+    )
+    normalized_value: Mapped[str] = mapped_column(String(180))
     issuer: Mapped[str | None] = mapped_column(String(180))
     is_primary: Mapped[bool] = mapped_column(server_default=text("false"))
 
@@ -387,9 +419,26 @@ class ShipmentReference(Base):
         UniqueConstraint(
             "shipment_id", "reference_type", "value", name="uq_shipment_references_valor"
         ),
+        CheckConstraint(
+            "reference_type <> 'WR' OR facility_id IS NOT NULL",
+            name="wr_exige_facility",
+        ),
         # Búsqueda por número de factura o tracking: es como el cliente encuentra
         # su carga cuando no recuerda el shipment_number.
         Index("ix_shipment_references_busqueda", "reference_type", "value"),
+        Index(
+            "uq_shipment_references_wr_facility",
+            "facility_id",
+            "normalized_value",
+            unique=True,
+            postgresql_where=text("reference_type = 'WR'"),
+        ),
+        Index(
+            "ix_shipment_references_value_trgm",
+            "value",
+            postgresql_using="gin",
+            postgresql_ops={"value": "gin_trgm_ops"},
+        ),
     )
 
 
@@ -559,6 +608,12 @@ class ShipmentRequirement(Base):
 
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     completed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    verified_document_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT")
+    )
+    reviewed_document_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT")
+    )
 
     # Motivo obligatorio al exonerar (WAIVED) o rechazar (REJECTED).
     resolution_reason: Mapped[str | None] = mapped_column(Text)
@@ -601,4 +656,60 @@ class ShipmentRequirement(Base):
             "required_from",
             postgresql_where=text("status IN ('OPEN', 'PENDING', 'UPLOADED', 'REJECTED')"),
         ),
+    )
+
+
+class DisputeStatus(StrEnum):
+    OPEN = "OPEN"
+    # Se sostiene la entrega tal cual quedó registrada.
+    RESOLVED_CONFIRMED = "RESOLVED_CONFIRMED"
+    # Dispara la reversión de DELIVERED — sujeta a las mismas reglas de
+    # siempre (SUPER_ADMIN, motivo obligatorio, ver `service.transicionar`).
+    RESOLVED_REVERTED = "RESOLVED_REVERTED"
+
+
+class DeliveryDispute(Base):
+    """Inconformidad del cliente con una entrega ya marcada (ADR-0006).
+
+    Reportarla NO cambia el estado por sí sola — es Operaciones quien
+    resuelve, y solo `RESOLVED_REVERTED` toca `shipments.current_status_code`
+    (vía el motor de transiciones normal, no un UPDATE propio acá). Mientras
+    está `OPEN`, bloquea el archivado de la carga (ADR-0007).
+    """
+
+    __tablename__ = "delivery_disputes"
+
+    id: Mapped[UUIDPk]
+    shipment_id: Mapped[UUID] = mapped_column(ForeignKey("shipments.id", ondelete="RESTRICT"))
+    raised_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), server_default=text("'OPEN'"))
+
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+    resolved_at: Mapped[datetime | None]
+    resolved_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('OPEN', 'RESOLVED_CONFIRMED', 'RESOLVED_REVERTED')",
+            name="dispute_status_valido",
+        ),
+        CheckConstraint(
+            "status = 'OPEN' OR (resolved_at IS NOT NULL AND resolved_by_user_id IS NOT NULL)",
+            name="dispute_resuelta_tiene_fecha_y_actor",
+        ),
+        # Una carga no tiene dos inconformidades abiertas a la vez — hay que
+        # resolver la que ya existe antes de reportar otra.
+        Index(
+            "ix_delivery_disputes_una_abierta_por_carga",
+            "shipment_id",
+            unique=True,
+            postgresql_where=text("status = 'OPEN'"),
+        ),
+        # El barrido de archivado (ADR-0007) consulta "¿hay alguna abierta
+        # para esta carga?" — el mismo índice de arriba ya lo resuelve barato,
+        # pero se nombra acá para que quede documentada la razón de ambos.
     )

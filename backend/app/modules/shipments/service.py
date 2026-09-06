@@ -9,16 +9,20 @@ cambiado sin su rastro.
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
+from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada, SinPermiso
 from app.modules.audit.outbox import publicar
+from app.modules.audit.service import registrar
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments.models import (
+    DisputeStatus,
     EventType,
     RequirementStatus,
     RequirementType,
@@ -108,6 +112,15 @@ class DatosTransicion:
     metadatos: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TransicionDisponible:
+    to_status: str
+    label: str
+    requires_reason: bool
+    blocked: bool
+    blockers: list[dict[str, object]]
+
+
 async def _cargar_para_actualizar(session: AsyncSession, shipment_id: UUID) -> CargaBloqueada:
     """Bloquea la fila hasta el fin de la transacción.
 
@@ -162,6 +175,7 @@ async def transicionar(
     datos: DatosTransicion,
     actor_user_id: UUID,
     permisos: PermisosEfectivos,
+    ip_address: str | None = None,
 ) -> ResultadoTransicion:
     carga = await _cargar_para_actualizar(session, shipment_id)
     desde = carga.current_status_code
@@ -274,6 +288,22 @@ async def transicionar(
         dedup_key=f"shipment:{shipment_id}:v{nueva_version}",
     )
 
+    # Vive en el motor y no solo en el router: los estados iniciales, acciones
+    # masivas y despachos también pasan por aquí y deben dejar la misma
+    # auditoría que una transición HTTP individual.
+    await registrar(
+        session,
+        action="shipment.status.changed",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor_user_id,
+        company_id=carga.company_id,
+        before_data={"status": desde, "row_version": carga.row_version},
+        after_data={"status": datos.to_status, "row_version": nueva_version},
+        reason=datos.note,
+        ip_address=ip_address,
+    )
+
     # 9. Al recibir y al almacenar, se abren los requisitos documentales que le
     #    tocan a esta carga. Va DESPUÉS de aplicar el estado: la aplicabilidad
     #    de la SLI depende de la bodega, y en `PRE_ALERT` todavía no se sabe.
@@ -289,6 +319,71 @@ async def transicionar(
         row_version=nueva_version,
         evento_id=evento_id,
     )
+
+
+async def transiciones_disponibles(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    permisos: PermisosEfectivos,
+) -> list[TransicionDisponible]:
+    """Destinos autorizados y bloqueos actuales, sin cambiar el agregado."""
+    carga = (
+        await session.execute(
+            text("""
+                SELECT id, company_id, current_status_code
+                FROM shipments
+                WHERE id = :id AND deleted_at IS NULL
+            """),
+            {"id": shipment_id},
+        )
+    ).one_or_none()
+    if carga is None or not permisos.permite(Perm.SHIPMENTS_READ, company_id=carga.company_id):
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    filas = (
+        await session.execute(
+            text("""
+                SELECT t.to_status_code, t.requires_reason, p.code AS permiso,
+                       st.label
+                FROM shipment_status_transitions t
+                JOIN permissions p ON p.id = t.required_permission_id
+                JOIN shipment_statuses st ON st.code = t.to_status_code
+                WHERE t.from_status_code = :desde
+                  AND t.is_active AND st.is_active
+                ORDER BY st.sort_order
+            """),
+            {"desde": carga.current_status_code},
+        )
+    ).all()
+
+    disponibles: list[TransicionDisponible] = []
+    for fila in filas:
+        if not permisos.permite(fila.permiso, company_id=carga.company_id):
+            continue
+
+        bloqueos: list[dict[str, object]] = []
+        try:
+            await _validar_politicas(
+                session,
+                shipment_id=shipment_id,
+                desde=carga.current_status_code,
+                hacia=fila.to_status_code,
+            )
+        except (ReglaDeNegocioViolada, Conflicto) as error:
+            bloqueos = [{"code": error.code, "message": error.message, "details": error.details}]
+
+        disponibles.append(
+            TransicionDisponible(
+                to_status=fila.to_status_code,
+                label=fila.label,
+                requires_reason=fila.requires_reason,
+                blocked=bool(bloqueos),
+                blockers=bloqueos,
+            )
+        )
+
+    return disponibles
 
 
 async def _validar_politicas(
@@ -485,6 +580,14 @@ async def resolver_requisito(
     if fila is None:
         raise RecursoNoEncontrado("Requisito no encontrado.")
 
+    if fila.requirement_type == RequirementType.DOCUMENT and nuevo_estado in {
+        RequirementStatus.VERIFIED,
+        RequirementStatus.REJECTED,
+    }:
+        raise TransicionDeRequisitoInvalida(
+            "Los requisitos documentales se verifican o rechazan seleccionando el archivo revisado."
+        )
+
     # Exonerar deja avanzar la carga SIN el documento obligatorio, así que pide
     # su propio permiso: `manage` no alcanza (solo OPS_ADMIN y SUPER_ADMIN).
     requerido = (
@@ -549,6 +652,343 @@ async def resolver_requisito(
     return shipment_id
 
 
+async def reportar_inconformidad(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    reason: str,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+) -> UUID:
+    """Cliente reporta que no reconoce una entrega ya marcada (ADR-0006).
+
+    NO cambia el estado por sí sola — eso lo decide Operaciones al resolver
+    (`resolver_inconformidad`). Mientras está `OPEN`, bloquea el archivado de
+    la carga (ADR-0007, `shipments/queries.py::candidatas_a_archivar`).
+    """
+    fila = (
+        await session.execute(
+            text("""
+                SELECT company_id, current_status_code
+                FROM shipments WHERE id = :s AND deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"s": shipment_id},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+
+    if not permisos.permite(Perm.SHIPMENTS_DISPUTE_CREATE, company_id=fila.company_id):
+        raise SinPermiso(Perm.SHIPMENTS_DISPUTE_CREATE)
+
+    if fila.current_status_code != ShipmentStatus.DELIVERED:
+        raise ReglaDeNegocioViolada(
+            "Solo se puede reportar una inconformidad sobre una carga ya entregada."
+        )
+
+    if not reason.strip():
+        raise MotivoRequerido("Contá por qué no reconocés la entrega.")
+
+    try:
+        dispute_id: UUID = (
+            await session.execute(
+                text("""
+                    INSERT INTO delivery_disputes (shipment_id, raised_by_user_id, reason)
+                    VALUES (:s, :actor, :reason)
+                    RETURNING id
+                """),
+                {"s": shipment_id, "actor": actor_user_id, "reason": reason.strip()},
+            )
+        ).scalar_one()
+    except IntegrityError as error:
+        # El índice único parcial (`ix_delivery_disputes_una_abierta_por_carga`)
+        # es la garantía real — esto solo la traduce a un error legible.
+        raise Conflicto("Ya hay una inconformidad abierta para esta carga.") from error
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_events
+                (shipment_id, event_type, title, description, occurred_at, actor_user_id)
+            VALUES (:s, :tipo, :titulo, :descripcion, now(), :actor)
+        """),
+        {
+            "s": shipment_id,
+            "tipo": EventType.DELIVERY_DISPUTED.value,
+            "titulo": "Inconformidad de entrega reportada",
+            "descripcion": reason.strip(),
+            "actor": actor_user_id,
+        },
+    )
+
+    return dispute_id
+
+
+async def resolver_inconformidad(
+    session: AsyncSession,
+    *,
+    dispute_id: UUID,
+    nuevo_estado: str,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+    motivo: str | None = None,
+    ip_address: str | None = None,
+) -> UUID:
+    """Resuelve una inconformidad de entrega. Devuelve el `shipment_id`.
+
+    `RESOLVED_REVERTED` dispara la reversión real vía `transicionar()` — el
+    mismo motor de transiciones que cualquier otro cambio de estado, con su
+    propia revalidación de permiso (`SHIPMENTS_TRANSITION_REVERT_DELIVERED`,
+    exclusivo de `SUPER_ADMIN` — esta decisión no cambia esa regla, la
+    reafirma) y su propio evento. No se duplica esa lógica acá.
+    """
+    fila = (
+        await session.execute(
+            text("""
+                SELECT d.shipment_id, d.status, s.company_id, s.row_version
+                FROM delivery_disputes d
+                JOIN shipments s ON s.id = d.shipment_id
+                WHERE d.id = :id
+                FOR UPDATE OF d
+            """),
+            {"id": dispute_id},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise RecursoNoEncontrado("Inconformidad no encontrada.")
+
+    if not permisos.permite(Perm.SHIPMENTS_DISPUTE_RESOLVE, company_id=fila.company_id):
+        raise SinPermiso(Perm.SHIPMENTS_DISPUTE_RESOLVE)
+
+    if fila.status != DisputeStatus.OPEN:
+        raise Conflicto(f"La inconformidad ya está {fila.status} y no admite más cambios.")
+
+    if nuevo_estado == DisputeStatus.RESOLVED_REVERTED:
+        if not (motivo or "").strip():
+            raise MotivoRequerido("Revertir la entrega exige una justificación.")
+        # `transicionar` valida por su cuenta que la carga siga en DELIVERED
+        # (rechaza cualquier otro origen) y revalida el permiso — no hace
+        # falta duplicar ninguno de los dos chequeos acá.
+        await transicionar(
+            session,
+            shipment_id=fila.shipment_id,
+            datos=DatosTransicion(
+                to_status=ShipmentStatus.DISPATCHED, row_version=fila.row_version, note=motivo
+            ),
+            actor_user_id=actor_user_id,
+            permisos=permisos,
+            ip_address=ip_address,
+        )
+    elif nuevo_estado != DisputeStatus.RESOLVED_CONFIRMED:
+        raise ReglaDeNegocioViolada(f"Estado de resolución inválido: {nuevo_estado}.")
+
+    await session.execute(
+        text("""
+            UPDATE delivery_disputes
+            SET status = :estado, resolved_at = now(), resolved_by_user_id = :actor
+            WHERE id = :id
+        """),
+        {"estado": nuevo_estado, "actor": actor_user_id, "id": dispute_id},
+    )
+
+    await session.execute(
+        text("""
+            INSERT INTO shipment_events
+                (shipment_id, event_type, title, description, occurred_at, actor_user_id)
+            VALUES (:s, :tipo, :titulo, :descripcion, now(), :actor)
+        """),
+        {
+            "s": fila.shipment_id,
+            "tipo": EventType.DELIVERY_DISPUTE_RESOLVED.value,
+            "titulo": f"Inconformidad resuelta: {nuevo_estado}",
+            "descripcion": motivo,
+            "actor": actor_user_id,
+        },
+    )
+
+    shipment_id: UUID = fila.shipment_id
+    return shipment_id
+
+
+class EvidenciaDocumentalInvalida(ReglaDeNegocioViolada):
+    code = "REQUIREMENT_DOCUMENT_INVALID"
+
+
+async def _requisito_y_documento_para_revision(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    requirement_id: UUID,
+    document_id: UUID,
+) -> Any:
+    fila = (
+        await session.execute(
+            text("""
+                SELECT r.id, r.shipment_id, r.requirement_type, r.document_type_id,
+                       r.status, r.title, s.company_id,
+                       d.id AS document_id, d.upload_status, d.deleted_at
+                FROM shipment_requirements r
+                JOIN shipments s ON s.id = r.shipment_id
+                LEFT JOIN shipment_documents sd
+                  ON sd.shipment_id = r.shipment_id
+                 AND sd.document_type_id = r.document_type_id
+                 AND sd.document_id = :document_id
+                LEFT JOIN documents d ON d.id = sd.document_id
+                WHERE r.id = :requirement_id AND r.shipment_id = :shipment_id
+                FOR UPDATE OF r
+            """),
+            {
+                "shipment_id": shipment_id,
+                "requirement_id": requirement_id,
+                "document_id": document_id,
+            },
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise RecursoNoEncontrado("Requisito no encontrado.")
+    if fila.requirement_type != RequirementType.DOCUMENT or fila.document_type_id is None:
+        raise EvidenciaDocumentalInvalida("El requisito no es documental.")
+    if fila.document_id is None or fila.upload_status != "READY" or fila.deleted_at is not None:
+        raise EvidenciaDocumentalInvalida(
+            "Seleccione un documento listo, vigente y del mismo tipo que el requisito."
+        )
+    return fila
+
+
+async def verificar_requisito_documental(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    requirement_id: UUID,
+    document_id: UUID,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+    nota: str | None = None,
+) -> None:
+    fila = await _requisito_y_documento_para_revision(
+        session,
+        shipment_id=shipment_id,
+        requirement_id=requirement_id,
+        document_id=document_id,
+    )
+    if not permisos.permite(Perm.DOCUMENTS_VERIFY, company_id=fila.company_id):
+        raise SinPermisoSobreRequisito(Perm.DOCUMENTS_VERIFY)
+    if fila.status != RequirementStatus.UPLOADED:
+        raise TransicionDeRequisitoInvalida(
+            f"El requisito está {fila.status}; solo un documento subido puede verificarse."
+        )
+
+    await session.execute(
+        text("""
+            UPDATE shipment_requirements
+            SET status = 'VERIFIED', verified_document_id = :document_id,
+                reviewed_document_id = :document_id, resolution_reason = :nota,
+                completed_by = :actor, completed_at = now()
+            WHERE id = :id
+        """),
+        {
+            "document_id": document_id,
+            "nota": (nota or "").strip() or None,
+            "actor": actor_user_id,
+            "id": requirement_id,
+        },
+    )
+    await _evento_revision_documental(
+        session,
+        fila=fila,
+        estado=RequirementStatus.VERIFIED.value,
+        actor_user_id=actor_user_id,
+        descripcion=nota,
+    )
+
+
+async def rechazar_requisito_documental(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    requirement_id: UUID,
+    document_id: UUID,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+    motivo: str,
+) -> None:
+    if not motivo.strip():
+        raise MotivoRequerido("Rechazar un documento exige una justificación.")
+    fila = await _requisito_y_documento_para_revision(
+        session,
+        shipment_id=shipment_id,
+        requirement_id=requirement_id,
+        document_id=document_id,
+    )
+    if not permisos.permite(Perm.DOCUMENTS_VERIFY, company_id=fila.company_id):
+        raise SinPermisoSobreRequisito(Perm.DOCUMENTS_VERIFY)
+    if fila.status != RequirementStatus.UPLOADED:
+        raise TransicionDeRequisitoInvalida(
+            f"El requisito está {fila.status}; solo un documento subido puede rechazarse."
+        )
+
+    await session.execute(
+        text("""
+            UPDATE shipment_requirements
+            SET status = 'REJECTED', verified_document_id = NULL,
+                reviewed_document_id = :document_id, resolution_reason = :motivo,
+                completed_by = NULL, completed_at = NULL
+            WHERE id = :id
+        """),
+        {
+            "document_id": document_id,
+            "motivo": motivo.strip(),
+            "id": requirement_id,
+        },
+    )
+    await _evento_revision_documental(
+        session,
+        fila=fila,
+        estado=RequirementStatus.REJECTED.value,
+        actor_user_id=actor_user_id,
+        descripcion=motivo,
+    )
+    await publicar(
+        session,
+        aggregate_type="shipment",
+        aggregate_id=shipment_id,
+        event_type="shipment.document_rejected",
+        payload={
+            "requirement_id": str(requirement_id),
+            "document_id": str(document_id),
+            "motivo": motivo.strip(),
+        },
+        dedup_key=f"requirement:{requirement_id}:rejected:{document_id}",
+    )
+
+
+async def _evento_revision_documental(
+    session: AsyncSession,
+    *,
+    fila: Any,
+    estado: str,
+    actor_user_id: UUID,
+    descripcion: str | None,
+) -> None:
+    await session.execute(
+        text("""
+            INSERT INTO shipment_events
+                (shipment_id, event_type, title, description, occurred_at, actor_user_id)
+            VALUES (:s, :tipo, :titulo, :descripcion, now(), :actor)
+        """),
+        {
+            "s": fila.shipment_id,
+            "tipo": EventType.REQUIREMENT_FULFILLED.value,
+            "titulo": f"Documento {estado}: {fila.title}",
+            "descripcion": (descripcion or "").strip() or None,
+            "actor": actor_user_id,
+        },
+    )
+
+
 def _json(datos: dict[str, object]) -> str:
     return json.dumps(datos, default=str, ensure_ascii=False)
 
@@ -574,10 +1014,12 @@ _SQL_SINCRONIZAR_REQUISITOS = f"""
         (shipment_id, requirement_type, document_type_id, title, description,
          required_from, status, blocks_dispatch, created_by)
     SELECT s.id, 'DOCUMENT', dt.id, dt.label, dt.description,
-           dt.provided_by, 'PENDING', true, :actor
+           CASE WHEN dt.provided_by = 'STAFF' THEN 'STAFF' ELSE 'CLIENT' END,
+           'PENDING', true, :actor
     FROM shipments s
     LEFT JOIN facilities f ON f.id = s.origin_facility_id
     JOIN document_types dt ON dt.is_active
+                          AND dt.context = 'SHIPMENT'
                           AND dt.required_before_status IS NOT NULL
     WHERE s.id = :shipment_id
       AND CASE dt.code

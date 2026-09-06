@@ -35,6 +35,12 @@ class Perm:
     SHIPMENTS_REOPEN = "shipments.reopen"
     SHIPMENTS_LEGACY_REVIEW_RESOLVE = "shipments.legacy_review.resolve"
     SHIPMENTS_LEGAL_HOLD_MANAGE = "shipments.legal_hold.manage"
+    # ADR-0006: reportar que no se reconoce una entrega ya marcada. No cambia
+    # el estado por sí sola — eso lo hace `dispute.resolve` (RESOLVED_CONFIRMED)
+    # o `transition.revert_delivered` (RESOLVED_REVERTED, ya exclusivo de
+    # SUPER_ADMIN, esta decisión no lo cambia).
+    SHIPMENTS_DISPUTE_CREATE = "shipments.dispute.create"
+    SHIPMENTS_DISPUTE_RESOLVE = "shipments.dispute.resolve"
     SHIPMENTS_REQUIREMENT_MANAGE = "shipments.requirement.manage"
     # Exonerar es distinto de gestionar: deja avanzar una carga SIN el documento
     # obligatorio. Por eso es permiso propio y no lo tiene OPS_AGENT.
@@ -44,6 +50,7 @@ class Perm:
     DISPATCH_REQUESTS_APPROVE = "dispatch_requests.approve"
     DISPATCH_REQUESTS_REJECT = "dispatch_requests.reject"
     DISPATCH_REQUESTS_PREPARE = "dispatch_requests.prepare"
+    DISPATCH_REQUESTS_DISPATCH = "dispatch_requests.dispatch"
     DISPATCH_REQUESTS_COMPLETE = "dispatch_requests.complete"
     # ADR-0013: la restricción por estado (el cliente solo antes de aprobar) no
     # vive en el permiso sino en la política de dominio.
@@ -86,13 +93,16 @@ PERMISSIONS: dict[str, str] = {
     Perm.SHIPMENTS_REOPEN: "Reabrir una carga cancelada",
     Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE: "Resolver cargas marcadas para revisión legacy",
     Perm.SHIPMENTS_LEGAL_HOLD_MANAGE: "Activar o desactivar retención especial (legal hold)",
+    Perm.SHIPMENTS_DISPUTE_CREATE: "Reportar que no se reconoce una entrega",
+    Perm.SHIPMENTS_DISPUTE_RESOLVE: "Resolver una inconformidad de entrega",
     Perm.SHIPMENTS_REQUIREMENT_MANAGE: "Abrir, cancelar y resolver requisitos de una carga",
     Perm.SHIPMENTS_REQUIREMENT_WAIVE: "Exonerar un requisito obligatorio (exige justificación)",
     Perm.DISPATCH_REQUESTS_CREATE: "Solicitar despacho",
     Perm.DISPATCH_REQUESTS_APPROVE: "Aprobar una solicitud de despacho",
     Perm.DISPATCH_REQUESTS_REJECT: "Rechazar una solicitud de despacho (motivo obligatorio)",
     Perm.DISPATCH_REQUESTS_PREPARE: "Preparar despacho",
-    Perm.DISPATCH_REQUESTS_COMPLETE: "Confirmar y finalizar despacho",
+    Perm.DISPATCH_REQUESTS_DISPATCH: "Confirmar salida de bodega",
+    Perm.DISPATCH_REQUESTS_COMPLETE: "Cerrar administrativamente un despacho",
     Perm.DISPATCH_REQUESTS_CANCEL: "Cancelar una solicitud de despacho",
     Perm.DOCUMENTS_UPLOAD_CLIENT: "Subir documentos del cliente",
     Perm.DOCUMENTS_UPLOAD_INTERNAL: "Subir documentos internos (packing list, BL)",
@@ -112,29 +122,47 @@ PERMISSIONS: dict[str, str] = {
 }
 
 
-_CLIENT_USER_PERMS: frozenset[str] = frozenset(
+# Los dos roles de cliente comparten EXACTAMENTE la misma matriz.
+#
+# Antes `CLIENT_USER` era un subconjunto de `CLIENT_ADMIN`, y en la práctica eso
+# significaba que una empresa con una sola persona no podía dar de alta a la
+# segunda: quien recibía la cuenta inicial quedaba sin `users.manage` y tenía que
+# pedirle a Operaciones que le creara los compañeros. AMVARMAR decidió que dentro
+# de una empresa cliente todos pueden lo mismo.
+#
+# Es un solo conjunto y no dos que casualmente coinciden: dos definiciones
+# separadas vuelven a divergir en cuanto alguien agrega un permiso a una sola.
+# Los códigos de rol se conservan separados porque la distinción puede volver a
+# tener contenido, y renombrarlos obligaría a migrar asignaciones existentes.
+_CLIENT_PERMS: frozenset[str] = frozenset(
     {
         Perm.SHIPMENTS_READ,
         Perm.SHIPMENTS_CREATE,
         Perm.SHIPMENTS_UPDATE,
+        Perm.SHIPMENTS_CANCEL_PREALERT,
+        Perm.SHIPMENTS_DISPUTE_CREATE,
         Perm.DISPATCH_REQUESTS_CREATE,
         Perm.DISPATCH_REQUESTS_CANCEL,
         Perm.DOCUMENTS_UPLOAD_CLIENT,
-        Perm.NOTIFICATIONS_PREFERENCES_OWN,
-        Perm.COPILOT_USE,
-    }
-)
-
-# CLIENT_ADMIN = CLIENT_USER + gestión de su empresa.
-_CLIENT_ADMIN_PERMS: frozenset[str] = _CLIENT_USER_PERMS | frozenset(
-    {
-        Perm.SHIPMENTS_CANCEL_PREALERT,
         Perm.USERS_MANAGE,
         Perm.AUDIT_LOGS_READ,
         Perm.REPORTS_EXPORT,
+        Perm.NOTIFICATIONS_PREFERENCES_OWN,
         Perm.NOTIFICATIONS_PREFERENCES_COMPANY,
+        Perm.COPILOT_USE,
+        # ADR-0012, enmienda 2026-09: no amplía capacidades — cada herramienta de
+        # propuesta sigue exigiendo el permiso de dominio de la operación que hace
+        # (proponer_despacho exige dispatch_requests.create, que el cliente ya
+        # tiene). Sin esto, AMVI podía conversar con un cliente pero nunca
+        # prepararle una propuesta.
+        Perm.COPILOT_TOOLS_DRAFT,
     }
 )
+
+# Ninguno de los dos lleva permisos de transición logística: mover una carga por
+# la cadena es trabajo de Operaciones, y el alcance `ORGANIZATION` no cambia eso.
+_CLIENT_USER_PERMS: frozenset[str] = _CLIENT_PERMS
+_CLIENT_ADMIN_PERMS: frozenset[str] = _CLIENT_PERMS
 
 _OPS_AGENT_PERMS: frozenset[str] = frozenset(
     {
@@ -147,6 +175,7 @@ _OPS_AGENT_PERMS: frozenset[str] = frozenset(
         Perm.DISPATCH_REQUESTS_APPROVE,
         Perm.DISPATCH_REQUESTS_REJECT,
         Perm.DISPATCH_REQUESTS_PREPARE,
+        Perm.DISPATCH_REQUESTS_DISPATCH,
         Perm.DISPATCH_REQUESTS_COMPLETE,
         Perm.DISPATCH_REQUESTS_CANCEL,
         Perm.DOCUMENTS_UPLOAD_CLIENT,
@@ -169,6 +198,7 @@ _OPS_ADMIN_PERMS: frozenset[str] = _OPS_AGENT_PERMS | frozenset(
         Perm.SHIPMENTS_REOPEN,
         Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE,
         Perm.SHIPMENTS_LEGAL_HOLD_MANAGE,
+        Perm.SHIPMENTS_DISPUTE_RESOLVE,
         Perm.SHIPMENTS_REQUIREMENT_WAIVE,
         Perm.DOCUMENTS_INVALIDATE,
         Perm.COMPANIES_MANAGE,
@@ -220,7 +250,10 @@ ROLES: dict[str, RoleDefinition] = {
     ),
     RoleCode.CLIENT_USER: RoleDefinition(
         name="Usuario de empresa cliente",
-        description="Consulta cargas, crea prealertas, solicita despachos y sube documentos.",
+        description=(
+            "Las mismas capacidades que el administrador de la empresa: cargas, "
+            "documentos, despachos y usuarios de su propia empresa."
+        ),
         allowed_scopes=(ScopeType.ORGANIZATION,),
         permissions=_CLIENT_USER_PERMS,
     ),
