@@ -46,7 +46,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Falta documentación para despachar",
         mensaje=f"Una de sus cargas no puede despacharse porque falta un documento obligatorio. {_ENTRAR}",
         con_referencia=f"La carga {{ref}} no puede despacharse porque falta un documento obligatorio. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "shipment.requirement_rejected": DefinicionEvento(
         codigo="shipment.requirement_rejected",
@@ -54,7 +54,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Un documento fue rechazado",
         mensaje=f"Se rechazó un documento de una de sus cargas y hay que volver a cargarlo. {_ENTRAR}",
         con_referencia=f"Se rechazó un documento de la carga {{ref}} y hay que volver a cargarlo. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "shipment.permit_review": DefinicionEvento(
         codigo="shipment.permit_review",
@@ -62,7 +62,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Su carga podría requerir un permiso especial",
         mensaje=f"Una de sus cargas quedó marcada para revisión de permisos o inspección. {_ENTRAR}",
         con_referencia=f"La carga {{ref}} quedó marcada para revisión de permisos o inspección. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "dispatch.status_changed": DefinicionEvento(
         codigo="dispatch.status_changed",
@@ -78,7 +78,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Su carga fue despachada",
         mensaje=f"Una de sus cargas salió despachada. {_ENTRAR}",
         con_referencia=f"La carga {{ref}} salió despachada. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "shipment.delivered": DefinicionEvento(
         codigo="shipment.delivered",
@@ -86,7 +86,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Su carga fue entregada",
         mensaje=f"Se registró la entrega de una de sus cargas. {_ENTRAR}",
         con_referencia=f"Se registró la entrega de la carga {{ref}}. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "shipment.corrected": DefinicionEvento(
         codigo="shipment.corrected",
@@ -94,7 +94,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Corrección en el estado de una carga",
         mensaje=f"Se corrigió el estado de una de sus cargas. {_ENTRAR}",
         con_referencia=f"Se corrigió el estado de la carga {{ref}}. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "account.security_alert": DefinicionEvento(
         codigo="account.security_alert",
@@ -104,7 +104,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
             "Se detectó actividad relevante para la seguridad de su cuenta. "
             "Si no la reconoce, cambie su contraseña. Entre al sistema para revisarla."
         ),
-        ruta="/cuenta/seguridad",
+        ruta="/sesiones",
     ),
     # --- Los seis del sistema anterior ---
     #
@@ -121,7 +121,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Su carga está en bodega",
         mensaje=f"Recibimos una carga suya y ya está almacenada. {_ENTRAR}",
         con_referencia=f"Recibimos su carga {{ref}} y ya está almacenada. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "dispatch.requested": DefinicionEvento(
         # Reemplaza `dispatch_received.html`: el acuse al cliente.
@@ -210,7 +210,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
         asunto="Su carga avanzó de estado",
         mensaje=f"Una de sus cargas cambió de estado. {_ENTRAR}",
         con_referencia=f"La carga {{ref}} cambió de estado. {_ENTRAR}",
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
     "document.archiving_soon": DefinicionEvento(
         codigo="document.archiving_soon",
@@ -224,7 +224,7 @@ EVENTOS: dict[str, DefinicionEvento] = {
             "Documentos de la carga {ref} cumplen seis meses y pasarán al historial "
             f"archivado. No se elimina nada. {_ENTRAR}"
         ),
-        ruta="/cargas/{id}",
+        ruta="/shipments/{id}",
     ),
 }
 

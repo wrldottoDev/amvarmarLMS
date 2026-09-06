@@ -26,6 +26,7 @@ from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import service as cargas
 from app.modules.shipments.models import ShipmentStatus
 from tests.integration.test_requisitos_documentales import _carga, _entorno, _permisos
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -133,23 +134,42 @@ async def _carga_con_referencia(
         )
     ).scalar_one()
 
+    facility = None
+    if tipo == "WR":
+        facility = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type,
+                         uses_warehouse_receipt)
+                    VALUES (:l, :codigo, 'WAREHOUSE', true)
+                    RETURNING id
+                """),
+                {"l": ubicacion, "codigo": f"WR-{uuid.uuid4().hex[:8]}"},
+            )
+        ).scalar_one()
+
     shipment_id = (
         await session.execute(
             text("""
                 INSERT INTO shipments
                     (company_id, created_by, origin_location_id, destination_location_id,
-                     transport_mode, current_status_code)
-                VALUES (:c, :autor, :l, :l, 'SEA', :estado)
+                     origin_facility_id, transport_mode, current_status_code)
+                VALUES (:c, :autor, :l, :l, :facility, 'SEA', :estado)
                 RETURNING id
             """),
             {
                 "c": empresa,
                 "autor": creador,
                 "l": ubicacion,
+                "facility": facility,
                 "estado": ShipmentStatus.STORED.value,
             },
         )
     ).scalar_one()
+
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, shipment_id)
 
     if valor is not None:
         await session.execute(
@@ -293,7 +313,7 @@ class TestComposicion:
 
         compuesto = correo.componer(evento, resource_id=recurso)
 
-        assert compuesto.enlace == f"https://app.amvarmar.test/cargas/{recurso}"
+        assert compuesto.enlace == f"https://app.amvarmar.test/shipments/{recurso}"
         assert recurso in compuesto.html
         assert recurso in compuesto.texto
 
@@ -739,7 +759,7 @@ class TestCorreoReal:
         # Multipart: los clientes que no renderizan HTML igual leen el aviso.
         assert cuerpo["Text"].strip()
         assert cuerpo["HTML"].strip()
-        assert f"https://app.amvarmar.test/cargas/{recurso}" in cuerpo["Text"]
+        assert f"https://app.amvarmar.test/shipments/{recurso}" in cuerpo["Text"]
 
         assert (await _entregas(session, creadas[0]))[Channel.EMAIL] == DeliveryStatus.SENT
 
