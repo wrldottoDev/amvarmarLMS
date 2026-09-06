@@ -15,6 +15,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, CITEXT, JSONB
@@ -108,6 +109,19 @@ class UploadStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ExportKind(StrEnum):
+    ALL_DOCUMENTS = "ALL_DOCUMENTS"
+    BLS = "BLS"
+
+
+class ExportStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+
+
 class Document(Base):
     """Un archivo en storage privado.
 
@@ -171,6 +185,65 @@ class Document(Base):
         Index("ix_documents_empresa_creacion", "company_id", text("created_at DESC")),
         # Para detectar duplicados dentro de una empresa sin recorrer todo.
         Index("ix_documents_empresa_hash", "company_id", "sha256"),
+    )
+
+
+class DocumentExportJob(Base):
+    """ZIP temporal generado fuera del request y almacenado de forma privada."""
+
+    __tablename__ = "document_export_jobs"
+
+    id: Mapped[UUIDPk]
+    requested_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
+    resource_type: Mapped[str] = mapped_column(String(16))
+    resource_id: Mapped[UUID]
+    kind: Mapped[str] = mapped_column(String(32))
+    source_fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16))
+
+    storage_key: Mapped[str | None] = mapped_column(String(500))
+    result_name: Mapped[str | None] = mapped_column(String(255))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+    expires_at: Mapped[datetime]
+    started_at: Mapped[datetime | None]
+    completed_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+
+    __table_args__ = (
+        CheckConstraint(
+            "resource_type IN ('SHIPMENT', 'DISPATCH')", name="recurso_exportable_valido"
+        ),
+        CheckConstraint("kind IN ('ALL_DOCUMENTS', 'BLS')", name="tipo_exportacion_valido"),
+        CheckConstraint(
+            "status IN ('PENDING', 'PROCESSING', 'READY', 'FAILED', 'EXPIRED')",
+            name="estado_exportacion_valido",
+        ),
+        CheckConstraint(
+            "status <> 'READY' OR (storage_key IS NOT NULL AND result_name IS NOT NULL "
+            "AND size_bytes > 0 AND length(sha256) = 64)",
+            name="exportacion_lista_con_resultado",
+        ),
+        UniqueConstraint(
+            "requested_by",
+            "resource_type",
+            "resource_id",
+            "kind",
+            "source_fingerprint",
+            name="uq_document_export_jobs_solicitud_fuente",
+        ),
+        Index(
+            "ix_document_export_jobs_empresa_recurso",
+            "company_id",
+            "resource_type",
+            "resource_id",
+            text("created_at DESC"),
+        ),
+        Index("ix_document_export_jobs_estado_expira", "status", "expires_at"),
     )
 
 

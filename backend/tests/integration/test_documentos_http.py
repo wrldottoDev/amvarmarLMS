@@ -4,7 +4,9 @@ Cubren lo que los tests de servicio no ven: permisos, códigos de estado, el
 formato de error, y que la respuesta no filtre detalles internos del storage.
 """
 
+import io
 import uuid
+import zipfile
 
 import httpx
 import pytest
@@ -15,7 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security.argon2 import hash_password
-from app.modules.documents import service
+from app.modules.documents import exports, service
+from app.modules.documents import router as documents_router
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -24,6 +28,12 @@ PASSWORD = "una passphrase de prueba suficientemente larga"
 
 def pdf_real() -> bytes:
     return b"%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\ntrailer\n%%EOF\n"
+
+
+@pytest.fixture(autouse=True)
+def exportaciones_controladas_por_el_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El test procesa el job explícitamente, sin depender de un worker externo."""
+    monkeypatch.setattr(documents_router, "_encolar_exportacion", lambda _job_id: None)
 
 
 @pytest.fixture
@@ -63,6 +73,30 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
         {"c": empresa, "u": user_id},
     )
 
+    email_ajeno = f"ajeno-{marca}@pruebas.amvarmar.com"
+    user_ajeno_id = (
+        await db_directa.execute(
+            text("""
+                INSERT INTO users (email, password_hash, first_name, last_name, status)
+                VALUES (:e, :h, 'Otro', 'Cliente', 'ACTIVE') RETURNING id
+            """),
+            {"e": email_ajeno, "h": hash_password(PASSWORD)},
+        )
+    ).scalar_one()
+    await db_directa.execute(
+        text("""
+            INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
+            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENT_USER'
+        """),
+        {"u": user_ajeno_id, "c": ajena},
+    )
+    await db_directa.execute(
+        text(
+            "INSERT INTO company_memberships (company_id, user_id, status) VALUES (:c,:u,'ACTIVE')"
+        ),
+        {"c": ajena, "u": user_ajeno_id},
+    )
+
     # Personal interno. Renombrar y quitar documentos son acciones de staff:
     # el nombre es cómo Operaciones y el agente aduanal encuentran el papel, y
     # quitar uno reabre el requisito que bloquea el despacho.
@@ -88,7 +122,7 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
     destino = await _ubicacion(db_directa, "CR", "SJO", "San José")
 
     propia = await _carga(db_directa, empresa, user_id, origen, destino)
-    de_otra = await _carga(db_directa, ajena, user_id, origen, destino)
+    de_otra = await _carga(db_directa, ajena, user_ajeno_id, origen, destino)
 
     tipo_factura = (
         await db_directa.execute(
@@ -98,18 +132,26 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
     tipo_packing = (
         await db_directa.execute(text("SELECT id FROM document_types WHERE code = 'PACKING_LIST'"))
     ).scalar_one()
+    tipo_permiso = (
+        await db_directa.execute(
+            text("SELECT id FROM document_types WHERE code = 'SPECIAL_PERMIT'")
+        )
+    ).scalar_one()
     await db_directa.commit()
 
     yield {
         "email": email,
+        "email_ajeno": email_ajeno,
         "email_ops": email_ops,
         "ops_id": ops_id,
         "empresa": empresa,
         "carga": propia,
         "carga_ajena": de_otra,
         "user_id": user_id,
+        "user_ajeno_id": user_ajeno_id,
         "tipo_factura": tipo_factura,
         "tipo_packing": tipo_packing,
+        "tipo_permiso": tipo_permiso,
         "bucket": storage_de_prueba,
     }
 
@@ -129,11 +171,15 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
         {"c": [empresa, ajena]},
     )
     await db_directa.execute(
-        text("DELETE FROM user_role_assignments WHERE user_id = :u"), {"u": ops_id}
+        text("DELETE FROM user_role_assignments WHERE user_id = ANY(:u)"),
+        {"u": [user_id, user_ajeno_id, ops_id]},
     )
-    await db_directa.execute(text("DELETE FROM users WHERE id = :u"), {"u": ops_id})
     await db_directa.execute(
         text("DELETE FROM dispatch_requests WHERE company_id = ANY(:c)"),
+        {"c": [empresa, ajena]},
+    )
+    await db_directa.execute(
+        text("DELETE FROM document_export_jobs WHERE company_id = ANY(:c)"),
         {"c": [empresa, ajena]},
     )
     await db_directa.execute(
@@ -154,7 +200,10 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
         text("DELETE FROM company_memberships WHERE company_id = ANY(:c)"),
         {"c": [empresa, ajena]},
     )
-    await db_directa.execute(text("DELETE FROM users WHERE email = :e"), {"e": email})
+    await db_directa.execute(
+        text("DELETE FROM users WHERE id = ANY(:u)"),
+        {"u": [user_id, user_ajeno_id, ops_id]},
+    )
     await db_directa.execute(
         text("DELETE FROM companies WHERE id = ANY(:c)"), {"c": [empresa, ajena]}
     )
@@ -185,7 +234,7 @@ async def _ubicacion(session: AsyncSession, pais: str, ciudad: str, nombre: str)
 
 
 async def _carga(session, empresa, user_id, origen, destino) -> uuid.UUID:
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
@@ -196,6 +245,9 @@ async def _carga(session, empresa, user_id, origen, destino) -> uuid.UUID:
             {"c": empresa, "u": user_id, "o": origen, "d": destino},
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _autenticar(cliente: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -203,6 +255,50 @@ async def _autenticar(cliente: httpx.AsyncClient, email: str) -> dict[str, str]:
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
     return {"Authorization": f"Bearer {respuesta.json()['access_token']}"}
+
+
+async def _procesar_documento(session: AsyncSession, document_id: str) -> None:
+    await service.procesar_documento(session, document_id=uuid.UUID(document_id))
+    await session.commit()
+
+
+async def _exportar_y_descargar(
+    cliente: httpx.AsyncClient,
+    session: AsyncSession,
+    *,
+    url: str,
+    cabeceras: dict[str, str],
+    payload: dict[str, str] | None = None,
+) -> tuple[dict, dict, bytes]:
+    if payload is None:
+        solicitud = await cliente.post(url, headers=cabeceras)
+    else:
+        solicitud = await cliente.post(url, headers=cabeceras, json=payload)
+    assert solicitud.status_code == 202
+    creado = solicitud.json()
+    assert creado["status"] == "PENDING"
+    assert creado["download_ready"] is False
+
+    procesado = await exports.procesar(session, job_id=uuid.UUID(creado["id"]))
+    assert procesado is not None
+    assert procesado.status == "READY"
+
+    estado = await cliente.get(f"/api/v1/document-export-jobs/{creado['id']}", headers=cabeceras)
+    assert estado.status_code == 200
+    assert estado.json()["status"] == "READY"
+    assert estado.json()["download_ready"] is True
+
+    descarga = await cliente.get(
+        f"/api/v1/document-export-jobs/{creado['id']}/download", headers=cabeceras
+    )
+    assert descarga.status_code == 200
+    assert descarga.json()["media_type"] == "application/zip"
+    assert descarga.json()["filename"].endswith(".zip")
+
+    async with httpx.AsyncClient() as directo:
+        archivo = await directo.get(descarga.json()["url"])
+    assert archivo.status_code == 200
+    return creado, estado.json(), archivo.content
 
 
 class TestPresign:
@@ -216,6 +312,7 @@ class TestPresign:
             headers=cabeceras,
             json={
                 "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "PROVIDER",
                 "original_name": "factura.pdf",
             },
         )
@@ -237,6 +334,7 @@ class TestPresign:
             headers=cabeceras,
             json={
                 "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "PROVIDER",
                 "original_name": "factura.pdf",
             },
         )
@@ -251,6 +349,7 @@ class TestPresign:
             headers=cabeceras,
             json={
                 "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "PROVIDER",
                 "original_name": "factura.pdf",
             },
         )
@@ -269,6 +368,7 @@ class TestPresign:
             headers=cabeceras,
             json={
                 "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "PROVIDER",
                 "original_name": "planilla.xlsx",
             },
         )
@@ -276,11 +376,61 @@ class TestPresign:
         assert r.status_code == 422
         assert r.json()["error"]["code"] == "FORMATO_NO_PERMITIDO"
 
+    async def test_cliente_no_puede_subir_un_tipo_reservado_a_staff(
+        self, cliente: httpx.AsyncClient, entorno: dict
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        respuesta = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+            headers=cabeceras,
+            json={
+                "document_type_id": str(entorno["tipo_packing"]),
+                "issued_by": "PROVIDER",
+                "original_name": "packing.pdf",
+            },
+        )
+
+        assert respuesta.status_code == 404
+
+    async def test_staff_no_puede_subir_un_tipo_reservado_al_cliente(
+        self, cliente: httpx.AsyncClient, entorno: dict
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
+        respuesta = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+            headers=cabeceras,
+            json={
+                "document_type_id": str(entorno["tipo_permiso"]),
+                "issued_by": "CLIENT",
+                "original_name": "permiso.pdf",
+            },
+        )
+
+        assert respuesta.status_code == 404
+
+    async def test_emisor_debe_pertenecer_al_catalogo_del_tipo(
+        self, cliente: httpx.AsyncClient, entorno: dict
+    ) -> None:
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        respuesta = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/presign",
+            headers=cabeceras,
+            json={
+                "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "AMVARMAR",
+                "original_name": "factura.pdf",
+            },
+        )
+
+        assert respuesta.status_code == 422
+        assert respuesta.json()["error"]["code"] == "DOCUMENT_ISSUER_INVALID"
+
     async def test_sin_token_da_401(self, cliente: httpx.AsyncClient, entorno: dict) -> None:
         r = await cliente.post(
             f"/api/v1/shipments/{entorno['carga']}/documents/presign",
             json={
                 "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "PROVIDER",
                 "original_name": "factura.pdf",
             },
         )
@@ -302,6 +452,7 @@ class TestFlujoCompleto:
                 headers=cabeceras,
                 json={
                     "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
                     "original_name": "factura.pdf",
                 },
             )
@@ -318,12 +469,12 @@ class TestFlujoCompleto:
             json={"document_id": presign["document_id"]},
         )
 
-        assert completar.status_code == 200
+        assert completar.status_code == 202
         cuerpo = completar.json()
-        assert cuerpo["media_type"] == "application/pdf"
-        assert cuerpo["size_bytes"] == len(contenido)
-        # Descargable apenas termina la subida: el antivirus se retiró.
-        assert cuerpo["upload_status"] == "READY"
+        assert cuerpo["upload_status"] == "PROCESSING"
+
+        # Celery ejecuta este mismo servicio fuera del request.
+        await _procesar_documento(db_directa, presign["document_id"])
 
         descarga = await cliente.get(
             f"/api/v1/documents/{presign['document_id']}/download", headers=cabeceras
@@ -374,6 +525,7 @@ class TestFlujoCompleto:
                 headers=cabeceras,
                 json={
                     "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
                     "original_name": "factura.pdf",
                 },
             )
@@ -391,7 +543,11 @@ class TestFlujoCompleto:
             headers=cabeceras,
             json={"document_id": presign["document_id"]},
         )
-        assert completar.status_code == 200
+        assert completar.status_code == 202
+
+        # El requisito cambia cuando el worker confirma todos los bytes.
+        assert await _estado_requisito(db_directa, requisito) == "PENDING"
+        await _procesar_documento(db_directa, presign["document_id"])
 
         assert await _estado_requisito(db_directa, requisito) == "UPLOADED"
 
@@ -407,6 +563,7 @@ class TestFlujoCompleto:
                 headers=cabeceras,
                 json={
                     "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
                     "original_name": "factura.pdf",
                 },
             )
@@ -440,6 +597,7 @@ class TestFlujoCompleto:
                 headers=cabeceras,
                 json={
                     "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
                     "original_name": "factura.pdf",
                 },
             )
@@ -545,6 +703,7 @@ class TestExpediente:
             headers=cabeceras,
             json={
                 "document_type_id": str(entorno["tipo_factura"]),
+                "issued_by": "PROVIDER",
                 "original_name": "factura.pdf",
             },
         )
@@ -568,6 +727,7 @@ class TestExpediente:
                 headers=cabeceras,
                 json={
                     "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
                     "original_name": "factura.pdf",
                 },
             )
@@ -581,6 +741,7 @@ class TestExpediente:
             headers=cabeceras,
             json={"document_id": presign["document_id"]},
         )
+        await _procesar_documento(db_directa, presign["document_id"])
 
         cuerpo = (
             await cliente.get(f"/api/v1/shipments/{entorno['carga']}/documents", headers=cabeceras)
@@ -638,6 +799,7 @@ class TestGestionDeArchivos:
                 headers=cabeceras,
                 json={
                     "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
                     "original_name": nombre,
                 },
             )
@@ -649,6 +811,7 @@ class TestGestionDeArchivos:
             headers=cabeceras,
             json={"document_id": presign["document_id"]},
         )
+        await _procesar_documento(db_directa, presign["document_id"])
         documento_id: str = presign["document_id"]
         return documento_id
 
@@ -702,7 +865,11 @@ class TestGestionDeArchivos:
         documento = await self._subido(cliente, entorno, db_directa, "quitar.pdf")
         cabeceras = await _autenticar(cliente, entorno["email_ops"])
 
-        r = await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+        r = await cliente.delete(
+            f"/api/v1/documents/{documento}",
+            headers=cabeceras,
+            params={"motivo": "Documento cargado por error."},
+        )
         assert r.status_code == 204
 
         fila = (
@@ -727,7 +894,11 @@ class TestGestionDeArchivos:
         documento = await self._subido(cliente, entorno, db_directa, "factura.pdf")
         cabeceras = await _autenticar(cliente, entorno["email_ops"])
 
-        await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+        await cliente.delete(
+            f"/api/v1/documents/{documento}",
+            headers=cabeceras,
+            params={"motivo": "La factura no corresponde a la carga."},
+        )
 
         estado = (
             await db_directa.execute(
@@ -749,10 +920,18 @@ class TestGestionDeArchivos:
         cabeceras = await _autenticar(cliente, entorno["email_ops"])
 
         assert (
-            await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+            await cliente.delete(
+                f"/api/v1/documents/{documento}",
+                headers=cabeceras,
+                params={"motivo": "Primera invalidación."},
+            )
         ).status_code == 204
         assert (
-            await cliente.delete(f"/api/v1/documents/{documento}", headers=cabeceras)
+            await cliente.delete(
+                f"/api/v1/documents/{documento}",
+                headers=cabeceras,
+                params={"motivo": "Segunda invalidación."},
+            )
         ).status_code == 404
 
 
@@ -771,7 +950,11 @@ class TestDescargaMasiva:
             await cliente.post(
                 f"/api/v1/shipments/{entorno['carga']}/documents/presign",
                 headers=cabeceras,
-                json={"document_type_id": str(entorno["tipo_factura"]), "original_name": nombre},
+                json={
+                    "document_type_id": str(entorno["tipo_factura"]),
+                    "issued_by": "PROVIDER",
+                    "original_name": nombre,
+                },
             )
         ).json()
 
@@ -797,27 +980,35 @@ class TestDescargaMasiva:
     async def test_devuelve_un_zip_con_los_documentos(
         self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
     ) -> None:
-        import io
-        import zipfile
-
         await self._documento_listo(cliente, entorno, db_directa, "factura.pdf")
         await self._documento_listo(cliente, entorno, db_directa, "packing.pdf")
         cabeceras = await _autenticar(cliente, entorno["email"])
 
-        r = await cliente.get(
-            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        creado, estado, contenido = await _exportar_y_descargar(
+            cliente,
+            db_directa,
+            url=f"/api/v1/shipments/{entorno['carga']}/documents/exports",
+            cabeceras=cabeceras,
         )
 
-        assert r.status_code == 200
-        assert r.headers["content-type"] == "application/zip"
-        assert ".zip" in r.headers["content-disposition"]
+        assert estado["size_bytes"] == len(contenido)
+        assert len(estado["sha256"]) == 64
 
-        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as paquete:
             nombres = paquete.namelist()
             assert len(nombres) == 2
             # Van agrupados por tipo de documento, para que el agente aduanal no
             # tenga que adivinar qué es cada archivo.
             assert all(n.startswith("COMMERCIAL_INVOICE/") for n in nombres)
+
+        # La misma fuente no crea ni vuelve a procesar otro ZIP.
+        repetido = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/exports",
+            headers=cabeceras,
+        )
+        assert repetido.status_code == 202
+        assert repetido.json()["id"] == creado["id"]
+        assert repetido.json()["status"] == "READY"
 
     async def test_no_incluye_lo_que_quedo_a_medio_subir(
         self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
@@ -827,9 +1018,6 @@ class TestDescargaMasiva:
         Y la ausencia se anota dentro del propio ZIP: omitirlo en silencio haría
         creer que la carga no tenía ese documento.
         """
-        import io
-        import zipfile
-
         limpio = await self._documento_listo(cliente, entorno, db_directa, "bueno.pdf")
         incompleto = await self._documento_listo(cliente, entorno, db_directa, "malo.pdf")
         await db_directa.execute(
@@ -839,11 +1027,14 @@ class TestDescargaMasiva:
         await db_directa.commit()
         cabeceras = await _autenticar(cliente, entorno["email"])
 
-        r = await cliente.get(
-            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        _, _, contenido = await _exportar_y_descargar(
+            cliente,
+            db_directa,
+            url=f"/api/v1/shipments/{entorno['carga']}/documents/exports",
+            cabeceras=cabeceras,
         )
 
-        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as paquete:
             nombres = paquete.namelist()
             assert not any("malo.pdf" in n for n in nombres)
             assert any("bueno.pdf" in n for n in nombres)
@@ -858,18 +1049,18 @@ class TestDescargaMasiva:
     ) -> None:
         """Dentro de un ZIP, el mismo nombre dos veces hace que uno desaparezca
         al extraer."""
-        import io
-        import zipfile
-
         await self._documento_listo(cliente, entorno, db_directa, "factura.pdf")
         await self._documento_listo(cliente, entorno, db_directa, "factura.pdf")
         cabeceras = await _autenticar(cliente, entorno["email"])
 
-        r = await cliente.get(
-            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        _, _, contenido = await _exportar_y_descargar(
+            cliente,
+            db_directa,
+            url=f"/api/v1/shipments/{entorno['carga']}/documents/exports",
+            cabeceras=cabeceras,
         )
 
-        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as paquete:
             nombres = paquete.namelist()
             assert len(nombres) == 2
             assert len(set(nombres)) == 2
@@ -879,20 +1070,44 @@ class TestDescargaMasiva:
     ) -> None:
         cabeceras = await _autenticar(cliente, entorno["email"])
 
-        r = await cliente.get(
-            f"/api/v1/shipments/{entorno['carga_ajena']}/documents/download-all",
+        r = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga_ajena']}/documents/exports",
             headers=cabeceras,
         )
 
         assert r.status_code == 404
+
+    async def test_otra_empresa_no_puede_consultar_ni_descargar_el_job(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        await self._documento_listo(cliente, entorno, db_directa, "privado.pdf")
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        solicitud = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/exports",
+            headers=cabeceras,
+        )
+        assert solicitud.status_code == 202
+
+        cabeceras_ajenas = await _autenticar(cliente, entorno["email_ajeno"])
+        job_id = solicitud.json()["id"]
+        estado = await cliente.get(
+            f"/api/v1/document-export-jobs/{job_id}", headers=cabeceras_ajenas
+        )
+        descarga = await cliente.get(
+            f"/api/v1/document-export-jobs/{job_id}/download",
+            headers=cabeceras_ajenas,
+        )
+
+        assert estado.status_code == 404
+        assert descarga.status_code == 404
 
     async def test_una_carga_sin_documentos_lo_dice(
         self, cliente: httpx.AsyncClient, entorno: dict
     ) -> None:
         cabeceras = await _autenticar(cliente, entorno["email"])
 
-        r = await cliente.get(
-            f"/api/v1/shipments/{entorno['carga']}/documents/download-all", headers=cabeceras
+        r = await cliente.post(
+            f"/api/v1/shipments/{entorno['carga']}/documents/exports", headers=cabeceras
         )
 
         assert r.status_code == 404
@@ -931,7 +1146,7 @@ class TestDocumentosDeDespacho:
         self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
     ) -> None:
         despacho = await self._despacho(db_directa, entorno)
-        cabeceras = await _autenticar(cliente, entorno["email"])
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
         tipo_bl = (
             await db_directa.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
         ).scalar_one()
@@ -939,7 +1154,11 @@ class TestDocumentosDeDespacho:
         presign = await cliente.post(
             f"/api/v1/dispatch-requests/{despacho}/documents/presign",
             headers=cabeceras,
-            json={"document_type_id": str(tipo_bl), "original_name": "bl.pdf"},
+            json={
+                "document_type_id": str(tipo_bl),
+                "issued_by": "CARRIER",
+                "original_name": "bl.pdf",
+            },
         )
         assert presign.status_code == 201
 
@@ -951,16 +1170,41 @@ class TestDocumentosDeDespacho:
         documentos = listado.json()
         assert len(documentos) == 1
         assert documentos[0]["document_type_code"] == "BL"
+        fuga = (
+            await db_directa.execute(
+                text("SELECT count(*) FROM shipment_documents WHERE document_id = :id"),
+                {"id": uuid.UUID(presign.json()["document_id"])},
+            )
+        ).scalar_one()
+        assert fuga == 0
+
+    async def test_cliente_no_puede_adjuntar_el_bl(
+        self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
+    ) -> None:
+        despacho = await self._despacho(db_directa, entorno)
+        cabeceras = await _autenticar(cliente, entorno["email"])
+        tipo_bl = (
+            await db_directa.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
+        ).scalar_one()
+
+        respuesta = await cliente.post(
+            f"/api/v1/dispatch-requests/{despacho}/documents/presign",
+            headers=cabeceras,
+            json={
+                "document_type_id": str(tipo_bl),
+                "issued_by": "CARRIER",
+                "original_name": "bl.pdf",
+            },
+        )
+
+        assert respuesta.status_code == 404
 
     async def test_descargar_los_bls_juntos(
         self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
     ) -> None:
         """Un despacho puede llevar varios y el cliente los necesita juntos."""
-        import io
-        import zipfile
-
         despacho = await self._despacho(db_directa, entorno)
-        cabeceras = await _autenticar(cliente, entorno["email"])
+        cabeceras = await _autenticar(cliente, entorno["email_ops"])
         tipo_bl = (
             await db_directa.execute(text("SELECT id FROM document_types WHERE code = 'BL'"))
         ).scalar_one()
@@ -970,31 +1214,32 @@ class TestDocumentosDeDespacho:
                 await cliente.post(
                     f"/api/v1/dispatch-requests/{despacho}/documents/presign",
                     headers=cabeceras,
-                    json={"document_type_id": str(tipo_bl), "original_name": nombre},
+                    json={
+                        "document_type_id": str(tipo_bl),
+                        "issued_by": "CARRIER",
+                        "original_name": nombre,
+                    },
                 )
             ).json()
             async with httpx.AsyncClient() as directo:
                 await directo.put(presign["upload_url"], content=pdf_real())
-            await cliente.post(
-                f"/api/v1/shipments/{entorno['carga']}/documents/complete",
+            completar = await cliente.post(
+                f"/api/v1/dispatch-requests/{despacho}/documents/complete",
                 headers=cabeceras,
                 json={"document_id": presign["document_id"]},
             )
-            await db_directa.execute(
-                text("""
-                    UPDATE documents SET upload_status='READY'
-                    WHERE id = :id
-                """),
-                {"id": uuid.UUID(presign["document_id"])},
-            )
-        await db_directa.commit()
+            assert completar.status_code == 202
+            await _procesar_documento(db_directa, presign["document_id"])
 
-        r = await cliente.get(
-            f"/api/v1/dispatch-requests/{despacho}/documents/bls", headers=cabeceras
+        _, _, contenido = await _exportar_y_descargar(
+            cliente,
+            db_directa,
+            url=f"/api/v1/dispatch-requests/{despacho}/documents/exports",
+            cabeceras=cabeceras,
+            payload={"kind": "BLS"},
         )
 
-        assert r.status_code == 200
-        with zipfile.ZipFile(io.BytesIO(r.content)) as paquete:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as paquete:
             assert len(paquete.namelist()) == 2
 
     async def test_sin_bls_lo_dice(
@@ -1003,8 +1248,10 @@ class TestDocumentosDeDespacho:
         despacho = await self._despacho(db_directa, entorno)
         cabeceras = await _autenticar(cliente, entorno["email"])
 
-        r = await cliente.get(
-            f"/api/v1/dispatch-requests/{despacho}/documents/bls", headers=cabeceras
+        r = await cliente.post(
+            f"/api/v1/dispatch-requests/{despacho}/documents/exports",
+            headers=cabeceras,
+            json={"kind": "BLS"},
         )
 
         assert r.status_code == 404

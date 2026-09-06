@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -23,8 +23,8 @@ from app.infrastructure.storage.s3 import TTL_DESCARGA_SEGUNDOS, TTL_SUBIDA_SEGU
 from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
-from app.modules.documents import service
-from app.modules.documents.models import DocumentContext, IssuedBy
+from app.modules.documents import exports, service
+from app.modules.documents.models import DocumentContext, ExportKind, ExportStatus, IssuedBy
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
 from app.modules.shipments.queries import alcance_de_lectura
@@ -73,6 +73,36 @@ class DownloadResponse(BaseModel):
     expires_in_seconds: int
 
 
+class ExportJobResponse(BaseModel):
+    id: UUID
+    resource_type: str
+    resource_id: UUID
+    kind: str
+    status: str
+    size_bytes: int | None
+    sha256: str | None
+    error_code: str | None
+    expires_at: datetime
+    created_at: datetime
+    download_ready: bool
+
+
+def _respuesta_exportacion(job: exports.Exportacion) -> ExportJobResponse:
+    return ExportJobResponse(
+        id=job.id,
+        resource_type=job.resource_type,
+        resource_id=job.resource_id,
+        kind=job.kind,
+        status=job.status,
+        size_bytes=job.size_bytes,
+        sha256=job.sha256,
+        error_code=job.error_code,
+        expires_at=job.expires_at,
+        created_at=job.created_at,
+        download_ready=job.status == ExportStatus.READY,
+    )
+
+
 def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
@@ -82,6 +112,12 @@ def _encolar_documento(document_id: UUID) -> None:
     from app.workers.tasks.documents import encolar_procesamiento
 
     encolar_procesamiento(document_id)
+
+
+def _encolar_exportacion(job_id: UUID) -> None:
+    from app.workers.tasks.exports import encolar_exportacion
+
+    encolar_exportacion(job_id)
 
 
 async def _confirmar_y_encolar(
@@ -105,6 +141,31 @@ async def _confirmar_y_encolar(
         raise ErrorDeAplicacion(
             "No fue posible iniciar el procesamiento. Intente completar la subida nuevamente.",
             code="DOCUMENT_PROCESSING_UNAVAILABLE",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        ) from error
+
+
+async def _confirmar_y_encolar_exportacion(db: AsyncSession, *, job: exports.Exportacion) -> None:
+    """Confirma el job antes de publicarlo y deja un estado reintentable."""
+    await db.commit()
+    if job.status != ExportStatus.PENDING:
+        return
+    try:
+        _encolar_exportacion(job.id)
+    except Exception as error:
+        await db.execute(
+            text("""
+                UPDATE document_export_jobs
+                SET status = 'FAILED', error_code = 'EXPORT_QUEUE_UNAVAILABLE',
+                    updated_at = now()
+                WHERE id = :id AND status = 'PENDING'
+            """),
+            {"id": job.id},
+        )
+        await db.commit()
+        raise ErrorDeAplicacion(
+            "No fue posible iniciar la exportación. Intente solicitarla nuevamente.",
+            code="DOCUMENT_EXPORT_UNAVAILABLE",
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         ) from error
 
@@ -530,53 +591,94 @@ async def invalidar_documento(
     await db.commit()
 
 
-@router.get("/shipments/{shipment_id}/documents/download-all")
-async def descargar_todos(
+@router.post(
+    "/shipments/{shipment_id}/documents/exports",
+    response_model=ExportJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def exportar_documentos_de_carga(
     shipment_id: UUID,
     request: Request,
     actor: ActorDep,
     db: SesionDb,
     redis: RedisDep,
-) -> Response:
-    """Todos los documentos de una carga en un ZIP.
-
-    Existía en el sistema viejo y se usa para mandarle el expediente completo a
-    un agente aduanal. Bajar ocho archivos uno por uno es trabajo que la máquina
-    puede hacer.
-
-    A diferencia de la descarga individual, el archivo pasa por la aplicación:
-    hay que leer cada objeto para comprimirlo, y no se puede firmar una URL de
-    algo que todavía no existe. Por eso se audita: es la única vía por la que
-    salen varios documentos de una sola vez.
-    """
+) -> ExportJobResponse:
     permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
     alcance = alcance_de_lectura(permisos)
-
     if alcance.no_ve_nada:
         raise RecursoNoEncontrado("Carga no encontrada.")
+    company_id = await _empresa_de_la_carga(db, shipment_id, permisos)
+    if not permisos.permite(Perm.REPORTS_EXPORT, company_id=company_id):
+        raise SinPermiso("No tiene permiso para exportar documentos.")
 
-    nombre, contenido = await service.paquete_de_documentos(
+    job = await exports.crear(
         db,
-        shipment_id=shipment_id,
+        requested_by=actor.user_id,
+        context=DocumentContext.SHIPMENT.value,
+        resource_id=shipment_id,
+        kind=ExportKind.ALL_DOCUMENTS.value,
         company_ids=None if alcance.global_ else alcance.company_ids,
     )
-
     await registrar(
         db,
-        action="shipment.documents.bulk_download",
-        resource_type="shipment",
-        resource_id=shipment_id,
+        action="document.export.requested",
+        resource_type="document_export_job",
+        resource_id=job.id,
         actor_user_id=actor.user_id,
+        company_id=company_id,
         outcome=Outcome.SUCCESS,
-        after_data={"bytes": len(contenido)},
-        ip_address=request.client.host if request.client else None,
+        after_data={"resource_type": job.resource_type, "resource_id": str(shipment_id)},
+        ip_address=_ip(request),
+    )
+    await _confirmar_y_encolar_exportacion(db, job=job)
+    return _respuesta_exportacion(job)
+
+
+@router.get("/document-export-jobs/{job_id}", response_model=ExportJobResponse)
+async def estado_de_exportacion(
+    job_id: UUID, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> ExportJobResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+    job = await exports.obtener(
+        db,
+        job_id=job_id,
+        actor_user_id=actor.user_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+    return _respuesta_exportacion(job)
+
+
+@router.get("/document-export-jobs/{job_id}/download", response_model=DownloadResponse)
+async def descargar_exportacion(
+    job_id: UUID,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> DownloadResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    alcance = alcance_de_lectura(permisos)
+    descarga = await exports.preparar_descarga(
+        db,
+        job_id=job_id,
+        actor_user_id=actor.user_id,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
+    await registrar(
+        db,
+        action="document.export.downloaded",
+        resource_type="document_export_job",
+        resource_id=job_id,
+        actor_user_id=actor.user_id,
+        ip_address=_ip(request),
     )
     await db.commit()
-
-    return Response(
-        content=contenido,
+    return DownloadResponse(
+        url=descarga.url,
+        filename=descarga.filename,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+        expires_in_seconds=TTL_DESCARGA_SEGUNDOS,
     )
 
 
@@ -730,44 +832,52 @@ async def completar_documento_de_despacho(
     )
 
 
-@router.get("/dispatch-requests/{dispatch_id}/documents/bls")
-async def descargar_bls(
+class CrearExportacionDespachoRequest(BaseModel):
+    kind: ExportKind = ExportKind.BLS
+
+
+@router.post(
+    "/dispatch-requests/{dispatch_id}/documents/exports",
+    response_model=ExportJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def exportar_documentos_de_despacho(
     dispatch_id: UUID,
+    datos: CrearExportacionDespachoRequest,
     request: Request,
     actor: ActorDep,
     db: SesionDb,
     redis: RedisDep,
-) -> Response:
-    """Todos los Bills of Lading del despacho en un ZIP.
-
-    Un despacho puede llevar varios y el cliente los necesita juntos para su
-    agente aduanal.
-    """
+) -> ExportJobResponse:
     permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
     alcance = alcance_de_lectura(permisos)
-
     if alcance.no_ve_nada:
         raise RecursoNoEncontrado("Solicitud de despacho no encontrada.")
-
-    nombre, contenido = await service.paquete_de_bls(
+    company_id = await service.empresa_de_despacho_visible(
         db,
         dispatch_id=dispatch_id,
         company_ids=None if alcance.global_ else alcance.company_ids,
     )
-
+    if not permisos.permite(Perm.REPORTS_EXPORT, company_id=company_id):
+        raise SinPermiso("No tiene permiso para exportar documentos.")
+    job = await exports.crear(
+        db,
+        requested_by=actor.user_id,
+        context=DocumentContext.DISPATCH.value,
+        resource_id=dispatch_id,
+        kind=datos.kind.value,
+        company_ids=None if alcance.global_ else alcance.company_ids,
+    )
     await registrar(
         db,
-        action="dispatch.documents.bulk_download",
-        resource_type="dispatch_request",
-        resource_id=dispatch_id,
+        action="document.export.requested",
+        resource_type="document_export_job",
+        resource_id=job.id,
         actor_user_id=actor.user_id,
+        company_id=company_id,
         outcome=Outcome.SUCCESS,
-        ip_address=request.client.host if request.client else None,
+        after_data={"resource_type": job.resource_type, "resource_id": str(dispatch_id)},
+        ip_address=_ip(request),
     )
-    await db.commit()
-
-    return Response(
-        content=contenido,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
-    )
+    await _confirmar_y_encolar_exportacion(db, job=job)
+    return _respuesta_exportacion(job)

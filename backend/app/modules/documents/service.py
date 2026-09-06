@@ -9,10 +9,8 @@ verifica sobre lo ya almacenado y no sobre lo que el cliente declaró.
 """
 
 import hashlib
-import io
 import json
 import secrets
-import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -998,116 +996,6 @@ async def tipos_de_documento(
 
 
 @dataclass(frozen=True)
-class ArchivoParaZip:
-    nombre: str
-    contenido: bytes
-
-
-async def paquete_de_documentos(
-    session: AsyncSession, *, shipment_id: UUID, company_ids: list[UUID] | None
-) -> tuple[str, bytes]:
-    """Arma un ZIP con los documentos descargables de una carga.
-
-    El sistema viejo tenía "descargar todos" y se usa cuando hay que mandarle el
-    expediente completo a un agente aduanal: bajar ocho archivos uno por uno es
-    trabajo que la máquina puede hacer.
-
-    **ADR-0009 prohibió los ZIP en la SUBIDA**, no en la descarga. Son cosas
-    distintas: uno que entra puede esconder cualquier cosa; uno que sale lo
-    armamos nosotros.
-
-    Solo entran los archivos cuya subida terminó. Si alguno quedó a medias se
-    omite y su ausencia se anota dentro del propio ZIP: omitirlo en silencio
-    haría creer que la carga no lo tenía.
-    """
-    condiciones = ["s.id = :shipment_id", "s.deleted_at IS NULL"]
-    parametros: dict[str, Any] = {"shipment_id": shipment_id}
-
-    if company_ids is not None:
-        condiciones.append("s.company_id = ANY(:empresas)")
-        parametros["empresas"] = company_ids
-
-    carga = (
-        await session.execute(
-            text(f"SELECT s.shipment_number FROM shipments s WHERE {' AND '.join(condiciones)}"),  # noqa: S608
-            parametros,
-        )
-    ).scalar_one_or_none()
-
-    if carga is None:
-        raise RecursoNoEncontrado("Carga no encontrada.")
-
-    filas = (
-        await session.execute(
-            text("""
-                SELECT d.id, d.storage_key, d.original_name, d.upload_status,
-                       dt.code AS tipo
-                FROM shipment_documents sd
-                JOIN documents d ON d.id = sd.document_id
-                JOIN document_types dt ON dt.id = sd.document_type_id
-                WHERE sd.shipment_id = :s AND d.deleted_at IS NULL
-                ORDER BY dt.code, d.created_at
-            """),
-            {"s": shipment_id},
-        )
-    ).all()
-
-    if not filas:
-        raise RecursoNoEncontrado("Esta carga no tiene documentos.")
-
-    omitidos: list[str] = []
-    buffer = io.BytesIO()
-
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as paquete:
-        usados: set[str] = set()
-
-        for fila in filas:
-            if fila.upload_status != UploadStatus.READY:
-                omitidos.append(f"{fila.original_name}: {_motivo_omision(fila)}")
-                continue
-
-            contenido = await s3.leer_completo(fila.storage_key)
-            # El mismo nombre dos veces dentro de un ZIP hace que uno pise al
-            # otro al extraer.
-            nombre = _nombre_unico(f"{fila.tipo}/{fila.original_name}", usados)
-            paquete.writestr(nombre, contenido)
-
-        if omitidos:
-            paquete.writestr(
-                "DOCUMENTOS-NO-INCLUIDOS.txt",
-                "Estos documentos existen pero no se pudieron incluir:\n\n"
-                + "\n".join(f"- {linea}" for linea in omitidos)
-                + "\n\nConsulte el expediente en el sistema para ver su estado.\n",
-            )
-
-    return f"{carga}-documentos.zip", buffer.getvalue()
-
-
-def _motivo_omision(fila: Any) -> str:
-    if fila.upload_status != UploadStatus.READY:
-        return "la subida no se completó"
-    return "no está disponible"
-
-
-def _nombre_unico(nombre: str, usados: set[str]) -> str:
-    if nombre not in usados:
-        usados.add(nombre)
-        return nombre
-
-    raiz, punto, extension = nombre.rpartition(".")
-    base = raiz if punto else nombre
-    sufijo = extension if punto else ""
-
-    contador = 2
-    while True:
-        candidato = f"{base}-{contador}{'.' + sufijo if sufijo else ''}"
-        if candidato not in usados:
-            usados.add(candidato)
-            return candidato
-        contador += 1
-
-
-@dataclass(frozen=True)
 class DocumentoDeDespacho:
     id: UUID
     document_type_code: str
@@ -1241,61 +1129,3 @@ async def preparar_subida_de_despacho(
     )
 
     return preparada
-
-
-async def paquete_de_bls(
-    session: AsyncSession, *, dispatch_id: UUID, company_ids: list[UUID] | None
-) -> tuple[str, bytes]:
-    """Los Bills of Lading de un despacho en un ZIP.
-
-    Existía en el sistema viejo: un despacho puede llevar varios BL y el cliente
-    los necesita todos juntos para su agente.
-    """
-    await _despacho_visible(session, dispatch_id=dispatch_id, company_ids=company_ids)
-
-    numero = (
-        await session.execute(
-            text("SELECT dispatch_number FROM dispatch_requests WHERE id = :d"),
-            {"d": dispatch_id},
-        )
-    ).scalar_one()
-
-    filas = (
-        await session.execute(
-            text("""
-                SELECT d.storage_key, d.original_name, d.upload_status
-                FROM dispatch_documents dd
-                JOIN documents d ON d.id = dd.document_id
-                JOIN document_types dt ON dt.id = dd.document_type_id
-                WHERE dd.dispatch_request_id = :d AND dt.code = 'BL'
-                  AND d.deleted_at IS NULL
-                ORDER BY d.created_at
-            """),
-            {"d": dispatch_id},
-        )
-    ).all()
-
-    if not filas:
-        raise RecursoNoEncontrado("Esta solicitud todavía no tiene Bills of Lading.")
-
-    buffer = io.BytesIO()
-    omitidos: list[str] = []
-    usados: set[str] = set()
-
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as paquete:
-        for fila in filas:
-            if fila.upload_status != UploadStatus.READY:
-                omitidos.append(f"{fila.original_name}: {_motivo_omision(fila)}")
-                continue
-            contenido = await s3.leer_completo(fila.storage_key)
-            paquete.writestr(_nombre_unico(fila.original_name, usados), contenido)
-
-        if omitidos:
-            paquete.writestr(
-                "DOCUMENTOS-NO-INCLUIDOS.txt",
-                "Estos Bills of Lading existen pero no se pudieron incluir:\n\n"
-                + "\n".join(f"- {linea}" for linea in omitidos)
-                + "\n",
-            )
-
-    return f"{numero}-bls.zip", buffer.getvalue()
