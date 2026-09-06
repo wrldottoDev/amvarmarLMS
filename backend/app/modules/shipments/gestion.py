@@ -34,8 +34,16 @@ from app.modules.shipments.models import (
     ReferenceType,
     ShipmentStatus,
 )
-from app.modules.shipments.policies import validar_identificador_comercial
-from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
+from app.modules.shipments.policies import (
+    validar_identificador_comercial,
+    validar_referencia_permitida,
+)
+from app.modules.shipments.service import (
+    DatosTransicion,
+    SinPermisoParaTransicion,
+    VersionDesactualizada,
+    transicionar,
+)
 
 
 class DatosInvalidos(ReglaDeNegocioViolada):
@@ -60,6 +68,13 @@ _ESTADOS_INICIALES: frozenset[str] = frozenset(
         ShipmentStatus.RECEIVED,
         ShipmentStatus.STORED,
     }
+)
+
+_SECUENCIA_ESTADOS_INICIALES: tuple[str, ...] = (
+    ShipmentStatus.PRE_ALERT,
+    ShipmentStatus.IN_TRANSIT,
+    ShipmentStatus.RECEIVED,
+    ShipmentStatus.STORED,
 )
 
 _EDITABLES: frozenset[str] = frozenset(
@@ -144,10 +159,8 @@ async def crear(
 ) -> CargaCreada:
     """Da de alta una carga.
 
-    Nace en prealerta salvo que se pida otro de `_ESTADOS_INICIALES`. Nacer
-    directamente en `STORED` no saltea la línea de tiempo: se registran los
-    eventos intermedios con el mismo instante, para que el historial siga
-    contando la secuencia completa aunque la captura haya sido una sola.
+    La fila siempre nace en PRE_ALERT. Si Operaciones seleccionó un estado
+    posterior, se recorren las transiciones intermedias con el motor normal.
     """
     if not permisos.permite(Perm.SHIPMENTS_CREATE, company_id=datos.company_id):
         raise SinPermisoParaTransicion(Perm.SHIPMENTS_CREATE)
@@ -198,7 +211,7 @@ async def crear(
                     "company": datos.company_id,
                     "actor": actor_user_id,
                     "asignado": datos.assigned_to,
-                    "estado": estado_inicial,
+                    "estado": ShipmentStatus.PRE_ALERT.value,
                     "origen": datos.origin_location_id,
                     "bodega": datos.origin_facility_id,
                     "destino": datos.destination_location_id,
@@ -224,6 +237,10 @@ async def crear(
             "Alguno de los datos referenciados no existe (ubicación, bodega o responsable)."
         ) from error
 
+    if (datos.wr or "").strip():
+        await validar_referencia_permitida(
+            session, shipment_id=fila.id, reference_type=ReferenceType.WR.value
+        )
     await _guardar_referencias(session, fila.id, datos)
 
     # La regla del negocio: lo de Miami lleva WR, lo demás lleva factura. Se
@@ -237,8 +254,6 @@ async def crear(
     )
 
     await _guardar_bultos(session, fila.id, datos.packages)
-    await _sellar_hitos(session, fila.id, estado_inicial)
-
     await session.execute(
         text("""
             INSERT INTO shipment_events
@@ -248,42 +263,35 @@ async def crear(
         {
             "s": fila.id,
             "tipo": EventType.CREATED.value,
-            "estado": estado_inicial,
+            "estado": ShipmentStatus.PRE_ALERT.value,
             "titulo": "Carga creada",
             "actor": actor_user_id,
         },
     )
 
-    # Si nació más adelante que la prealerta, se deja constancia de por qué el
-    # historial arranca ahí. Sin esto la línea de tiempo de una carga creada
-    # como ALMACENADA parece que se saltó tres pasos.
+    version = int(fila.row_version)
     if estado_inicial != ShipmentStatus.PRE_ALERT.value:
-        await session.execute(
-            text("""
-                INSERT INTO shipment_events
-                    (shipment_id, event_type, from_status_code, to_status_code,
-                     title, description, occurred_at, actor_user_id)
-                VALUES (:s, :tipo, :desde, :hacia, :titulo, :descripcion, now(), :actor)
-            """),
-            {
-                "s": fila.id,
-                "tipo": EventType.STATUS_CHANGED.value,
-                "desde": ShipmentStatus.PRE_ALERT.value,
-                "hacia": estado_inicial,
-                "titulo": "Registrada con la mercancía ya presente",
-                "descripcion": (
-                    "La carga se dio de alta directamente en este estado porque ya "
-                    "estaba en manos de AMVARMAR al registrarla."
+        limite = _SECUENCIA_ESTADOS_INICIALES.index(estado_inicial)
+        for destino in _SECUENCIA_ESTADOS_INICIALES[1 : limite + 1]:
+            resultado = await transicionar(
+                session,
+                shipment_id=fila.id,
+                datos=DatosTransicion(
+                    to_status=destino,
+                    row_version=version,
+                    note="Estado inicial registrado por Operaciones.",
+                    metadatos={"initial_registration": True},
                 ),
-                "actor": actor_user_id,
-            },
-        )
+                actor_user_id=actor_user_id,
+                permisos=permisos,
+            )
+            version = resultado.row_version
 
     return CargaCreada(
         id=fila.id,
         shipment_number=fila.shipment_number,
         status=estado_inicial,
-        row_version=fila.row_version,
+        row_version=version,
     )
 
 
@@ -311,28 +319,6 @@ async def _guardar_bultos(
                 "peso": bulto.weight_kg,
             },
         )
-
-
-async def _sellar_hitos(session: AsyncSession, shipment_id: UUID, estado: str) -> None:
-    """Marca las fechas de los hitos que el estado inicial ya da por cumplidos.
-
-    Una carga que nace `STORED` estuvo recibida antes, aunque nadie lo haya
-    tecleado. Sin estas fechas los "Hitos logísticos" del detalle salen vacíos y
-    los informes de tiempo en bodega no tienen desde cuándo contar.
-    """
-    columnas = {
-        ShipmentStatus.RECEIVED.value: ("received_at",),
-        ShipmentStatus.STORED.value: ("received_at", "stored_at"),
-    }.get(estado)
-
-    if not columnas:
-        return
-
-    asignaciones = ", ".join(f"{c} = now()" for c in columnas)
-    await session.execute(
-        text(f"UPDATE shipments SET {asignaciones} WHERE id = :s"),  # noqa: S608
-        {"s": shipment_id},
-    )
 
 
 async def _guardar_referencias(
@@ -515,6 +501,10 @@ async def _aplicar_referencias(
     """
     for campo, valor in referencias.items():
         tipo = _REFERENCIAS_EDITABLES[campo]
+        if tipo == ReferenceType.WR and (valor or "").strip():
+            await validar_referencia_permitida(
+                session, shipment_id=shipment_id, reference_type=tipo.value
+            )
         await session.execute(
             text("""
                 DELETE FROM shipment_references

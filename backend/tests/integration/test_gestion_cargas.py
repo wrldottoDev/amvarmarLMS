@@ -18,7 +18,7 @@ from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import gestion
 from app.modules.shipments.models import ShipmentStatus
-from app.modules.shipments.policies import IdentificadorFaltante
+from app.modules.shipments.policies import IdentificadorFaltante, WarehouseReceiptNoAplica
 from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
 
 pytestmark = pytest.mark.integration
@@ -271,9 +271,8 @@ class TestCrear:
     ) -> None:
         """Quien recibe en mostrador no debería crear en prealerta y avanzar a mano.
 
-        Se comprueban las dos consecuencias: que queden las fechas de los hitos
-        que ese estado da por cumplidos, y que la línea de tiempo explique por
-        qué arranca ahí en vez de parecer que se saltó tres pasos.
+        Se comprueba que recorra las tres transiciones reales, con versiones,
+        hitos, auditoría y outbox, en la misma transacción del alta.
         """
         creada = await gestion.crear(
             session,
@@ -283,6 +282,7 @@ class TestCrear:
         )
 
         assert creada.status == "STORED"
+        assert creada.row_version == 4
 
         fila = (
             await session.execute(
@@ -293,20 +293,32 @@ class TestCrear:
         assert fila.received_at is not None
         assert fila.stored_at is not None
 
-        titulos = (
-            (
-                await session.execute(
-                    text("""
-                        SELECT title FROM shipment_events
-                        WHERE shipment_id = :s ORDER BY occurred_at, id
-                    """),
-                    {"s": creada.id},
-                )
+        transiciones = (
+            await session.execute(
+                text("""
+                    SELECT from_status_code, to_status_code FROM shipment_events
+                    WHERE shipment_id = :s AND event_type = 'STATUS_CHANGED'
+                    ORDER BY occurred_at, id
+                """),
+                {"s": creada.id},
             )
-            .scalars()
-            .all()
-        )
-        assert "Registrada con la mercancía ya presente" in titulos
+        ).all()
+        assert [(f.from_status_code, f.to_status_code) for f in transiciones] == [
+            ("PRE_ALERT", "IN_TRANSIT"),
+            ("IN_TRANSIT", "RECEIVED"),
+            ("RECEIVED", "STORED"),
+        ]
+
+        auditorias = (
+            await session.execute(
+                text("""
+                    SELECT count(*) FROM audit_logs
+                    WHERE resource_id = :s AND action = 'shipment.status.changed'
+                """),
+                {"s": creada.id},
+            )
+        ).scalar_one()
+        assert auditorias == 3
 
     async def test_no_puede_nacer_despachada(self, session: AsyncSession, redis, entorno) -> None:
         """Una carga no empieza su vida ya despachada.
@@ -326,9 +338,19 @@ class TestCrear:
         self, session: AsyncSession, redis, entorno
     ) -> None:
         """Lo de Miami se identifica por WR y se puede escribir al dar de alta."""
+        bodega = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:l, :cod, 'WAREHOUSE', true) RETURNING id
+                """),
+                {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
+            )
+        ).scalar_one()
         creada = await gestion.crear(
             session,
-            datos=_datos(entorno, wr="WR105921"),
+            datos=_datos(entorno, origin_facility_id=bodega, wr="WR105921"),
             actor_user_id=entorno["ops"],
             permisos=await _permisos(session, redis, entorno["ops"]),
         )
@@ -665,7 +687,22 @@ class TestEditarIdentificadores:
         self, session: AsyncSession, redis, entorno
     ) -> None:
         """La bodega lo emite al recibir, así que puede no existir al dar de alta."""
-        creada = await self._crear(session, redis, entorno)
+        bodega = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:l, :cod, 'WAREHOUSE', true) RETURNING id
+                """),
+                {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
+            )
+        ).scalar_one()
+        creada = await gestion.crear(
+            session,
+            datos=_datos(entorno, description="Original", origin_facility_id=bodega),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
 
         await gestion.actualizar(
             session,
@@ -677,6 +714,21 @@ class TestEditarIdentificadores:
         )
 
         assert await self._referencia(session, creada.id, "WR") == "WR105921"
+
+    async def test_no_se_puede_agregar_wr_si_la_bodega_no_lo_emite(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        creada = await self._crear(session, redis, entorno)
+
+        with pytest.raises(WarehouseReceiptNoAplica):
+            await gestion.actualizar(
+                session,
+                shipment_id=creada.id,
+                cambios={"wr": "WR105921"},
+                row_version=creada.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
 
     async def test_queda_constancia_de_lo_que_se_toco(
         self, session: AsyncSession, redis, entorno
