@@ -190,14 +190,20 @@ async def procesar_factura_ocr(
     persona los verifique a mano — no hay una columna de `shipments` a la
     que mapearlos sin inventar una regla que el negocio no definió.
     """
+    # Mismo mensaje para "no existe" y "existe pero es de otra empresa"
+    # (igual que `router._propuesta_del_actor`: "ajena o inexistente
+    # responden igual") — separarlos dejaría confirmar si un document_id de
+    # otra empresa existe, un oráculo de existencia cross-empresa.
+    sin_acceso = {"error": "No encontré ese documento, o no pertenece a ninguna carga."}
+
     documento = await documents_queries.factura_de_carga(
         session, UUID(str(argumentos["document_id"]))
     )
     if documento is None:
-        return {"error": "No encontré ese documento, o no pertenece a ninguna carga."}
+        return sin_acceso
 
     if not permisos.permite(Perm.DOCUMENTS_UPLOAD_INTERNAL, company_id=documento.company_id):
-        return {"error": "No tenés permiso para leer ese documento."}
+        return sin_acceso
 
     if documento.upload_status != UploadStatus.READY:
         return {"error": "Ese documento todavía no terminó de procesarse."}

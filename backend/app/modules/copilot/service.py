@@ -75,8 +75,17 @@ async def _resultado_de_llamada(
     haberla filtrado antes de armar la lista que vio el modelo.
     """
     definicion = HERRAMIENTAS.get(nombre)
+    # Los argumentos YA son la forma "redactada" que pide el ADR (line 167):
+    # el tipado de la herramienta, nunca el texto libre de la conversación.
+    # Best-effort incluso si el modelo mandó un JSON roto — investigar qué
+    # pasó es exactamente para lo que existe esta auditoría.
+    try:
+        argumentos_auditoria: Any = json.loads(argumentos_json)
+    except json.JSONDecodeError:
+        argumentos_auditoria = argumentos_json
 
     if definicion is None:
+        resultado = {"error": "Esa herramienta no existe."}
         await registrar(
             session,
             action="copilot.tool.invoked",
@@ -84,11 +93,17 @@ async def _resultado_de_llamada(
             outcome=Outcome.FAILED,
             actor_user_id=actor_user_id,
             company_id=company_id,
-            after_data={"herramienta": nombre, "motivo": "inexistente"},
+            after_data={
+                "herramienta": nombre,
+                "motivo": "inexistente",
+                "argumentos": argumentos_auditoria,
+                "resultado": resultado,
+            },
         )
-        return {"error": "Esa herramienta no existe."}
+        return resultado
 
     if not puede_ejecutar(nombre, permisos):
+        resultado = {"error": "No tenés permiso para esa acción."}
         await registrar(
             session,
             action="copilot.tool.invoked",
@@ -96,13 +111,19 @@ async def _resultado_de_llamada(
             outcome=Outcome.DENIED,
             actor_user_id=actor_user_id,
             company_id=company_id,
-            after_data={"herramienta": nombre, "motivo": "sin_permiso"},
+            after_data={
+                "herramienta": nombre,
+                "motivo": "sin_permiso",
+                "argumentos": argumentos_auditoria,
+                "resultado": resultado,
+            },
         )
-        return {"error": "No tenés permiso para esa acción."}
+        return resultado
 
     try:
         definicion.argumentos.model_validate_json(argumentos_json)
     except ValidationError:
+        resultado = {"error": "Los argumentos no tienen la forma esperada."}
         await registrar(
             session,
             action="copilot.tool.invoked",
@@ -110,14 +131,20 @@ async def _resultado_de_llamada(
             outcome=Outcome.FAILED,
             actor_user_id=actor_user_id,
             company_id=company_id,
-            after_data={"herramienta": nombre, "motivo": "argumentos_invalidos"},
+            after_data={
+                "herramienta": nombre,
+                "motivo": "argumentos_invalidos",
+                "argumentos": argumentos_auditoria,
+                "resultado": resultado,
+            },
         )
-        return {"error": "Los argumentos no tienen la forma esperada."}
+        return resultado
 
     ejecutor = REGISTRO_EJECUTORES.get(nombre)
     if ejecutor is None:
         # No es un error del actor ni del modelo: la fundación está lista,
         # pero esta fase todavía no conectó el ejecutor de esta herramienta.
+        resultado = {"error": "Esta función todavía no está disponible."}
         await registrar(
             session,
             action="copilot.tool.invoked",
@@ -125,9 +152,14 @@ async def _resultado_de_llamada(
             outcome=Outcome.FAILED,
             actor_user_id=actor_user_id,
             company_id=company_id,
-            after_data={"herramienta": nombre, "motivo": "sin_ejecutor_registrado"},
+            after_data={
+                "herramienta": nombre,
+                "motivo": "sin_ejecutor_registrado",
+                "argumentos": argumentos_auditoria,
+                "resultado": resultado,
+            },
         )
-        return {"error": "Esta función todavía no está disponible."}
+        return resultado
 
     argumentos = json.loads(argumentos_json)
     resultado = await ejecutor(session, permisos, actor_user_id, company_id, argumentos)
@@ -139,7 +171,7 @@ async def _resultado_de_llamada(
         outcome=Outcome.SUCCESS,
         actor_user_id=actor_user_id,
         company_id=company_id,
-        after_data={"herramienta": nombre},
+        after_data={"herramienta": nombre, "argumentos": argumentos, "resultado": resultado},
     )
     return resultado
 

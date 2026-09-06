@@ -259,6 +259,35 @@ class TestPreview:
 
         assert "error" in resultado
 
+    async def test_documento_ajeno_e_inexistente_dan_el_mismo_mensaje(
+        self, session: AsyncSession, redis: Any, storage_de_prueba: str
+    ) -> None:
+        """No debe poder distinguirse, por el mensaje, si un `document_id` de
+        otra empresa existe — sería un oráculo de existencia cross-empresa."""
+        ctx = await _entorno(session)
+        ajeno = await _documento_listo(session, ctx, storage_de_prueba)
+        inexistente = uuid.uuid4()
+        permisos_sin_nada = PermisosEfectivos(
+            user_id=ctx["operaciones"], authz_version=1, permisos=()
+        )
+        token = proveedor_actual.set(_ProveedorFacturaFalso(_descripcion()))
+
+        try:
+            resultado_ajeno = await executors_escritura.procesar_factura_ocr(
+                session, permisos_sin_nada, ctx["operaciones"], None, {"document_id": str(ajeno)}
+            )
+            resultado_inexistente = await executors_escritura.procesar_factura_ocr(
+                session,
+                permisos_sin_nada,
+                ctx["operaciones"],
+                None,
+                {"document_id": str(inexistente)},
+            )
+        finally:
+            proveedor_actual.reset(token)
+
+        assert resultado_ajeno == resultado_inexistente
+
     async def test_documento_todavia_procesando_da_error_controlado(
         self, session: AsyncSession, redis: Any, storage_de_prueba: str
     ) -> None:

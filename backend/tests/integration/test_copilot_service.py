@@ -227,6 +227,10 @@ class TestRevalidacionAlEjecutar:
         ).one()
         assert fila.outcome == "FAILED"
         assert fila.after_data["motivo"] == "inexistente"
+        # ADR-0012: "los argumentos redactados y el resultado" — sin esto no
+        # hay forma de investigar por qué el asistente hizo algo.
+        assert fila.after_data["argumentos"] == {}
+        assert fila.after_data["resultado"] == {"error": "Esa herramienta no existe."}
 
     async def test_herramienta_no_ofrecida_se_rechaza_en_la_revalidacion(
         self, session: AsyncSession
@@ -256,6 +260,33 @@ class TestRevalidacionAlEjecutar:
         ).one()
         assert fila.outcome == "DENIED"
         assert fila.after_data["motivo"] == "sin_permiso"
+
+    async def test_una_llamada_exitosa_audita_argumentos_y_resultado(
+        self, session: AsyncSession
+    ) -> None:
+        actor = await _usuario(session)
+        proveedor = ProveedorFalso(
+            guion=[
+                _llamada_herramienta("resp_1", "obtener_preferencias", "{}"),
+                _texto("resp_2", "Estas son tus columnas."),
+            ]
+        )
+
+        await _correr(session, proveedor, _permisos(Perm.SHIPMENTS_READ), actor)
+
+        fila = (
+            await session.execute(
+                text(
+                    "SELECT outcome, after_data FROM audit_logs "
+                    "WHERE action = 'copilot.tool.invoked' AND actor_user_id = :actor "
+                    "ORDER BY occurred_at DESC LIMIT 1"
+                ),
+                {"actor": actor},
+            )
+        ).one()
+        assert fila.outcome == "SUCCESS"
+        assert fila.after_data["argumentos"] == {}
+        assert "columnas_visibles" in fila.after_data["resultado"]
 
     async def test_argumentos_invalidos_se_rechazan(self, session: AsyncSession) -> None:
         actor = await _usuario(session)
