@@ -28,7 +28,17 @@ const tonos = {
   alto: "border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] text-[var(--peligro)]",
 } as const;
 
-export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente: boolean }) {
+export function Expediente({
+  cargaId,
+  esCliente,
+  soloLectura = false,
+}: {
+  cargaId: string;
+  esCliente: boolean;
+  /** Historial de despachos (ADR-0007): una carga archivada no admite
+   * documentos nuevos, renombres ni bajas — el backend lo rechaza igual. */
+  soloLectura?: boolean;
+}) {
   const { data, isPending, error } = useExpediente(cargaId);
   const subir = useSubirDocumento(cargaId);
   const descargar = useDescargar();
@@ -131,7 +141,9 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
               tono: "espera" as const,
             };
             const puedeSubir =
-              esCliente && ["PENDING", "REJECTED", "OPEN"].includes(requisito.status);
+              !soloLectura &&
+              esCliente &&
+              ["PENDING", "REJECTED", "OPEN"].includes(requisito.status);
             const enProgreso = subiendo === requisito.id;
 
             return (
@@ -206,7 +218,7 @@ export function Expediente({ cargaId, esCliente }: { cargaId: string; esCliente:
                   {/* Renombrar y quitar son de personal interno, igual que en
                       `edit_files` del sistema viejo. El cliente ve sus archivos
                       y los descarga; no reorganiza el expediente. */}
-                  {esInterno ? (
+                  {esInterno && !soloLectura ? (
                     <span className="flex shrink-0 gap-1">
                       <button
                         type="button"

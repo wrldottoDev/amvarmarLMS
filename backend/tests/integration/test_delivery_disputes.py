@@ -18,7 +18,11 @@ from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import service
 from app.modules.shipments.models import ShipmentStatus
-from app.modules.shipments.service import MotivoRequerido, SinPermisoParaTransicion
+from app.modules.shipments.service import (
+    CargaArchivada,
+    MotivoRequerido,
+    SinPermisoParaTransicion,
+)
 from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
@@ -213,6 +217,27 @@ class TestReportarInconformidad:
                 session,
                 shipment_id=shipment_id,
                 reason="   ",
+                actor_user_id=ctx["cliente"],
+                permisos=permisos,
+            )
+
+    async def test_no_se_puede_reportar_sobre_una_carga_ya_archivada(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """ADR-0007: si nunca hubo disputa mientras la carga estaba abierta,
+        el archivado cierra esa ventana — no se reabre después."""
+        ctx = await _entorno(session)
+        shipment_id = await _carga(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET archived_at = now() WHERE id = :id"), {"id": shipment_id}
+        )
+        permisos = await _permisos(session, redis, ctx["cliente"])
+
+        with pytest.raises(CargaArchivada):
+            await service.reportar_inconformidad(
+                session,
+                shipment_id=shipment_id,
+                reason="Llegó tarde, me di cuenta ahora.",
                 actor_user_id=ctx["cliente"],
                 permisos=permisos,
             )

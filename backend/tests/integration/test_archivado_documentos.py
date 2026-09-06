@@ -113,14 +113,17 @@ async def _entorno(session: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def _carga_archivada(session: AsyncSession, ctx: dict[str, Any]) -> uuid.UUID:
+async def _carga_delivered(session: AsyncSession, ctx: dict[str, Any]) -> uuid.UUID:
+    """Todavía NO archivada — la subida de documentos (ADR-0007) rechaza
+    cualquier carga con `archived_at` puesto, así que el documento se sube
+    ANTES de archivar, y `_archivar` se llama después."""
     shipment_id = (
         await session.execute(
             text("""
                 INSERT INTO shipments
                     (company_id, created_by, current_status_code,
-                     origin_location_id, destination_location_id, archived_at)
-                VALUES (:c,:u,'DELIVERED',:o,:d, now())
+                     origin_location_id, destination_location_id)
+                VALUES (:c,:u,'DELIVERED',:o,:d)
                 RETURNING id
             """),
             {"c": ctx["empresa"], "u": ctx["usuario"], "o": ctx["origen"], "d": ctx["destino"]},
@@ -128,6 +131,12 @@ async def _carga_archivada(session: AsyncSession, ctx: dict[str, Any]) -> uuid.U
     ).scalar_one()
     await sembrar_pieza(session, shipment_id)
     return shipment_id
+
+
+async def _archivar(session: AsyncSession, shipment_id: uuid.UUID) -> None:
+    await session.execute(
+        text("UPDATE shipments SET archived_at = now() WHERE id = :id"), {"id": shipment_id}
+    )
 
 
 async def _subir_documento(
@@ -186,7 +195,7 @@ class TestRecompresion:
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        shipment_id = await _carga_archivada(session, ctx)
+        shipment_id = await _carga_delivered(session, ctx)
         contenido = _jpeg_real()
         document_id = await _subir_documento(
             session,
@@ -196,6 +205,7 @@ class TestRecompresion:
             contenido=contenido,
             original_name="factura.jpg",
         )
+        await _archivar(session, shipment_id)
 
         total = await archivado.recomprimir_pendientes(session)
 
@@ -220,7 +230,7 @@ class TestRecompresion:
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        shipment_id = await _carga_archivada(session, ctx)
+        shipment_id = await _carga_delivered(session, ctx)
         contenido = _pdf_real()
         document_id = await _subir_documento(
             session,
@@ -231,6 +241,7 @@ class TestRecompresion:
             original_name="factura.pdf",
             is_digitally_signed=True,
         )
+        await _archivar(session, shipment_id)
 
         total = await archivado.recomprimir_pendientes(session)
 
@@ -255,7 +266,7 @@ class TestRecompresion:
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        shipment_id = await _carga_archivada(session, ctx)
+        shipment_id = await _carga_delivered(session, ctx)
         contenido = _pdf_real()
         document_id = await _subir_documento(
             session,
@@ -265,6 +276,7 @@ class TestRecompresion:
             contenido=contenido,
             original_name="factura.pdf",
         )
+        await _archivar(session, shipment_id)
 
         total = await archivado.recomprimir_pendientes(session)
 
@@ -285,7 +297,7 @@ class TestRecompresion:
         un PDF real (pasa la validación) y se fuerza `media_type` después, para
         simular un tipo de contenido sin herramienta de recompresión."""
         ctx = await _entorno(session)
-        shipment_id = await _carga_archivada(session, ctx)
+        shipment_id = await _carga_delivered(session, ctx)
         contenido = _pdf_real()
         document_id = await _subir_documento(
             session,
@@ -296,6 +308,7 @@ class TestRecompresion:
             original_name="factura.pdf",
             media_type_forzado="text/csv",
         )
+        await _archivar(session, shipment_id)
 
         total = await archivado.recomprimir_pendientes(session)
 
@@ -343,11 +356,30 @@ class TestRecompresion:
 
         assert total == 0
 
+    async def test_no_admite_documentos_nuevos_en_una_carga_ya_archivada(
+        self, session: AsyncSession, storage_de_prueba: str
+    ) -> None:
+        from app.modules.shipments.service import CargaArchivada
+
+        ctx = await _entorno(session)
+        shipment_id = await _carga_delivered(session, ctx)
+        await _archivar(session, shipment_id)
+
+        with pytest.raises(CargaArchivada):
+            await _subir_documento(
+                session,
+                ctx,
+                shipment_id,
+                storage_de_prueba,
+                contenido=_pdf_real(),
+                original_name="factura.pdf",
+            )
+
     async def test_no_recomprime_dos_veces(
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        shipment_id = await _carga_archivada(session, ctx)
+        shipment_id = await _carga_delivered(session, ctx)
         # JPEG, no PDF: esta prueba es sobre idempotencia, no sobre
         # Ghostscript — no debe depender de que esté instalado.
         await _subir_documento(
@@ -358,6 +390,7 @@ class TestRecompresion:
             contenido=_jpeg_real(),
             original_name="factura.jpg",
         )
+        await _archivar(session, shipment_id)
 
         primera = await archivado.recomprimir_pendientes(session)
         segunda = await archivado.recomprimir_pendientes(session)
@@ -369,7 +402,7 @@ class TestRecompresion:
         self, session: AsyncSession, storage_de_prueba: str
     ) -> None:
         ctx = await _entorno(session)
-        shipment_id = await _carga_archivada(session, ctx)
+        shipment_id = await _carga_delivered(session, ctx)
         contenido = _jpeg_real()
         document_id = await _subir_documento(
             session,
@@ -379,6 +412,7 @@ class TestRecompresion:
             contenido=contenido,
             original_name="factura.jpg",
         )
+        await _archivar(session, shipment_id)
 
         await archivado.recomprimir_pendientes(session)
 

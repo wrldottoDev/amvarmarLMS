@@ -392,6 +392,27 @@ class TestFiltros:
         assert [f.id for f in normal.items] == [activa]
         assert len(historial.items) == 2
 
+    async def test_solo_archivadas_no_mezcla_con_activas(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """Historial de despachos: SOLO archivadas, no todas + archivadas."""
+        ctx = await _entorno(session)
+        await _carga(session, ctx)
+        archivada = await _carga(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET archived_at = now() WHERE id = :s"), {"s": archivada}
+        )
+        permisos = await _permisos(session, redis, ctx["operaciones"])
+
+        historial = await queries.listar_shipments(
+            session,
+            permisos=permisos,
+            filtros=queries.FiltrosListado(solo_archivadas=True),
+            limite=50,
+        )
+
+        assert [f.id for f in historial.items] == [archivada]
+
     async def test_las_borradas_nunca_salen(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         await _carga(session, ctx)

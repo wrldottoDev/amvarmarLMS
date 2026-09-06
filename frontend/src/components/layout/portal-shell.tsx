@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Archive,
   Bell,
   Boxes,
   Building2,
@@ -65,7 +66,10 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
     { href: "/despachos", etiqueta: "Despachos", icono: Truck },
     { href: "/avisos", etiqueta: "Avisos", icono: Bell },
     ...(esCliente
-      ? [{ href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound }]
+      ? [
+          { href: "/shipments/historial", etiqueta: "Historial", icono: Archive },
+          { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
+        ]
       : [
           { href: "/inventario", etiqueta: "Inventario", icono: Warehouse },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },
@@ -85,7 +89,11 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
     return navegacion.map((elemento) => {
       const activo =
         pathname === elemento.href ||
-        (elemento.href !== "/" && pathname.startsWith(`${elemento.href}/`));
+        (elemento.href !== "/" &&
+          pathname.startsWith(`${elemento.href}/`) &&
+          // "/shipments/historial" tiene su propio ítem — no debe encender
+          // también "Cargas" por compartir el mismo prefijo.
+          !(elemento.href === "/shipments" && pathname.startsWith("/shipments/historial")));
       const Icono = elemento.icono;
 
       return (

@@ -21,14 +21,22 @@ function finalDia(valor: string) {
   return valor ? new Date(`${valor}T23:59:59.999`).toISOString() : undefined;
 }
 
-export default function PaginaCargas({ inventario = false }: { inventario?: boolean }) {
+export default function PaginaCargas({
+  inventario = false,
+  archivadas = false,
+}: {
+  inventario?: boolean;
+  /** Historial de despachos (ADR-0007): solo cargas ya archivadas, de solo
+   * lectura — sin alta, sin cambio de estado. */
+  archivadas?: boolean;
+}) {
   const [filtros, setFiltros] = useState<FiltrosCarga>(filtrosIniciales);
   const [verOcultas, setVerOcultas] = useState(false);
   const { usuario } = useSesion();
   const esCliente = Boolean(usuario?.empresa);
 
   const consulta = useInfiniteQuery({
-    queryKey: ["cargas", filtros, inventario, verOcultas],
+    queryKey: ["cargas", filtros, inventario, archivadas, verOcultas],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) =>
       exigirDatos(
@@ -40,12 +48,12 @@ export default function PaginaCargas({ inventario = false }: { inventario?: bool
               // La vista Inventario ignora el filtro de estado a propósito:
               // es "todo lo que existe", que es como se usaba en el sistema
               // viejo para buscar algo sin saber en qué punto estaba.
-              status: !inventario && filtros.estados.length ? filtros.estados : undefined,
+              status: !inventario && !archivadas && filtros.estados.length ? filtros.estados : undefined,
               incluir_ocultas: verOcultas || undefined,
               eta_from: inicioDia(filtros.etaDesde),
               eta_to: finalDia(filtros.etaHasta),
               q: filtros.q || undefined,
-              archived: false,
+              only_archived: archivadas || undefined,
             },
           },
         }),
@@ -61,16 +69,20 @@ export default function PaginaCargas({ inventario = false }: { inventario?: bool
       <header className="flex items-end justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase text-[var(--marca)]">
-            {inventario ? "Inventario" : "Seguimiento"}
+            {archivadas ? "Historial" : inventario ? "Inventario" : "Seguimiento"}
           </p>
-          <h1 className="mt-1 text-2xl font-bold">{inventario ? "Inventario" : "Cargas"}</h1>
+          <h1 className="mt-1 text-2xl font-bold">
+            {archivadas ? "Historial de despachos" : inventario ? "Inventario" : "Cargas"}
+          </h1>
           <p className="mt-1 text-sm text-[var(--texto-secundario)]">
-            {inventario
-              ? "Todas las cargas, sin filtrar por estado."
-              : `${cargas.length} cargadas en esta vista`}
+            {archivadas
+              ? "Cargas archivadas, de solo lectura. Cumplieron su retención y ya no admiten cambios."
+              : inventario
+                ? "Todas las cargas, sin filtrar por estado."
+                : `${cargas.length} cargadas en esta vista`}
           </p>
         </div>
-        {usuario?.empresa ? (
+        {archivadas ? null : usuario?.empresa ? (
           <span className="hidden size-11 place-items-center rounded-md bg-[var(--marca-tenue)] text-[var(--mar)] sm:grid">
             <Boxes className="size-5" aria-hidden="true" />
           </span>
@@ -120,7 +132,12 @@ export default function PaginaCargas({ inventario = false }: { inventario?: bool
       ) : null}
 
       {cargas.length ? (
-        <ListadoCargas cargas={cargas} esCliente={esCliente} empresaVisible={!esCliente} />
+        <ListadoCargas
+          cargas={cargas}
+          esCliente={esCliente}
+          empresaVisible={!esCliente}
+          soloLectura={archivadas}
+        />
       ) : null}
 
       {consulta.hasNextPage ? (

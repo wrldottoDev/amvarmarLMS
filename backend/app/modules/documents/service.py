@@ -34,6 +34,7 @@ from app.modules.documents.validation import (
     validar_tamano,
 )
 from app.modules.shipments.models import RequirementStatus
+from app.modules.shipments.service import CargaArchivada
 
 # Límites por defecto (ADR-0009). Se sobreescriben desde `system_settings`, que
 # SUPER_ADMIN puede editar sin desplegar.
@@ -132,6 +133,17 @@ async def preparar_subida(
     El documento queda en `UPLOADING`: existe en la base pero no es descargable
     ni satisface ningún requisito hasta que `completar()` lo verifique.
     """
+    carga = (
+        await session.execute(
+            text("SELECT archived_at FROM shipments WHERE id = :s AND deleted_at IS NULL"),
+            {"s": shipment_id},
+        )
+    ).one_or_none()
+    if carga is None:
+        raise RecursoNoEncontrado("Carga no encontrada.")
+    if carga.archived_at is not None:
+        raise CargaArchivada("Esta carga fue archivada y ya no admite documentos nuevos.")
+
     tipo = await _tipo_de_documento(session, document_type_id)
 
     # Validación temprana de extensión: evita emitir una URL para algo que se

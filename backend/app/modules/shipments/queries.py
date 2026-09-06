@@ -59,6 +59,10 @@ class FiltrosListado:
     # Busca en shipment_number y en el valor de cualquier referencia.
     texto: str | None = None
     incluir_archivadas: bool = False
+    # Historial de despachos: NO mezcla archivadas con activas, muestra SOLO
+    # las archivadas. Distinto de `incluir_archivadas`, que las suma al resto
+    # (así ve todo Inventario).
+    solo_archivadas: bool = False
     # El "eliminar" del sistema viejo. Por defecto no se listan; Operaciones
     # puede pedirlas para revisarlas o recuperarlas.
     incluir_ocultas: bool = False
@@ -81,6 +85,7 @@ _COLUMNAS_LISTADO = """
     s.shipper,
     s.carrier,
     s.hidden_at,
+    s.archived_at,
     s.permit_review_required,
     s.legacy_review_required,
     s.created_at,
@@ -153,7 +158,9 @@ async def listar_shipments(
         condiciones.append("s.hidden_at IS NULL")
     parametros: dict[str, Any] = {"limite": limite + 1}
 
-    if not filtros.incluir_archivadas:
+    if filtros.solo_archivadas:
+        condiciones.append("s.archived_at IS NOT NULL")
+    elif not filtros.incluir_archivadas:
         # ADR-0007: lo archivado sale del flujo operativo y solo aparece en
         # `Historial de despachos`.
         condiciones.append("s.archived_at IS NULL")

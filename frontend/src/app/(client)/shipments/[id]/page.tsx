@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, CalendarDays, MapPin, Package, Pencil, Route, Ship, Tag } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, CalendarDays, MapPin, Package, Pencil, Route, Ship, Tag } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carga";
@@ -93,6 +93,15 @@ export default function PaginaDetalleCarga() {
             <div className="flex flex-wrap items-center gap-2">
               <BadgeEstado estado={carga.status} />
               <BadgePendientes cantidad={pendientes} />
+              {carga.archived_at ? (
+                <span
+                  className="inline-flex min-h-7 items-center gap-1.5 rounded bg-[var(--hover)] px-2.5 py-1 text-xs font-bold text-[var(--texto-secundario)]"
+                  title={`Archivada el ${formatearFecha(carga.archived_at)}`}
+                >
+                  <Archive className="size-3.5" aria-hidden="true" />
+                  Archivada
+                </span>
+              ) : null}
             </div>
             {/* El identificador que el cliente reconoce: WR si sale de una bodega
                 que lo emite, factura en cualquier otro caso. El número interno
@@ -106,7 +115,7 @@ export default function PaginaDetalleCarga() {
             {/* Solo Operaciones edita, y solo mientras la carga no salió de
                 bodega. Un cliente que ve el botón y recibe un 403 al pulsarlo
                 aprende menos que uno que no lo ve. */}
-            {!usuario?.empresa && EDITABLES.has(carga.status) ? (
+            {!usuario?.empresa && !carga.archived_at && EDITABLES.has(carga.status) ? (
               <Link
                 href={`/cargas/${carga.id}/editar`}
                 className="flex h-10 items-center gap-1.5 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
@@ -115,7 +124,11 @@ export default function PaginaDetalleCarga() {
                 Editar
               </Link>
             ) : null}
-            <TransicionCarga cargaId={carga.id} estado={carga.status} rowVersion={carga.row_version} />
+            {/* Ya hay un `BadgeEstado` fijo arriba; una carga archivada no
+                necesita otro, solo pierde el control de cambio de estado. */}
+            {carga.archived_at ? null : (
+              <TransicionCarga cargaId={carga.id} estado={carga.status} rowVersion={carga.row_version} />
+            )}
           </div>
         </div>
 
@@ -128,7 +141,11 @@ export default function PaginaDetalleCarga() {
         </div>
       </header>
 
-      <Expediente cargaId={carga.id} esCliente={Boolean(usuario?.empresa)} />
+      <Expediente
+        cargaId={carga.id}
+        esCliente={Boolean(usuario?.empresa)}
+        soloLectura={Boolean(carga.archived_at)}
+      />
 
       <section aria-labelledby="ruta-carga">
         <div className="mb-4 flex items-center gap-2">

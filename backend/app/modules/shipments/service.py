@@ -47,6 +47,17 @@ class RequisitosPendientes(Conflicto):
     code = "SHIPMENT_REQUIREMENTS_PENDING"
 
 
+class CargaArchivada(Conflicto):
+    """La carga cumplió su retención (ADR-0007) y quedó de solo lectura.
+
+    Ninguna operación posterior — transición, disputa nueva, documento — debe
+    reabrirla. Reabrir vía disputa es exactamente lo que el archivado sirve
+    para cerrar.
+    """
+
+    code = "SHIPMENT_ARCHIVED"
+
+
 class SinPermisoSobreRequisito(Exception):
     """El actor no puede tocar este requisito.
 
@@ -95,6 +106,7 @@ class CargaBloqueada:
     company_id: UUID
     current_status_code: str
     row_version: int
+    archived_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -135,7 +147,7 @@ async def _cargar_para_actualizar(session: AsyncSession, shipment_id: UUID) -> C
     fila = (
         await session.execute(
             text("""
-                SELECT id, company_id, current_status_code, row_version
+                SELECT id, company_id, current_status_code, row_version, archived_at
                 FROM shipments
                 WHERE id = :id AND deleted_at IS NULL
                 FOR UPDATE
@@ -152,6 +164,7 @@ async def _cargar_para_actualizar(session: AsyncSession, shipment_id: UUID) -> C
         company_id=fila.company_id,
         current_status_code=fila.current_status_code,
         row_version=fila.row_version,
+        archived_at=fila.archived_at,
     )
 
 
@@ -183,6 +196,11 @@ async def transicionar(
 ) -> ResultadoTransicion:
     carga = await _cargar_para_actualizar(session, shipment_id)
     desde = carga.current_status_code
+
+    # 0. Una carga archivada (ADR-0007) es de solo lectura — ninguna
+    #    transición la reabre, ni siquiera una reversión por disputa.
+    if carga.archived_at is not None:
+        raise CargaArchivada("Esta carga fue archivada y ya no admite cambios de estado.")
 
     # 1. ¿La transición existe en el catálogo?
     transicion = (
@@ -689,7 +707,7 @@ async def reportar_inconformidad(
     fila = (
         await session.execute(
             text("""
-                SELECT company_id, current_status_code
+                SELECT company_id, current_status_code, archived_at
                 FROM shipments WHERE id = :s AND deleted_at IS NULL
                 FOR UPDATE
             """),
@@ -702,6 +720,11 @@ async def reportar_inconformidad(
 
     if not permisos.permite(Perm.SHIPMENTS_DISPUTE_CREATE, company_id=fila.company_id):
         raise SinPermiso(Perm.SHIPMENTS_DISPUTE_CREATE)
+
+    # Una carga archivada ya cerró su ventana de reclamo (ADR-0007): si nunca
+    # hubo disputa mientras estaba abierta, no se reabre una después.
+    if fila.archived_at is not None:
+        raise CargaArchivada("Esta carga fue archivada y ya no admite nuevas inconformidades.")
 
     if fila.current_status_code != ShipmentStatus.DELIVERED:
         raise ReglaDeNegocioViolada(

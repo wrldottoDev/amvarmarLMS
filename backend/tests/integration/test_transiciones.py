@@ -537,6 +537,22 @@ class TestRetencion:
         ).scalar_one()
         assert retention_until is None
 
+    async def test_una_carga_archivada_no_admite_ninguna_transicion(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """Defensa en profundidad: aunque una disputa lograra reabrirse sobre
+        una carga ya archivada, el motor de transiciones la rechaza igual."""
+        ctx = await _entorno(session, RoleCode.SUPER_ADMIN)
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DELIVERED)
+        await session.execute(
+            text("UPDATE shipments SET archived_at = now() WHERE id = :s"), {"s": shipment_id}
+        )
+
+        with pytest.raises(service.CargaArchivada):
+            await _transicionar(
+                session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED, note="error"
+            )
+
 
 class TestPoliticasDeDominio:
     async def test_miami_no_almacena_sin_wr(self, session: AsyncSession, redis) -> None:

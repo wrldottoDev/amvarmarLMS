@@ -963,6 +963,7 @@ class ShipmentResumenResponse(BaseModel):
     weight_lb: Decimal | None = None
     weight_source_unit: UnidadPeso | None = None
     hidden_at: datetime | None = None
+    archived_at: datetime | None = None
 
     # Referencia comercial principal. Puede faltar: el WR es opcional y la
     # factura no siempre existe todavía.
@@ -1026,6 +1027,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         weight_lb=fila.weight_lb,
         weight_source_unit=fila.weight_source_unit,
         hidden_at=fila.hidden_at,
+        archived_at=fila.archived_at,
         origin=UbicacionResponse(
             id=fila.origen_id,
             location_code=fila.origen_codigo,
@@ -1068,6 +1070,7 @@ async def listar_shipments(
     reference: Annotated[str | None, Query(max_length=180)] = None,
     reference_type: ReferenceType | None = None,
     archived: bool = False,
+    only_archived: bool = False,
 ) -> PaginaShipments:
     """Listado con filtros y paginación por cursor.
 
@@ -1092,6 +1095,7 @@ async def listar_shipments(
             reference=reference,
             reference_type=reference_type.value if reference_type else None,
             incluir_archivadas=archived,
+            solo_archivadas=only_archived,
             incluir_ocultas=incluir_ocultas,
         ),
         limite=normalizar_limite(limit),
