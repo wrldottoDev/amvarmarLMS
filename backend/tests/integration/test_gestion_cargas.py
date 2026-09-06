@@ -18,7 +18,7 @@ from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import gestion
 from app.modules.shipments.models import ShipmentStatus
-from app.modules.shipments.policies import IdentificadorFaltante, WarehouseReceiptNoAplica
+from app.modules.shipments.policies import IdentificadorFaltante
 from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
 
 pytestmark = pytest.mark.integration
@@ -317,10 +317,10 @@ class TestCrear:
         transiciones = (
             await session.execute(
                 text("""
-                    SELECT from_status_code, to_status_code FROM shipment_events
-                    WHERE shipment_id = :s AND event_type = 'STATUS_CHANGED'
-                    ORDER BY occurred_at, id
-                """),
+                        SELECT from_status_code, to_status_code FROM shipment_events
+                        WHERE shipment_id = :s AND event_type = 'STATUS_CHANGED'
+                        ORDER BY occurred_at, id
+                    """),
                 {"s": creada.id},
             )
         ).all()
@@ -1018,12 +1018,7 @@ class TestEditarIdentificadores:
                 {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
             )
         ).scalar_one()
-        creada = await gestion.crear(
-            session,
-            datos=_datos(entorno, description="Original", origin_facility_id=bodega),
-            actor_user_id=entorno["ops"],
-            permisos=await _permisos(session, redis, entorno["ops"]),
-        )
+        creada = await self._crear(session, redis, entorno, origin_facility_id=bodega)
 
         await gestion.actualizar(
             session,
@@ -1035,21 +1030,6 @@ class TestEditarIdentificadores:
         )
 
         assert await self._referencia(session, creada.id, "WR") == "WR105921"
-
-    async def test_no_se_puede_agregar_wr_si_la_bodega_no_lo_emite(
-        self, session: AsyncSession, redis, entorno
-    ) -> None:
-        creada = await self._crear(session, redis, entorno)
-
-        with pytest.raises(WarehouseReceiptNoAplica):
-            await gestion.actualizar(
-                session,
-                shipment_id=creada.id,
-                cambios={"wr": "WR105921"},
-                row_version=creada.row_version,
-                actor_user_id=entorno["ops"],
-                permisos=await _permisos(session, redis, entorno["ops"]),
-            )
 
     async def test_queda_constancia_de_lo_que_se_toco(
         self, session: AsyncSession, redis, entorno

@@ -13,7 +13,13 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -68,13 +74,50 @@ def migrated_database(database_url: str) -> str:
     return database_url
 
 
+async def _vaciar_datos_de_prueba(conn: AsyncConnection) -> None:
+    """Trunca todas las tablas de negocio del esquema `public`.
+
+    `cliente` y `db_directa` commitean de verdad (el cliente HTTP y el llamador
+    usan conexiones distintas, así que no hay transacción externa que revertir
+    como en `session`). Sin esto, lo que un test deja committeado sigue visible
+    para cualquier test posterior que corra sobre el mismo `postgres_container`
+    — que es de toda la sesión — y rompe cualquier cosa que cuente filas sin
+    acotar por lo que ese test creó (p. ej. `outbox.reclamar()` o un
+    `COUNT(*)` global de migración).
+
+    Los catálogos (roles, estados, tipos de documento) también quedan vacíos:
+    los helpers `sembrar_*` que usan los tests son idempotentes
+    (`ON CONFLICT DO NOTHING`), así que el próximo test que los necesite los
+    vuelve a sembrar sin costo extra. `alembic_version` se excluye porque no
+    es un dato de prueba.
+    """
+    tablas = (
+        (
+            await conn.execute(
+                text(
+                    "SELECT tablename FROM pg_tables "
+                    "WHERE schemaname = 'public' AND tablename <> 'alembic_version'"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if tablas:
+        listado = ", ".join(f'"{t}"' for t in tablas)
+        await conn.execute(text(f"TRUNCATE TABLE {listado} CASCADE"))
+
+
 @pytest.fixture
 async def session(migrated_database: str) -> AsyncGenerator[AsyncSession]:
     """Sesión aislada: todo lo que escribe el test se revierte al terminar.
 
-    La sesión se ata a una transacción externa que nunca se confirma. Así cada
-    test parte de la misma base y no depende del orden de ejecución — necesario
-    para poder correr la suite en paralelo con pytest-xdist.
+    La sesión se ata a una transacción externa que nunca se confirma, así que
+    esta fixture no deja nada committeado. `cliente` y `db_directa` sí
+    commitean de verdad (lo necesitan: otra conexión tiene que ver esos datos)
+    y logran el mismo resultado — ningún test depende del orden de
+    ejecución — truncando las tablas de negocio en su propio teardown, ver
+    `_vaciar_datos_de_prueba`.
     """
     engine = create_async_engine(migrated_database)
     async with engine.connect() as connection:
@@ -127,6 +170,8 @@ async def cliente(
 
     app.dependency_overrides.clear()
     await redis_cliente.aclose()
+    async with engine.begin() as conn:
+        await _vaciar_datos_de_prueba(conn)
     await engine.dispose()
 
 
@@ -141,6 +186,8 @@ async def db_directa(migrated_database: str) -> AsyncGenerator[AsyncSession]:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
         yield s
+    async with engine.begin() as conn:
+        await _vaciar_datos_de_prueba(conn)
     await engine.dispose()
 
 

@@ -57,9 +57,9 @@ async def documento_legacy(db_directa: AsyncSession, storage_de_prueba: str, tmp
                 INSERT INTO documents
                     (company_id, uploaded_by, storage_provider, storage_key,
                      original_name, safe_name, media_type, size_bytes, sha256,
-                     upload_status)
+                     upload_status, issued_by)
                 VALUES (:c, :u, 'legacy', :ruta, 'factura.pdf', 'factura.pdf',
-                        'application/octet-stream', :tam, :hash, 'UPLOADING')
+                        'application/octet-stream', :tam, :hash, 'UPLOADING', 'OTHER')
                 RETURNING id
             """),
             {
@@ -188,10 +188,10 @@ class TestSubida:
                 INSERT INTO documents
                     (company_id, uploaded_by, storage_provider, storage_key,
                      original_name, safe_name, media_type, size_bytes, sha256,
-                     upload_status)
+                     upload_status, issued_by)
                 VALUES (:c, :u, 'legacy', 'warehouse_docs/2026/01/no-existe.pdf',
                         'no-existe.pdf', 'no-existe.pdf', 'application/pdf', 10,
-                        :hash, 'UPLOADING')
+                        :hash, 'UPLOADING', 'OTHER')
             """),
             {"c": documento_legacy["empresa"], "u": documento_legacy["usuario"], "hash": "0" * 64},
         )

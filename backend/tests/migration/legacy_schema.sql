@@ -9,6 +9,8 @@ CREATE TABLE auth_user (
     username     varchar(150) NOT NULL UNIQUE,
     email        varchar(254) NOT NULL DEFAULT '',
     password     varchar(128) NOT NULL DEFAULT '',
+    first_name   varchar(150) NOT NULL DEFAULT '',
+    last_name    varchar(150) NOT NULL DEFAULT '',
     is_active    boolean      NOT NULL DEFAULT true,
     is_staff     boolean      NOT NULL DEFAULT false,
     date_joined  timestamptz  NOT NULL DEFAULT now(),
@@ -16,8 +18,10 @@ CREATE TABLE auth_user (
 );
 
 CREATE TABLE core_company (
-    id    serial PRIMARY KEY,
-    name  varchar(255) NOT NULL
+    id          serial PRIMARY KEY,
+    name        varchar(255) NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE core_clientprofile (
@@ -70,7 +74,35 @@ CREATE TABLE core_warehousedocument (
     warehouse_id   varchar(50) REFERENCES core_warehouse(wr_number),
     file           varchar(200),
     original_name  varchar(255),
-    uploaded_at    timestamptz NOT NULL DEFAULT now()
+    cont_type      varchar(120) NOT NULL DEFAULT '',
+    size_bytes     bigint NOT NULL DEFAULT 0,
+    uploaded_at    timestamptz NOT NULL DEFAULT now(),
+    uploaded_by_id integer REFERENCES auth_user(id)
+);
+
+CREATE TABLE core_warehouseinvoice (
+    id             serial PRIMARY KEY,
+    dispatch_id    integer NOT NULL REFERENCES core_dispatchrequest(id),
+    warehouse_id   varchar(50) NOT NULL REFERENCES core_warehouse(wr_number),
+    file           varchar(200) NOT NULL,
+    original_name  varchar(255) NOT NULL DEFAULT '',
+    content_type   varchar(120) NOT NULL DEFAULT '',
+    size_bytes     bigint NOT NULL DEFAULT 0,
+    uploaded_at    timestamptz NOT NULL DEFAULT now(),
+    uploaded_by_id integer REFERENCES auth_user(id)
+);
+
+CREATE TABLE core_dispatchbldocument (
+    id             serial PRIMARY KEY,
+    dispatch_id    integer NOT NULL REFERENCES core_dispatchrequest(id),
+    warehouse_id   varchar(50) NOT NULL REFERENCES core_warehouse(wr_number),
+    file           varchar(200) NOT NULL,
+    original_name  varchar(255) NOT NULL DEFAULT '',
+    content_type   varchar(120) NOT NULL DEFAULT '',
+    size_bytes     bigint NOT NULL DEFAULT 0,
+    uploaded_at    timestamptz NOT NULL DEFAULT now(),
+    uploaded_by_id integer REFERENCES auth_user(id),
+    UNIQUE (dispatch_id, warehouse_id)
 );
 
 CREATE TABLE core_piecewarehouse (

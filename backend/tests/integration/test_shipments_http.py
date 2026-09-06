@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import LIMITE_MAXIMO
 from app.core.security.argon2 import hash_password
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -111,7 +112,7 @@ async def _ubicacion(session: AsyncSession, pais: str, ciudad: str, nombre: str)
 
 
 async def _carga(session, empresa, user_id, origen, destino) -> uuid.UUID:
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
@@ -122,6 +123,9 @@ async def _carga(session, empresa, user_id, origen, destino) -> uuid.UUID:
             {"c": empresa, "u": user_id, "o": origen, "d": destino},
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _autenticar(cliente: AsyncClient, email: str) -> dict[str, str]:

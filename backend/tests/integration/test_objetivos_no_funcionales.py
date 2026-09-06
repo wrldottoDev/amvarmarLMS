@@ -99,6 +99,16 @@ async def usuario_con_cargas(db_directa: AsyncSession):
         """),
         {"c": empresa, "u": user_id, "o": origen},
     )
+    # Toda carga activa necesita al menos una pieza. Se siembran en bloque
+    # porque estas inserciones son masivas y no devuelven ids.
+    await db_directa.execute(
+        text("""
+            INSERT INTO shipment_packages (shipment_id, package_type, quantity)
+            SELECT s.id, 'BOX', 1 FROM shipments s WHERE s.company_id = :c
+              AND NOT EXISTS (SELECT 1 FROM shipment_packages p WHERE p.shipment_id = s.id)
+        """),
+        {"c": empresa},
+    )
     await db_directa.commit()
 
     yield {"email": email, "empresa": empresa, "user_id": user_id}
@@ -309,6 +319,29 @@ class TestRespaldoYRestauracion:
                 VALUES (:c,:u,'STORED',:o,:o)
             """),
             {"c": empresa, "u": usuario, "o": ubicacion},
+        )
+        # Toda carga activa necesita al menos una pieza.
+        await db_directa.execute(
+            text("""
+                INSERT INTO shipment_packages (shipment_id, package_type, quantity)
+                SELECT s.id, 'BOX', 1 FROM shipments s WHERE s.company_id = :c
+                  AND NOT EXISTS (SELECT 1 FROM shipment_packages p WHERE p.shipment_id = s.id)
+            """),
+            {"c": empresa},
+        )
+        # `audit_logs` no se llena sola: este test usa `db_directa`, no
+        # `cliente`, así que no hay request HTTP que audite nada. Antes
+        # dependía de filas que dejaban otros tests del run; ahora que cada
+        # test limpia lo suyo (ver `conftest._vaciar_datos_de_prueba`), hay
+        # que sembrarla explícitamente como al resto de las tablas que el
+        # ensayo verifica.
+        await db_directa.execute(
+            text("""
+                INSERT INTO audit_logs
+                    (actor_user_id, company_id, action, resource_type, outcome)
+                VALUES (:u, :c, 'test.respaldo', 'company', 'SUCCESS')
+            """),
+            {"u": usuario, "c": empresa},
         )
         await db_directa.commit()
 

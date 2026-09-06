@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
     s3_region: str = "us-east-1"
     s3_bucket: str = "amvarmar-documentos"
+    document_export_ttl_hours: int = 24
+    document_export_temp_dir: str | None = None
 
     # --- Antivirus (Paso 3.2) ---
     # Un archivo de 250 MB tarda; el timeout es por operación, no por byte.

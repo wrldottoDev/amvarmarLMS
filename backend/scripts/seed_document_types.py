@@ -19,14 +19,16 @@ async def sembrar(session: AsyncSession) -> dict[str, int]:
         await session.execute(
             text("""
                 INSERT INTO document_types
-                    (code, label, description, provided_by, allowed_formats,
-                     required_before_status, is_active)
-                VALUES (:code, :label, :descripcion, :provided_by, :formatos,
-                        :required_before, true)
+                    (code, label, description, provided_by, context,
+                     issued_by_options, allowed_formats, required_before_status, is_active)
+                VALUES (:code, :label, :descripcion, :provided_by, :context,
+                        :emisores, :formatos, :required_before, true)
                 ON CONFLICT (code) DO UPDATE
                     SET label = EXCLUDED.label,
                         description = EXCLUDED.description,
                         provided_by = EXCLUDED.provided_by,
+                        context = EXCLUDED.context,
+                        issued_by_options = EXCLUDED.issued_by_options,
                         allowed_formats = EXCLUDED.allowed_formats,
                         required_before_status = EXCLUDED.required_before_status,
                         is_active = true,
@@ -37,6 +39,8 @@ async def sembrar(session: AsyncSession) -> dict[str, int]:
                 "label": definicion.label,
                 "descripcion": definicion.description,
                 "provided_by": str(definicion.provided_by),
+                "context": str(definicion.context),
+                "emisores": [str(emisor) for emisor in definicion.issued_by_options],
                 "formatos": definicion.allowed_formats,
                 "required_before": (
                     str(definicion.required_before_status)

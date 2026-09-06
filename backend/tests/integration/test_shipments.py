@@ -11,6 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from tests.piezas import sembrar_pieza
+
 pytestmark = pytest.mark.integration
 
 
@@ -99,7 +101,11 @@ async def _crear_shipment(session: AsyncSession, ctx: dict[str, uuid.UUID], **ex
     nombres = ", ".join(columnas)
     valores = ", ".join(f":{c}" for c in columnas)
     consulta = f"INSERT INTO shipments ({nombres}) VALUES ({valores}) RETURNING id, shipment_number"  # noqa: S608
-    return (await session.execute(text(consulta), columnas)).one()
+    fila = (await session.execute(text(consulta), columnas)).one()
+
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, fila.id)
+    return fila
 
 
 class TestIdentidad:

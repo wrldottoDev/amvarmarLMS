@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_engine, get_sessionmaker
 from app.infrastructure.storage import s3
+from app.modules.documents.service import marcar_requisito_subido
 from app.modules.documents.validation import detectar_media_type, nombre_seguro
 
 # Cuánto se lee de una vez al calcular el hash. Un archivo de 400 MB no debe
@@ -158,12 +159,7 @@ async def subir(
         )
 
         if not seco:
-            await asyncio.to_thread(
-                s3._cliente().upload_file,
-                str(ruta),
-                s3._bucket(),
-                clave,
-            )
+            await s3.subir_archivo(str(ruta), clave, media_type=media_type)
             await session.execute(
                 text("""
                     UPDATE documents
@@ -182,6 +178,7 @@ async def subir(
                     "id": documento["id"],
                 },
             )
+            await marcar_requisito_subido(session, UUID(str(documento["id"])))
             # Commit por documento: con 10 GB por delante, una sola transacción
             # gigante pierde todo el avance si el proceso se corta.
             await session.commit()
@@ -230,8 +227,18 @@ async def verificar(session: AsyncSession) -> Reporte:
             )
             continue
 
-        contenido = await s3.leer_completo(fila.storage_key)
-        if hashlib.sha256(contenido).hexdigest() != fila.sha256:
+        resumen = hashlib.sha256()
+        bytes_leidos = 0
+        async for chunk in s3.iterar_chunks(fila.storage_key):
+            resumen.update(chunk)
+            bytes_leidos += len(chunk)
+        if bytes_leidos != fila.size_bytes:
+            reporte.discrepancias.append(
+                f"{fila.original_name}: se leyeron {bytes_leidos} B, "
+                f"pero la base registra {fila.size_bytes} B"
+            )
+            continue
+        if resumen.hexdigest() != fila.sha256:
             reporte.discrepancias.append(
                 f"{fila.original_name}: el hash del storage no coincide con el guardado"
             )

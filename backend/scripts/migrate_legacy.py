@@ -37,6 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_engine, get_sessionmaker
+from app.modules.documents.validation import nombre_seguro
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.shipments.models import EventType, ReferenceType, ShipmentStatus
 
@@ -52,7 +53,6 @@ LEGACY_URL_POR_DEFECTO = os.environ.get(
 # afirmar una entrega sin evidencia es peor que dejarla en despachada.
 _ESTADO_DIRECTO = {
     "COMPLETADO": ShipmentStatus.DISPATCHED,
-    "RECHAZADO": ShipmentStatus.CANCELLED,
 }
 
 # Estados en los que todavía tiene sentido pedir documentos. Después de
@@ -69,13 +69,20 @@ _ESTADOS_QUE_AUN_EXIGEN_DOCUMENTOS = frozenset(
 )
 
 # Métodos de despacho del legacy.
-_METODO = {"MARITIMO": "SEA", "AEREO": "AIR"}
+_METODO = {
+    "MARITIMO": "SEA",
+    "MARÍTIMO": "SEA",
+    "AEREO": "AIR",
+    "AÉREO": "AIR",
+    "TERRESTRE": "LAND",
+}
 
 # Tipos de bulto: el legacy los guarda en español y en plural.
 _TIPO_BULTO = {
     "PALLETS": "PALLET",
     "CAJAS": "BOX",
     "TAMBORES": "DRUM",
+    "ATADOS": "BUNDLE",
     "BULTOS": "BUNDLE",
     "OTRO": "OTHER",
 }
@@ -237,6 +244,58 @@ class Migrador:
             )
             return False
 
+        tipos = {
+            str(f.code).upper(): str(f.context)
+            for f in (
+                await self.session.execute(
+                    text("SELECT code, context FROM document_types WHERE is_active")
+                )
+            ).all()
+        }
+        esperados = {
+            "COMMERCIAL_INVOICE": "SHIPMENT",
+            "BL": "DISPATCH",
+            "WAREHOUSE_RECEIPT": "SHIPMENT",
+            "LEGACY_UNCLASSIFIED": "SHIPMENT",
+        }
+        tipos_invalidos = [
+            f"{codigo} ({tipos.get(codigo, 'faltante')} != {contexto})"
+            for codigo, contexto in esperados.items()
+            if tipos.get(codigo) != contexto
+        ]
+        if tipos_invalidos:
+            self.reporte.problemas.append(
+                "Catálogo documental incompleto o con contexto incorrecto: "
+                + ", ".join(tipos_invalidos)
+                + ". Corra `python -m scripts.seed_document_types`."
+            )
+
+        sin_piezas = self._leer("""
+            SELECT w.wr_number
+            FROM core_warehouse w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM core_piecewarehouse p WHERE p.warehouse_id = w.wr_number
+            )
+            ORDER BY w.wr_number
+        """)
+        if sin_piezas:
+            muestra = ", ".join(str(f["wr_number"]) for f in sin_piezas[:10])
+            self.reporte.problemas.append(
+                f"{len(sin_piezas)} carga(s) legacy no tienen piezas ({muestra}). "
+                "Deben corregirse antes de migrar; el LMS no permite inventarlas."
+            )
+
+        wr_por_normalizado: dict[str, list[str]] = {}
+        for fila in self._leer("SELECT wr_number FROM core_warehouse ORDER BY wr_number"):
+            wr = str(fila["wr_number"])
+            wr_por_normalizado.setdefault(normalizar_wr(wr), []).append(wr)
+        colisiones = [valores for valores in wr_por_normalizado.values() if len(valores) > 1]
+        if colisiones:
+            muestras = "; ".join(" / ".join(grupo) for grupo in colisiones[:10])
+            self.reporte.problemas.append(
+                f"{len(colisiones)} colisión(es) de WR después de normalizar: {muestras}."
+            )
+
         sin_cliente = self._leer(
             "SELECT count(*) AS n FROM core_warehouse WHERE cliente_id IS NULL"
         )[0]["n"]
@@ -249,7 +308,7 @@ class Migrador:
                 "Se migran con el creador de la empresa y quedan marcadas para revisión."
             )
 
-        return not vacios and not duplicados
+        return not self.reporte.problemas
 
     # --- Etapas ---
 
@@ -376,7 +435,7 @@ class Migrador:
             {"c": empresa, "u": user_id},
         )
 
-    async def cargas(self, *, origen: UUID, destino: UUID) -> None:
+    async def cargas(self, *, origen: UUID, destino: UUID, bodega_origen: UUID) -> None:
         c = self.reporte.contador("shipments")
         filas = self._leer("""
             SELECT w.wr_number, w.company_id, w.cliente_id, w.status, w.created_at,
@@ -423,14 +482,14 @@ class Migrador:
                     text("""
                         INSERT INTO shipments
                             (id, shipment_number, company_id, created_by, current_status_code,
-                             origin_location_id, destination_location_id,
+                             origin_location_id, origin_facility_id, destination_location_id,
                              weight_kg, weight_lb, volumetric_weight_kg,
                              foots_cft, shipper, carrier, description,
                              legacy_review_required, legacy_status,
                              created_at, updated_at,
                              dispatched_at)
                         VALUES (:id, siguiente_shipment_number(), :c, :u, :estado,
-                                :o, :d, :peso, :peso_lb, :vol,
+                                :o, :bodega, :d, :peso, :peso_lb, :vol,
                                 :cft, :shipper, :carrier, :desc, :revision, :legacy,
                                 :creada, :creada, :despachada)
                     """),
@@ -440,6 +499,7 @@ class Migrador:
                         "u": creador,
                         "estado": estado.value,
                         "o": origen,
+                        "bodega": bodega_origen,
                         "d": destino,
                         "peso": fila["weight_kgs"],
                         # Kilos y libras van por separado, como en el legacy:
@@ -615,25 +675,14 @@ class Migrador:
         return nuevo
 
     async def paquetes(self) -> None:
-        """Bultos y sus dimensiones.
+        """Migra cada `core_piecewarehouse` como una pieza con su cantidad.
 
-        En el legacy un bulto (`core_piecewarehouse`) puede tener varios ítems
-        (`core_pieceitem`), cada uno con su peso y sus medidas. El esquema nuevo
-        no tiene ese segundo nivel, así que **cada ítem se migra como su propio
-        bulto de cantidad 1**: aplanar quedándose con las dimensiones del primero
-        perdería las de los demás, y esas medidas son las que dan el peso
-        volumétrico.
-
-        Un bulto sin ítems se migra tal cual, con su cantidad original.
+        El esquema final del legacy no tiene `core_pieceitem` ni dimensiones
+        por unidad. Consultar esa tabla hacía que el migrador fallara antes de
+        leer la primera pieza. Se conserva exactamente la granularidad que sí
+        existe: tipo, cantidad y descripción.
         """
         c = self.reporte.contador("shipment_packages")
-
-        items_por_pieza: dict[int, list[dict[str, Any]]] = {}
-        for item in self._leer("""
-            SELECT id, piece_id, index, weight_kgs, length_cm, width_cm, height_cm, notes
-            FROM core_pieceitem ORDER BY piece_id, index
-        """):
-            items_por_pieza.setdefault(item["piece_id"], []).append(item)
 
         for fila in self._leer("""
             SELECT id, warehouse_id, type_of, quantity, description
@@ -652,47 +701,14 @@ class Migrador:
                 continue
 
             tipo = _TIPO_BULTO.get((fila["type_of"] or "").upper().strip(), "OTHER")
-            items = items_por_pieza.get(fila["id"], [])
-
-            if not items:
-                await self._insertar_bulto(
-                    carga,
-                    tipo=tipo,
-                    cantidad=fila["quantity"] or 1,
-                    descripcion=fila["description"],
-                    origen=("core_piecewarehouse", fila["id"]),
-                )
-                c.creados += 1
-                continue
-
-            for item in items:
-                descripcion = " · ".join(
-                    parte
-                    for parte in (
-                        fila["description"],
-                        f"Ítem {item['index']}" if item["index"] is not None else None,
-                        item["notes"],
-                    )
-                    if parte
-                )
-                await self._insertar_bulto(
-                    carga,
-                    tipo=tipo,
-                    cantidad=1,
-                    descripcion=descripcion or None,
-                    dimensiones=item,
-                    origen=("core_pieceitem", item["id"]),
-                )
-            # La pieza queda mapeada al primer ítem: así una segunda corrida la
-            # reconoce como migrada y no vuelve a expandirla.
-            await self._registrar(
-                "core_piecewarehouse",
-                fila["id"],
-                "shipment_packages",
-                self.buscar("core_pieceitem", items[0]["id"]) or uuid4(),
-                f"Expandida en {len(items)} bultos, uno por ítem con sus medidas.",
+            await self._insertar_bulto(
+                carga,
+                tipo=tipo,
+                cantidad=fila["quantity"] or 1,
+                descripcion=fila["description"],
+                origen=("core_piecewarehouse", fila["id"]),
             )
-            c.creados += len(items)
+            c.creados += 1
 
     async def _insertar_bulto(
         self,
@@ -746,28 +762,45 @@ class Migrador:
                 )
                 continue
 
-            estado = _ESTADO_DESPACHO.get(fila["status"] or "", "PENDING")
+            estado = _ESTADO_DESPACHO.get((fila["status"] or "").upper().strip())
+            if estado is None:
+                self.reporte.problemas.append(
+                    f"despacho {fila['id']}: estado legacy desconocido {fila['status']!r}."
+                )
+                continue
+            metodo = _METODO.get((fila["method"] or "").upper().strip())
+            if metodo is None:
+                self.reporte.problemas.append(
+                    f"despacho {fila['id']}: método legacy desconocido {fila['method']!r}."
+                )
+                continue
             nuevo = uuid4()
             if not self.seco:
                 await self.session.execute(
                     text("""
                         INSERT INTO dispatch_requests
                             (id, dispatch_number, company_id, requested_by, method, status,
-                             requested_at, updated_at, completed_at, rejected_reason)
+                             requested_at, updated_at, approved_at, dispatched_at,
+                             completed_at, rejected_reason)
                         VALUES (:id, siguiente_dispatch_number(), :c, :u, :m, :estado,
-                                :creada, :creada, :completada, :motivo)
+                                :creada, :creada, :aprobada, :despachada,
+                                :completada, :motivo)
                     """),
                     {
                         "id": nuevo,
                         "c": empresa,
                         "u": solicitante,
-                        "m": _METODO.get(fila["method"] or "", "SEA"),
+                        "m": metodo,
                         "estado": estado,
                         "creada": fila["created_at"],
                         # Se decide acá y no con un CASE en SQL: usar el mismo
                         # parámetro como valor de columna y en una comparación
                         # impide que asyncpg deduzca un tipo único.
-                        "completada": fila["created_at"] if estado == "COMPLETED" else None,
+                        "aprobada": (
+                            fila["created_at"] if estado in {"APPROVED", "COMPLETED"} else None
+                        ),
+                        "despachada": (fila["created_at"] if estado == "COMPLETED" else None),
+                        "completada": (fila["created_at"] if estado == "COMPLETED" else None),
                         # El esquema nuevo exige motivo al rechazar y el legacy
                         # no lo guardaba. Se deja dicho que falta, en vez de
                         # inventar uno: un motivo fabricado sería peor que la
@@ -820,11 +853,16 @@ class Migrador:
             c.creados += 1
 
     async def documentos(self) -> None:
-        """Registra los documentos; los archivos los sube el Paso 5.3."""
+        """Registra adjuntos sin tipo demostrable como `LEGACY_UNCLASSIFIED`.
+
+        `core_warehousedocument` no guarda un catálogo funcional: `cont_type`
+        es el MIME del archivo, no su clase de negocio. Llamarlos factura
+        comercial abría o satisfacía requisitos con una evidencia inventada.
+        """
         c = self.reporte.contador("documents")
-        tipo_factura = (
+        tipo_legacy = (
             await self.session.execute(
-                text("SELECT id FROM document_types WHERE code = 'COMMERCIAL_INVOICE'")
+                text("SELECT id FROM document_types WHERE code = 'LEGACY_UNCLASSIFIED'")
             )
         ).scalar_one_or_none()
 
@@ -839,70 +877,28 @@ class Migrador:
                 continue
 
             carga = self.buscar("core_warehouse", fila["warehouse_id"])
-            if carga is None or tipo_factura is None:
+            if carga is None or tipo_legacy is None:
                 self.reporte.problemas.append(
                     f"documento {fila['id']}: su carga {fila['warehouse_id']} no se migró."
                 )
                 continue
 
-            subido_por = (
-                self.buscar("auth_user", fila["uploaded_by_id"]) if fila["uploaded_by_id"] else None
-            ) or await self._usuario_de_sistema()
-
-            empresa = (
-                (
-                    await self.session.execute(
-                        text("SELECT company_id FROM shipments WHERE id = :s"), {"s": carga}
-                    )
-                ).scalar_one_or_none()
-                if not self.seco
-                else None
+            await self._registrar_documento(
+                fila,
+                carga=carga,
+                tipo_id=tipo_legacy,
+                tabla_legacy="core_warehousedocument",
+                issued_by="OTHER",
             )
-
-            nuevo = uuid4()
-            if not self.seco and empresa is not None:
-                await self.session.execute(
-                    text("""
-                        INSERT INTO documents
-                            (id, company_id, uploaded_by, storage_provider, storage_key,
-                             original_name, safe_name, media_type, size_bytes, sha256,
-                             upload_status, created_at)
-                        VALUES (:id, :c, :u, 'legacy', :ruta, :nombre, :nombre,
-                                :tipo, :tam, :hash, 'UPLOADING', :subido)
-                    """),
-                    {
-                        "id": nuevo,
-                        "c": empresa,
-                        "u": subido_por,
-                        # La ruta del legacy, no una clave de storage: el objeto
-                        # todavía no está subido. El Paso 5.3 la reemplaza.
-                        "ruta": (fila["file"] or "")[:500],
-                        "nombre": (fila["original_name"] or fila["file"] or "documento")[:255],
-                        "tipo": (fila["cont_type"] or "application/octet-stream")[:100],
-                        "tam": fila["size_bytes"] or 1,
-                        # Se calcula al subir el archivo real (Paso 5.3).
-                        "hash": "0" * 64,
-                        "subido": fila["uploaded_at"],
-                    },
-                )
-                await self.session.execute(
-                    text("""
-                        INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
-                        VALUES (:s, :d, :t) ON CONFLICT DO NOTHING
-                    """),
-                    {"s": carga, "d": nuevo, "t": tipo_factura},
-                )
-            await self._registrar("core_warehousedocument", fila["id"], "documents", nuevo)
             c.creados += 1
 
     async def documentos_de_despacho(self) -> None:
-        """Facturas y Bills of Lading que el legacy colgaba del despacho.
+        """Separa documentos de carga y documentos globales de despacho.
 
-        `core_warehouseinvoice` y `core_dispatchbldocument` apuntan a la vez a
-        una carga y a un despacho. En el esquema nuevo eso son dos enlaces
-        distintos —`shipment_documents` y `dispatch_documents`— y se crean los
-        dos: perder el del despacho dejaría el BL sin forma de encontrarse desde
-        la solicitud que lo generó.
+        La factura sigue perteneciendo a su carga. El BL pertenece únicamente
+        al despacho, aunque el legacy guardara además `warehouse_id` para
+        producir una fila por carga. Crear ambos enlaces reintroduciría la fuga
+        de contexto que el modelo nuevo prohíbe.
         """
         for tabla, code, campo_fecha in (
             ("core_warehouseinvoice", "COMMERCIAL_INVOICE", "uploaded_at"),
@@ -937,24 +933,29 @@ class Migrador:
                     else None
                 )
 
-                if carga is None or tipo_id is None:
+                padre = despacho if code == "BL" else carga
+                if padre is None or tipo_id is None:
                     self.reporte.problemas.append(
-                        f"{tabla} {fila['id']}: falta su carga o el tipo {code}."
+                        f"{tabla} {fila['id']}: falta su "
+                        f"{'despacho' if code == 'BL' else 'carga'} o el tipo {code}."
                     )
                     continue
 
-                documento = await self._registrar_documento(
-                    fila, carga=carga, tipo_id=tipo_id, tabla_legacy=tabla
-                )
-
-                if despacho is not None and not self.seco:
-                    await self.session.execute(
-                        text("""
-                            INSERT INTO dispatch_documents
-                                (dispatch_request_id, document_id, document_type_id)
-                            VALUES (:d, :doc, :t) ON CONFLICT DO NOTHING
-                        """),
-                        {"d": despacho, "doc": documento, "t": tipo_id},
+                if code == "BL" and despacho is not None:
+                    await self._registrar_documento_despacho(
+                        fila,
+                        despacho=despacho,
+                        tipo_id=tipo_id,
+                        tabla_legacy=tabla,
+                        issued_by="CARRIER",
+                    )
+                elif carga is not None:
+                    await self._registrar_documento(
+                        fila,
+                        carga=carga,
+                        tipo_id=tipo_id,
+                        tabla_legacy=tabla,
+                        issued_by="OTHER",
                     )
 
                 c.creados += 1
@@ -1014,21 +1015,24 @@ class Migrador:
                 carga=carga,
                 tipo_id=tipo_id,
                 tabla_legacy=clave,
+                issued_by="AMVARMAR",
             )
             c.creados += 1
 
     async def _registrar_documento(
-        self, fila: dict[str, Any], *, carga: UUID, tipo_id: UUID, tabla_legacy: str
+        self,
+        fila: dict[str, Any],
+        *,
+        carga: UUID,
+        tipo_id: UUID,
+        tabla_legacy: str,
+        issued_by: str,
     ) -> UUID:
         """Crea el documento y su enlace con la carga.
 
         Queda en `UPLOADING` con la ruta del legacy: el archivo todavía vive en
         el servidor viejo y subirlo al storage privado es el Paso 5.3.
         """
-        subido_por = (
-            self.buscar("auth_user", fila["uploaded_by_id"]) if fila.get("uploaded_by_id") else None
-        ) or await self._usuario_de_sistema()
-
         empresa = (
             (
                 await self.session.execute(
@@ -1039,35 +1043,100 @@ class Migrador:
             else None
         )
 
-        nuevo = uuid4()
-        if not self.seco and empresa is not None:
-            await self.session.execute(
-                text("""
-                    INSERT INTO documents
-                        (id, company_id, uploaded_by, storage_provider, storage_key,
-                         original_name, safe_name, media_type, size_bytes, sha256,
-                         upload_status, created_at)
-                    VALUES (:id, :c, :u, 'legacy', :ruta, :nombre, :nombre,
-                            :tipo, :tam, :hash, 'UPLOADING', :subido)
-                """),
-                {
-                    "id": nuevo,
-                    "c": empresa,
-                    "u": subido_por,
-                    "ruta": (fila.get("file") or "")[:500],
-                    "nombre": (fila.get("original_name") or fila.get("file") or "documento")[:255],
-                    "tipo": (fila.get("content_type") or "application/octet-stream")[:100],
-                    "tam": fila.get("size_bytes") or 1,
-                    "hash": "0" * 64,
-                    "subido": fila.get("subido"),
-                },
-            )
+        nuevo = await self._crear_documento_legacy(
+            fila,
+            empresa=empresa,
+            tabla_legacy=tabla_legacy,
+            issued_by=issued_by,
+        )
+        if not self.seco:
             await self.session.execute(
                 text("""
                     INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
                     VALUES (:s, :d, :t) ON CONFLICT DO NOTHING
                 """),
                 {"s": carga, "d": nuevo, "t": tipo_id},
+            )
+        return nuevo
+
+    async def _registrar_documento_despacho(
+        self,
+        fila: dict[str, Any],
+        *,
+        despacho: UUID,
+        tipo_id: UUID,
+        tabla_legacy: str,
+        issued_by: str,
+    ) -> UUID:
+        empresa = (
+            (
+                await self.session.execute(
+                    text("SELECT company_id FROM dispatch_requests WHERE id = :d"),
+                    {"d": despacho},
+                )
+            ).scalar_one_or_none()
+            if not self.seco
+            else None
+        )
+        nuevo = await self._crear_documento_legacy(
+            fila,
+            empresa=empresa,
+            tabla_legacy=tabla_legacy,
+            issued_by=issued_by,
+        )
+        if not self.seco:
+            await self.session.execute(
+                text("""
+                    INSERT INTO dispatch_documents
+                        (dispatch_request_id, document_id, document_type_id)
+                    VALUES (:d, :doc, :t) ON CONFLICT DO NOTHING
+                """),
+                {"d": despacho, "doc": nuevo, "t": tipo_id},
+            )
+        return nuevo
+
+    async def _crear_documento_legacy(
+        self,
+        fila: dict[str, Any],
+        *,
+        empresa: UUID | None,
+        tabla_legacy: str,
+        issued_by: str,
+    ) -> UUID:
+        subido_por = (
+            self.buscar("auth_user", fila["uploaded_by_id"]) if fila.get("uploaded_by_id") else None
+        ) or await self._usuario_de_sistema()
+        nombre = str(fila.get("original_name") or fila.get("file") or "documento")[:255]
+        nuevo = uuid4()
+        if not self.seco:
+            if empresa is None:
+                raise RuntimeError(f"{tabla_legacy} {fila['id']}: no se pudo resolver la empresa.")
+            await self.session.execute(
+                text("""
+                    INSERT INTO documents
+                        (id, company_id, uploaded_by, storage_provider, storage_key,
+                         original_name, safe_name, media_type, size_bytes, sha256,
+                         upload_status, issued_by, created_at)
+                    VALUES (:id, :c, :u, 'legacy', :ruta, :nombre, :seguro,
+                            :tipo, :tam, :hash, 'UPLOADING', :issued_by, :subido)
+                """),
+                {
+                    "id": nuevo,
+                    "c": empresa,
+                    "u": subido_por,
+                    "ruta": str(fila.get("file") or "")[:500],
+                    "nombre": nombre,
+                    "seguro": nombre_seguro(nombre),
+                    "tipo": str(
+                        fila.get("content_type")
+                        or fila.get("cont_type")
+                        or "application/octet-stream"
+                    )[:150],
+                    "tam": fila.get("size_bytes") or 1,
+                    "hash": "0" * 64,
+                    "issued_by": issued_by,
+                    "subido": fila.get("subido") or fila.get("uploaded_at"),
+                },
             )
 
         await self._registrar(tabla_legacy, fila["id"], "documents", nuevo)
@@ -1078,11 +1147,11 @@ class Migrador:
         if not await self.comprobar():
             return self.reporte
 
-        origen, destino = await self._ubicaciones()
+        origen, destino, bodega_origen = await self._ubicaciones()
 
         await self.empresas()
         await self.usuarios()
-        await self.cargas(origen=origen, destino=destino)
+        await self.cargas(origen=origen, destino=destino, bodega_origen=bodega_origen)
         await self.paquetes()
         await self.despachos()
         await self.cargas_de_despacho()
@@ -1091,7 +1160,7 @@ class Migrador:
         await self.adjuntos_de_carga()
         return self.reporte
 
-    async def _ubicaciones(self) -> tuple[UUID, UUID]:
+    async def _ubicaciones(self) -> tuple[UUID, UUID, UUID]:
         """El legacy no guarda origen ni destino por carga.
 
         Se usan Miami y San José, que es la ruta del negocio. Queda como dato
@@ -1113,7 +1182,35 @@ class Migrador:
                     )
                 ).scalar_one()
             )
-        return ids[0], ids[1]
+        bodega = (
+            await self.session.execute(
+                text("""
+                    SELECT id FROM facilities
+                    WHERE location_id = :ubicacion AND uses_warehouse_receipt
+                    ORDER BY facility_code
+                    LIMIT 1
+                """),
+                {"ubicacion": ids[0]},
+            )
+        ).scalar_one_or_none()
+        if bodega is None:
+            bodega = (
+                await self.session.execute(
+                    text("""
+                        INSERT INTO facilities
+                            (location_id, facility_code, facility_type,
+                             uses_warehouse_receipt, is_active)
+                        VALUES (:ubicacion, 'MIA-LEGACY', 'WAREHOUSE', true, true)
+                        ON CONFLICT (facility_code) DO UPDATE
+                        SET location_id = EXCLUDED.location_id,
+                            uses_warehouse_receipt = true,
+                            is_active = true
+                        RETURNING id
+                    """),
+                    {"ubicacion": ids[0]},
+                )
+            ).scalar_one()
+        return ids[0], ids[1], bodega
 
 
 async def principal() -> None:

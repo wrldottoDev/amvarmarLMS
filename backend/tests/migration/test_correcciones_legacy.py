@@ -467,3 +467,130 @@ class TestReversion:
 
         assert resultado.returncode != 0
         assert "No hay correcciones registradas" in resultado.stderr
+
+
+class TestMigradorCompleto:
+    async def test_migra_el_esquema_real_y_la_segunda_corrida_no_duplica(
+        self, legacy, postgres_container, session
+    ) -> None:
+        """Prueba el migrador completo, no solo los scripts de limpieza.
+
+        La fuente incluye las tablas finales del Django legacy y el destino es
+        el esquema Alembic actual. La segunda ejecución prueba el contrato de
+        reanudación que se usará durante el cutover.
+        """
+        import psycopg
+        from scripts import seed_document_types, seed_rbac, seed_shipment_statuses
+        from scripts.migrate_legacy import Migrador
+        from scripts.verificar_migracion import comparar
+        from sqlalchemy import text
+        from sqlalchemy.engine import make_url
+
+        # `postgres_container` es de toda la corrida. `conftest.py` ya limpia
+        # lo que dejan `cliente`/`db_directa` en su propio teardown, pero
+        # algunas pruebas de concurrencia (test_despachos.py::TestConcurrencia,
+        # test_shipments.py::TestConcurrencia) abren su propia conexión para
+        # correr transacciones en paralelo de verdad y solo limpian las filas
+        # que ellas mismas necesitan seguir viendo (shipments, dispatch_*):
+        # el `usuario`/`empresa` que arma el contexto de cada corrida queda.
+        # `comparar()` hace un COUNT(*) global, así que necesita partir de un
+        # destino vacío igual que en el cutover real; verificado que sin este
+        # TRUNCATE el test falla con usuarios/empresas de sobra (probado
+        # quitándolo y corriendo la suite completa).
+        await session.execute(text("TRUNCATE users, companies CASCADE"))
+
+        # Equivale al resultado aprobado del Paso 5.1: ningún usuario que se
+        # migra queda sin correo ni comparte uno con otra cuenta.
+        legacy["psql"]("""
+            UPDATE auth_user
+            SET email = 'legacy-' || id || '@migration.test',
+                password = 'pbkdf2_sha256$720000$salt$hash-de-prueba'
+        """)
+
+        await seed_rbac.sembrar(session)
+        await seed_shipment_statuses.sembrar(session)
+        await seed_document_types.sembrar(session)
+
+        url = make_url(postgres_container.get_connection_url()).set(
+            drivername="postgresql", database=legacy["base"]
+        )
+        dsn = url.render_as_string(hide_password=False)
+
+        async def conteos() -> tuple[int, ...]:
+            fila = (
+                await session.execute(
+                    text("""
+                        SELECT
+                            (SELECT count(*) FROM shipments),
+                            (SELECT count(*) FROM shipment_packages),
+                            (SELECT count(*) FROM dispatch_requests),
+                            (SELECT count(*) FROM dispatch_request_shipments),
+                            (SELECT count(*) FROM documents),
+                            (SELECT count(*) FROM legacy_id_map)
+                    """)
+                )
+            ).one()
+            return tuple(int(valor) for valor in fila)
+
+        with psycopg.connect(dsn) as conexion_legacy:
+            primera = await Migrador(conexion_legacy, session, seco=False).ejecutar()
+            assert not primera.problemas, primera.problemas
+
+            # Fuerza aquí los constraint triggers diferibles de piezas. Esperar
+            # al rollback de la fixture no los ejecutaría.
+            await session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+            antes = await conteos()
+
+            segunda = await Migrador(conexion_legacy, session, seco=False).ejecutar()
+            assert not segunda.problemas, segunda.problemas
+            assert await conteos() == antes
+            assert all(c.creados == 0 for c in segunda.tablas.values())
+
+            informe = await comparar(conexion_legacy, session)
+            assert not informe.descuadres, [
+                (c.concepto, c.origen, c.destino) for c in informe.descuadres
+            ]
+
+        invariantes = (
+            await session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM dispatch_requests WHERE method = 'LAND')
+                            AS terrestres,
+                        (SELECT count(*)
+                         FROM shipment_documents sd
+                         JOIN document_types dt ON dt.id = sd.document_type_id
+                         WHERE upper(dt.code) = 'LEGACY_UNCLASSIFIED') AS sin_clasificar,
+                        (SELECT count(*)
+                         FROM shipment_documents sd
+                         JOIN document_types dt ON dt.id = sd.document_type_id
+                         WHERE upper(dt.code) = 'BL') AS bl_en_cargas,
+                        (SELECT count(*)
+                         FROM dispatch_documents dd
+                         JOIN document_types dt ON dt.id = dd.document_type_id
+                         WHERE upper(dt.code) = 'BL') AS bl_en_despachos,
+                        (SELECT count(*)
+                         FROM shipment_documents sd
+                         JOIN dispatch_documents dd ON dd.document_id = sd.document_id)
+                            AS doble_contexto,
+                        (SELECT count(*)
+                         FROM shipments s
+                         WHERE s.package_count <> (
+                             SELECT coalesce(sum(p.quantity), 0)
+                             FROM shipment_packages p WHERE p.shipment_id = s.id
+                         )) AS conteos_incorrectos,
+                        (SELECT count(*)
+                         FROM shipment_references r
+                         WHERE r.reference_type = 'WR' AND r.facility_id IS NULL)
+                            AS wr_sin_bodega
+                """)
+            )
+        ).one()
+
+        assert invariantes.terrestres == 1
+        assert invariantes.sin_clasificar == 1
+        assert invariantes.bl_en_cargas == 0
+        assert invariantes.bl_en_despachos == 1
+        assert invariantes.doble_contexto == 0
+        assert invariantes.conteos_incorrectos == 0
+        assert invariantes.wr_sin_bodega == 0

@@ -19,6 +19,7 @@ from app.modules.shipments.models import (
     RequirementType,
     ShipmentStatus,
 )
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -120,14 +121,17 @@ async def _carga(
     estado: str = ShipmentStatus.PRE_ALERT,
     eta: datetime | None = None,
     entregada_el: datetime | None = None,
+    shipper: str | None = None,
+    carrier: str | None = None,
 ) -> uuid.UUID:
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
                     (company_id, created_by, current_status_code, origin_location_id,
-                     destination_location_id, estimated_arrival_at, delivered_at)
-                VALUES (:c, :u, :estado, :o, :d, :eta, :entregada)
+                     destination_location_id, estimated_arrival_at, delivered_at,
+                     shipper, carrier)
+                VALUES (:c, :u, :estado, :o, :d, :eta, :entregada, :shipper, :carrier)
                 RETURNING id
             """),
             {
@@ -138,9 +142,14 @@ async def _carga(
                 "d": ctx["destino"],
                 "eta": eta,
                 "entregada": entregada_el,
+                "shipper": shipper,
+                "carrier": carrier,
             },
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _permisos(session: AsyncSession, redis, user_id: uuid.UUID):
@@ -354,6 +363,61 @@ class TestFiltros:
         )
 
         assert [f.id for f in pagina.items] == [con_factura]
+
+    @pytest.mark.parametrize(
+        ("campo", "valor", "busqueda"),
+        [
+            ("shipper", "Proveedor Delta", "delta"),
+            ("carrier", "Transportes Azul", "AZUL"),
+        ],
+    )
+    async def test_busqueda_global_incluye_shipper_y_carrier(
+        self, session: AsyncSession, redis, campo: str, valor: str, busqueda: str
+    ) -> None:
+        ctx = await _entorno(session)
+        esperada = await _carga(session, ctx, **{campo: valor})
+        await _carga(session, ctx, shipper="Otro", carrier="Otro")
+
+        pagina = await queries.listar_shipments(
+            session,
+            permisos=await _permisos(session, redis, ctx["operaciones"]),
+            filtros=queries.FiltrosListado(texto=busqueda),
+            limite=50,
+        )
+
+        assert [f.id for f in pagina.items] == [esperada]
+
+    async def test_filtros_explicitos_se_combinan_con_and(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        coincide = await _carga(session, ctx, shipper="Acme Parts", carrier="Naviera Uno")
+        await _carga(session, ctx, shipper="Acme Parts", carrier="Naviera Dos")
+        await _carga(session, ctx, shipper="Otro", carrier="Naviera Uno")
+
+        pagina = await queries.listar_shipments(
+            session,
+            permisos=await _permisos(session, redis, ctx["operaciones"]),
+            filtros=queries.FiltrosListado(shipper="Acme", carrier="Uno"),
+            limite=50,
+        )
+
+        assert [f.id for f in pagina.items] == [coincide]
+
+    async def test_resumen_incluye_empresa_y_version(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        esperada = await _carga(session, ctx)
+        pagina = await queries.listar_shipments(
+            session,
+            permisos=await _permisos(session, redis, ctx["operaciones"]),
+            filtros=queries.FiltrosListado(),
+            limite=10,
+        )
+
+        fila = next(f for f in pagina.items if f.id == esperada)
+        assert fila.company_id == ctx["empresa_a"]
+        assert fila.company_name == "Empresa A S.A."
+        assert fila.row_version == 1
 
     async def test_filtra_por_rango_de_eta(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)

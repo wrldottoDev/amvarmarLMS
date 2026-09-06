@@ -78,8 +78,15 @@ SELECT d.id, w.wr_number
 FROM core_dispatchrequest d
 CROSS JOIN LATERAL (
     SELECT wr_number FROM core_warehouse
-    WHERE cliente_id IS NOT NULL ORDER BY wr_number LIMIT 3
+    WHERE cliente_id IS NOT NULL AND company_id = 1 ORDER BY wr_number LIMIT 3
 ) AS w;
+
+UPDATE core_dispatchrequest
+SET method = CASE
+    WHEN id = 1 THEN 'TERRESTRE'
+    WHEN id = 2 THEN 'AEREO'
+    ELSE method
+END;
 
 -- Un documento y una pieza sobre el WR mal capturado: es lo que hace que
 -- normalizarlo en el legacy falle, y por eso se hace al migrar.
@@ -88,3 +95,28 @@ VALUES ('WR000901.', 'warehouse_docs/2026/01/factura.pdf', 'factura.pdf');
 
 INSERT INTO core_piecewarehouse (warehouse_id, type_of, quantity, description)
 VALUES ('WR000901.', 'CAJAS', 2, 'Dos cajas');
+
+INSERT INTO core_piecewarehouse (warehouse_id, type_of, quantity, description)
+SELECT w.wr_number, 'ATADOS', 1, 'Pieza de prueba migrable'
+FROM core_warehouse w
+WHERE NOT EXISTS (
+    SELECT 1 FROM core_piecewarehouse p WHERE p.warehouse_id = w.wr_number
+);
+
+INSERT INTO core_warehouseinvoice
+    (dispatch_id, warehouse_id, file, original_name, content_type, size_bytes, uploaded_by_id)
+SELECT 1, warehouse_id, 'invoices/2026/08/factura.pdf', 'factura.pdf',
+       'application/pdf', 1234, 5
+FROM core_dispatchrequestitem
+WHERE dispatch_id = 1
+ORDER BY id
+LIMIT 1;
+
+INSERT INTO core_dispatchbldocument
+    (dispatch_id, warehouse_id, file, original_name, content_type, size_bytes, uploaded_by_id)
+SELECT 1, warehouse_id, 'bol/2026/08/bl.pdf', 'bl.pdf',
+       'application/pdf', 2345, 4
+FROM core_dispatchrequestitem
+WHERE dispatch_id = 1
+ORDER BY id
+LIMIT 1;

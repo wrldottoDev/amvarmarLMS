@@ -20,6 +20,8 @@ import argparse
 import asyncio
 import random
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -31,6 +33,7 @@ from app.core.security.argon2 import hash_password
 from app.modules.notifications import service as notificaciones
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.shipments.models import ShipmentStatus
+from app.modules.shipments.peso import UnidadPeso, convertir_peso
 from scripts.seed_document_types import sembrar as sembrar_documentos
 from scripts.seed_rbac import sembrar as sembrar_rbac
 from scripts.seed_shipment_statuses import sembrar as sembrar_estados
@@ -136,7 +139,12 @@ async def _usuario(
                 INSERT INTO users
                     (email, password_hash, first_name, last_name, status, email_verified_at)
                 VALUES (:e, :h, :n, :a, 'ACTIVE', now())
-                ON CONFLICT (email) DO UPDATE SET first_name = EXCLUDED.first_name
+                ON CONFLICT (email) DO UPDATE
+                SET password_hash = EXCLUDED.password_hash,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    status = 'ACTIVE',
+                    email_verified_at = COALESCE(users.email_verified_at, now())
                 RETURNING id
             """),
             {"e": email, "h": hash_password(PASSWORD_DEMO), "n": nombre, "a": apellido},
@@ -214,26 +222,47 @@ async def _cargas(
     bodega: UUID,
 ) -> list[UUID]:
     """Cargas repartidas por estado, con fechas escalonadas hacia atrás."""
-    ya_hay = (await session.execute(text("SELECT count(*) FROM shipments"))).scalar_one()
-    if ya_hay:
-        return list(
-            (await session.execute(text("SELECT id FROM shipments ORDER BY created_at")))
-            .scalars()
-            .all()
+    existentes = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT id FROM shipments
+                    WHERE created_by = :creador AND company_id = ANY(:empresas)
+                    ORDER BY created_at
+                """),
+                {"creador": creador, "empresas": list(empresas.values())},
+            )
         )
+        .scalars()
+        .all()
+    )
+    if existentes:
+        return existentes
 
     # Semilla fija: dos ejecuciones producen los mismos datos, así que una
     # captura de pantalla de ayer sigue teniendo sentido hoy.
     aleatorio = random.Random(20260825)
     creadas: list[UUID] = []
     dias = 90
+    numero_demo = 0
+    shippers = ("Atlas Components", "Nordic Supply", "Pacífico Industrial")
+    carriers = ("Maersk", "DHL Aviation", "AMVARMAR Land")
+    modos = ("SEA", "AIR", "LAND")
+    tipos_bulto = ("PALLET", "BOX", "DRUM", "BUNDLE")
 
     for estado, cantidad in REPARTO.items():
         for _ in range(cantidad):
             dias -= 1
+            numero_demo += 1
             clave = "alfa" if aleatorio.random() < 0.7 else "beta"
             requiere_permiso = aleatorio.random() < 0.15
             momento = datetime.now(UTC) - timedelta(days=max(dias, 1))
+            peso = convertir_peso(
+                Decimal(aleatorio.randint(25_000, 480_000)) / Decimal(1000),
+                UnidadPeso.KG,
+            )
+            cantidad_bultos = aleatorio.randint(1, 8)
+            modo = modos[(numero_demo - 1) % len(modos)]
 
             # Las fechas de hito se calculan en Python y no con `CASE WHEN` en
             # SQL: usar el mismo parámetro como valor de columna y dentro de una
@@ -247,9 +276,13 @@ async def _cargas(
                             (company_id, created_by, current_status_code,
                              origin_location_id, destination_location_id,
                              origin_facility_id, permit_review_required,
+                             transport_mode, description, shipper, carrier,
+                             weight_kg, weight_lb, weight_source_unit,
                              created_at, updated_at,
                              received_at, stored_at, dispatched_at, delivered_at)
-                        VALUES (:c, :u, :estado, :o, :d, :f, :permiso, :momento, :momento,
+                        VALUES (:c, :u, :estado, :o, :d, :f, :permiso,
+                                :modo, :descripcion, :shipper, :carrier,
+                                :kg, :lb, 'KG', :momento, :momento,
                                 :recibida, :almacenada, :despachada, :entregada)
                         RETURNING id
                     """),
@@ -261,6 +294,12 @@ async def _cargas(
                         "d": ubicaciones["SJO"],
                         "f": bodega,
                         "permiso": requiere_permiso,
+                        "modo": modo,
+                        "descripcion": f"Carga de demostración {numero_demo}",
+                        "shipper": shippers[(numero_demo - 1) % len(shippers)],
+                        "carrier": carriers[(numero_demo - 1) % len(carriers)],
+                        "kg": peso.kg,
+                        "lb": peso.lb,
                         "momento": momento,
                         "recibida": momento if "received" in alcanzados else None,
                         "almacenada": momento if "stored" in alcanzados else None,
@@ -270,6 +309,20 @@ async def _cargas(
                 )
             ).scalar_one()
             creadas.append(shipment_id)
+
+            await session.execute(
+                text("""
+                    INSERT INTO shipment_packages
+                        (shipment_id, package_type, quantity, description)
+                    VALUES (:s, :tipo, :cantidad, :descripcion)
+                """),
+                {
+                    "s": shipment_id,
+                    "tipo": tipos_bulto[(numero_demo - 1) % len(tipos_bulto)],
+                    "cantidad": cantidad_bultos,
+                    "descripcion": "Pieza generada para la demostración local",
+                },
+            )
 
             await session.execute(
                 text("""
@@ -292,10 +345,83 @@ async def _cargas(
                     INSERT INTO shipment_references (shipment_id, reference_type, value)
                     VALUES (:s, 'WR', :wr)
                 """),
-                {"s": shipment_id, "wr": f"WR{aleatorio.randint(100000, 999999)}"},
+                {"s": shipment_id, "wr": f"DEMO-WR-{numero_demo:04d}"},
             )
 
     return creadas
+
+
+async def _despacho_demo(
+    session: AsyncSession,
+    *,
+    empresa: UUID,
+    solicitado_por: UUID,
+    cargas: list[UUID],
+) -> UUID | None:
+    existente = (
+        await session.execute(
+            text("""
+                SELECT id FROM dispatch_requests
+                WHERE company_id = :empresa AND requested_by = :usuario
+                ORDER BY requested_at
+                LIMIT 1
+            """),
+            {"empresa": empresa, "usuario": solicitado_por},
+        )
+    ).scalar_one_or_none()
+    if existente is not None:
+        return cast(UUID, existente)
+
+    disponibles = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT id FROM shipments
+                    WHERE id = ANY(:cargas) AND company_id = :empresa
+                      AND current_status_code = 'STORED'
+                    ORDER BY created_at
+                    LIMIT 2
+                """),
+                {"cargas": cargas, "empresa": empresa},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not disponibles:
+        return None
+
+    despacho = (
+        await session.execute(
+            text("""
+                INSERT INTO dispatch_requests
+                    (dispatch_number, company_id, requested_by, method, status,
+                     delivery_address, instructions, requested_at, approved_at)
+                VALUES (siguiente_dispatch_number(), :empresa, :usuario, 'SEA', 'PREPARING',
+                        'San José, Costa Rica', 'Entrega coordinada con recepción',
+                        now() - interval '2 days', now() - interval '1 day')
+                RETURNING id
+            """),
+            {"empresa": empresa, "usuario": solicitado_por},
+        )
+    ).scalar_one()
+    for carga in disponibles:
+        await session.execute(
+            text("""
+                INSERT INTO dispatch_request_shipments (dispatch_request_id, shipment_id)
+                VALUES (:despacho, :carga)
+            """),
+            {"despacho": despacho, "carga": carga},
+        )
+        await session.execute(
+            text("""
+                UPDATE shipments
+                SET current_status_code = 'PREPARING', row_version = row_version + 1
+                WHERE id = :carga
+            """),
+            {"carga": carga},
+        )
+    return cast(UUID, despacho)
 
 
 async def _requisitos(session: AsyncSession, cargas: list[UUID], actor: UUID) -> None:
@@ -312,9 +438,19 @@ async def _requisitos(session: AsyncSession, cargas: list[UUID], actor: UUID) ->
         )
 
 
-async def _notificaciones(session: AsyncSession, usuarios: dict[str, UUID], empresa: UUID) -> None:
-    ya_hay = (await session.execute(text("SELECT count(*) FROM notifications"))).scalar_one()
-    if ya_hay:
+async def _notificaciones(session: AsyncSession, empresa: UUID) -> None:
+    recurso = (
+        await session.execute(
+            text("""
+                SELECT id FROM shipments
+                WHERE company_id = :empresa
+                ORDER BY created_at
+                LIMIT 1
+            """),
+            {"empresa": empresa},
+        )
+    ).scalar_one_or_none()
+    if recurso is None:
         return
 
     destinatarios = await notificaciones.destinatarios_de_empresa(session, empresa)
@@ -324,40 +460,176 @@ async def _notificaciones(session: AsyncSession, usuarios: dict[str, UUID], empr
             event_code=codigo,
             destinatarios=destinatarios,
             resource_type="shipment",
-            resource_id=(
-                await session.execute(text("SELECT id FROM shipments LIMIT 1"))
-            ).scalar_one(),
+            resource_id=recurso,
             dedup_key=f"demo-{codigo}",
         )
 
 
 async def limpiar(session: AsyncSession) -> None:
-    """Borra los datos de demo. No toca catálogos ni permisos."""
+    """Borra únicamente entidades ligadas a las cuentas y empresas de demo."""
+    empresas = list(
+        (
+            await session.execute(
+                text("SELECT id FROM companies WHERE tax_id = ANY(:cedulas)"),
+                {"cedulas": [cedula for _, cedula in EMPRESAS.values()]},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    usuarios = list(
+        (
+            await session.execute(
+                text("SELECT id FROM users WHERE email = ANY(:correos)"),
+                {"correos": [cuenta[0] for cuenta in CUENTAS]},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not empresas and not usuarios:
+        return
+
+    cargas = list(
+        (
+            await session.execute(
+                text("SELECT id FROM shipments WHERE company_id = ANY(:empresas)"),
+                {"empresas": empresas},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    despachos = list(
+        (
+            await session.execute(
+                text("SELECT id FROM dispatch_requests WHERE company_id = ANY(:empresas)"),
+                {"empresas": empresas},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    documentos = list(
+        (
+            await session.execute(
+                text("SELECT id FROM documents WHERE company_id = ANY(:empresas)"),
+                {"empresas": empresas},
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    await session.execute(
+        text("""
+            DELETE FROM notifications
+            WHERE company_id = ANY(:empresas) OR user_id = ANY(:usuarios)
+        """),
+        {"empresas": empresas, "usuarios": usuarios},
+    )
+    await session.execute(
+        text("""
+            DELETE FROM document_export_jobs
+            WHERE company_id = ANY(:empresas) OR requested_by = ANY(:usuarios)
+        """),
+        {"empresas": empresas, "usuarios": usuarios},
+    )
+
+    if despachos:
+        await session.execute(
+            text("DELETE FROM dispatch_events WHERE dispatch_request_id = ANY(:ids)"),
+            {"ids": despachos},
+        )
+        await session.execute(
+            text("DELETE FROM dispatch_documents WHERE dispatch_request_id = ANY(:ids)"),
+            {"ids": despachos},
+        )
+        await session.execute(
+            text("DELETE FROM dispatch_request_shipments WHERE dispatch_request_id = ANY(:ids)"),
+            {"ids": despachos},
+        )
+        await session.execute(
+            text("DELETE FROM dispatch_requests WHERE id = ANY(:ids)"),
+            {"ids": despachos},
+        )
+
+    # Una versión anterior del seed sincronizaba requisitos sobre cualquier
+    # carga existente. El segundo predicado retira exclusivamente ese rastro,
+    # identificado por el actor de demo y el tipo de evento que generaba.
     await session.execute(
         text("ALTER TABLE shipment_events DISABLE TRIGGER trg_shipment_events_inmutable")
     )
-    for tabla in (
-        "notification_deliveries",
-        "notifications",
-        "outbox_events",
-        "dispatch_events",
-        "dispatch_request_shipments",
-        "dispatch_documents",
-        "dispatch_requests",
-        "shipment_requirements",
-        "shipment_documents",
-        "shipment_references",
-        "shipment_packages",
-        "shipment_events",
-        "shipments",
-        "documents",
-        "auth_sessions",
-        "company_memberships",
-        "user_role_assignments",
-        "users",
-        "companies",
-    ):
-        await session.execute(text(f"DELETE FROM {tabla}"))  # noqa: S608
+    await session.execute(
+        text("""
+            DELETE FROM shipment_events
+            WHERE shipment_id = ANY(:cargas)
+               OR (actor_user_id = ANY(:usuarios) AND event_type = 'REQUIREMENT_OPENED')
+        """),
+        {"cargas": cargas, "usuarios": usuarios},
+    )
+
+    await session.execute(
+        text("""
+            DELETE FROM shipment_requirements
+            WHERE shipment_id = ANY(:cargas) OR created_by = ANY(:usuarios)
+        """),
+        {"cargas": cargas, "usuarios": usuarios},
+    )
+
+    if cargas:
+        for tabla in (
+            "shipment_documents",
+            "shipment_references",
+            "shipment_packages",
+        ):
+            await session.execute(
+                text(f"DELETE FROM {tabla} WHERE shipment_id = ANY(:ids)"),  # noqa: S608
+                {"ids": cargas},
+            )
+        await session.execute(text("DELETE FROM shipments WHERE id = ANY(:ids)"), {"ids": cargas})
+
+    if documentos:
+        await session.execute(
+            text("DELETE FROM dispatch_documents WHERE document_id = ANY(:ids)"),
+            {"ids": documentos},
+        )
+        await session.execute(
+            text("DELETE FROM shipment_documents WHERE document_id = ANY(:ids)"),
+            {"ids": documentos},
+        )
+        await session.execute(
+            text("DELETE FROM documents WHERE id = ANY(:ids)"), {"ids": documentos}
+        )
+
+    recursos = [*cargas, *despachos, *documentos]
+    if recursos:
+        await session.execute(
+            text("DELETE FROM outbox_events WHERE aggregate_id = ANY(:ids)"),
+            {"ids": recursos},
+        )
+    await session.execute(text("DELETE FROM outbox_events WHERE dedup_key LIKE 'demo-%'"))
+
+    await session.execute(
+        text("""
+            DELETE FROM company_memberships
+            WHERE company_id = ANY(:empresas) OR user_id = ANY(:usuarios)
+        """),
+        {"empresas": empresas, "usuarios": usuarios},
+    )
+    await session.execute(
+        text("""
+            DELETE FROM user_role_assignments
+            WHERE company_id = ANY(:empresas) OR user_id = ANY(:usuarios)
+        """),
+        {"empresas": empresas, "usuarios": usuarios},
+    )
+    for tabla in ("auth_sessions", "idempotency_keys", "one_time_tokens", "column_preferences"):
+        await session.execute(
+            text(f"DELETE FROM {tabla} WHERE user_id = ANY(:usuarios)"),  # noqa: S608
+            {"usuarios": usuarios},
+        )
+    await session.execute(text("DELETE FROM companies WHERE id = ANY(:ids)"), {"ids": empresas})
     await session.execute(
         text("ALTER TABLE shipment_events ENABLE TRIGGER trg_shipment_events_inmutable")
     )
@@ -393,9 +665,20 @@ async def sembrar(session: AsyncSession) -> dict[str, object]:
         bodega=bodega,
     )
     await _requisitos(session, cargas, operaciones)
-    await _notificaciones(session, usuarios, empresas["alfa"])
+    despacho = await _despacho_demo(
+        session,
+        empresa=empresas["alfa"],
+        solicitado_por=usuarios["cliente@" + DOMINIO],
+        cargas=cargas,
+    )
+    await _notificaciones(session, empresas["alfa"])
 
-    return {"usuarios": len(usuarios), "empresas": len(empresas), "cargas": len(cargas)}
+    return {
+        "usuarios": len(usuarios),
+        "empresas": len(empresas),
+        "cargas": len(cargas),
+        "despachos": int(despacho is not None),
+    }
 
 
 async def principal() -> None:
@@ -420,7 +703,8 @@ async def principal() -> None:
 
     print("Datos de demostración listos.")
     print(
-        f"  empresas: {resumen['empresas']}  usuarios: {resumen['usuarios']}  cargas: {resumen['cargas']}"
+        f"  empresas: {resumen['empresas']}  usuarios: {resumen['usuarios']}  "
+        f"cargas: {resumen['cargas']}  despachos: {resumen['despachos']}"
     )
     print()
     print(f"  Contraseña de todas las cuentas: {PASSWORD_DEMO}")

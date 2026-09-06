@@ -121,28 +121,47 @@ async def comparar(legacy: psycopg.Connection, session: AsyncSession) -> Informe
             "documentos",
             _uno(legacy, "SELECT count(*) FROM core_warehousedocument")
             + _uno(legacy, "SELECT count(*) FROM core_warehouseinvoice")
-            + _uno(legacy, "SELECT count(*) FROM core_dispatchbldocument"),
+            + _uno(legacy, "SELECT count(*) FROM core_dispatchbldocument")
+            + _uno(
+                legacy,
+                "SELECT count(*) FROM core_warehouse "
+                "WHERE uploaded_file IS NOT NULL AND uploaded_file <> ''",
+            ),
             await _uno_nuevo(session, "SELECT count(*) FROM documents"),
-            "suma de documentos, facturas y BL",
+            "adjuntos, facturas, BL y Warehouse Receipts",
+        ),
+        Comparacion(
+            "despachos terrestres",
+            _uno(
+                legacy,
+                "SELECT count(*) FROM core_dispatchrequest WHERE upper(trim(method)) = 'TERRESTRE'",
+            ),
+            await _uno_nuevo(
+                session, "SELECT count(*) FROM dispatch_requests WHERE method = 'LAND'"
+            ),
+            "TERRESTRE debe conservarse como LAND",
+        ),
+        Comparacion(
+            "adjuntos legacy sin clasificar",
+            _uno(legacy, "SELECT count(*) FROM core_warehousedocument"),
+            await _uno_nuevo(
+                session,
+                """
+                SELECT count(*) FROM shipment_documents sd
+                JOIN document_types dt ON dt.id = sd.document_type_id
+                WHERE upper(dt.code) = 'LEGACY_UNCLASSIFIED'
+                """,
+            ),
+            "ningún adjunto genérico se interpreta como factura",
         ),
     ]
 
-    # Los bultos NO cuadran a propósito: cada ítem con medidas se migra como su
-    # propio bulto. Se compara contra el número que corresponde.
-    piezas_sin_items = _uno(
-        legacy,
-        """
-        SELECT count(*) FROM core_piecewarehouse p
-        WHERE NOT EXISTS (SELECT 1 FROM core_pieceitem i WHERE i.piece_id = p.id)
-        """,
-    )
-    items = _uno(legacy, "SELECT count(*) FROM core_pieceitem")
     informe.comparaciones.append(
         Comparacion(
             "bultos",
-            piezas_sin_items + items,
+            _uno(legacy, "SELECT count(*) FROM core_piecewarehouse"),
             await _uno_nuevo(session, "SELECT count(*) FROM shipment_packages"),
-            f"{piezas_sin_items} piezas sueltas + {items} ítems con medidas",
+            "una fila por core_piecewarehouse; quantity se conserva",
         )
     )
 
@@ -162,10 +181,49 @@ async def comparar(legacy: psycopg.Connection, session: AsyncSession) -> Informe
             0,
         ),
         (
-            "documentos sin carga asociada",
+            "documentos sin padre asociado",
             """
             SELECT count(*) FROM documents d
             WHERE NOT EXISTS (SELECT 1 FROM shipment_documents sd WHERE sd.document_id = d.id)
+              AND NOT EXISTS (SELECT 1 FROM dispatch_documents dd WHERE dd.document_id = d.id)
+            """,
+            0,
+        ),
+        (
+            "cargas sin piezas",
+            """
+            SELECT count(*) FROM shipments s
+            WHERE s.deleted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM shipment_packages p WHERE p.shipment_id = s.id
+              )
+            """,
+            0,
+        ),
+        (
+            "conteos de piezas inconsistentes",
+            """
+            SELECT count(*) FROM shipments s
+            WHERE s.package_count <> COALESCE(
+                (SELECT sum(p.quantity) FROM shipment_packages p WHERE p.shipment_id = s.id), 0
+            )
+            """,
+            0,
+        ),
+        (
+            "BL ligados a cargas",
+            """
+            SELECT count(*) FROM shipment_documents sd
+            JOIN document_types dt ON dt.id = sd.document_type_id
+            WHERE upper(dt.code) = 'BL'
+            """,
+            0,
+        ),
+        (
+            "documentos ligados a ambos contextos",
+            """
+            SELECT count(*) FROM shipment_documents sd
+            JOIN dispatch_documents dd ON dd.document_id = sd.document_id
             """,
             0,
         ),
