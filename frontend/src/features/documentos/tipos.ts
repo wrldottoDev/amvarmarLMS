@@ -6,27 +6,18 @@ import { api, exigirDatos } from "@/lib/api/client";
 /**
  * Catálogo de tipos de documento.
  *
- * Se lee del expediente de una carga cualquiera porque no hay endpoint propio:
- * los tipos son los mismos para todo el sistema. Cachea largo — cambian cuando
- * cambia el negocio, no durante una sesión.
+ * El backend ya filtra por contexto, rol y scope. La interfaz consume ese
+ * catálogo tal cual para no ofrecer tipos internos a clientes.
  */
-export function useTiposDeDocumento() {
+export function useTiposDeDocumento(contexto: "SHIPMENT" | "DISPATCH") {
   return useQuery({
-    queryKey: ["catalogos", "tipos-documento"],
-    queryFn: async () => {
-      const cargas = exigirDatos(
-        await api.GET("/api/v1/shipments", { params: { query: { limit: 1 } } }),
-      );
-      const primera = cargas.items[0];
-      if (!primera) return [];
-
-      const expediente = exigirDatos(
-        await api.GET("/api/v1/shipments/{shipment_id}/documents", {
-          params: { path: { shipment_id: primera.id } },
+    queryKey: ["catalogos", "tipos-documento", contexto],
+    queryFn: async () =>
+      exigirDatos(
+        await api.GET("/api/v1/document-types", {
+          params: { query: { context: contexto } },
         }),
-      );
-      return expediente.tipos;
-    },
+      ),
     staleTime: 30 * 60 * 1000,
   });
 }

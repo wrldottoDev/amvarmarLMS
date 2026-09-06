@@ -6,6 +6,7 @@ import { use } from "react";
 import { Expediente } from "@/components/documentos/expediente";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
+import { useSesion } from "@/features/auth/contexto-sesion";
 import { useCarga } from "@/features/shipments/consultas";
 
 /**
@@ -27,6 +28,7 @@ export default function PaginaArchivosDeCarga({
 }) {
   const { id } = use(params);
   const carga = useCarga(id);
+  const { usuario } = useSesion();
 
   if (carga.isPending) return <CargandoPagina />;
   if (carga.isError) return <AvisoError error={carga.error} />;
@@ -56,7 +58,7 @@ export default function PaginaArchivosDeCarga({
         </p>
       </div>
 
-      <Expediente cargaId={id} esCliente={false} />
+      <Expediente cargaId={id} esCliente={Boolean(usuario?.empresa)} />
 
       <div className="flex justify-end gap-2 pb-4">
         <Link

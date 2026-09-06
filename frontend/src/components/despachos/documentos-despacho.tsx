@@ -2,17 +2,29 @@
 
 import { Clock, Download, FileText, Upload } from "lucide-react";
 import { useRef, useState } from "react";
+import { ExportacionBls } from "@/components/documentos/progreso-exportacion";
 import { AvisoError } from "@/components/ui/aviso-error";
 import {
   formatearTamano,
   useDescargar,
-  useDescargarBls,
   useDocumentosDeDespacho,
   useSubirDocumentoDeDespacho,
 } from "@/features/documentos/consultas";
 import { estadoSubida, sePuedeDescargar } from "@/features/documentos/vocabulario";
 import { useTiposDeDocumento } from "@/features/documentos/tipos";
+import type { components } from "@/lib/api/generated";
 import { clases, formatearFecha } from "@/lib/utilidades";
+
+type IssuedBy = components["schemas"]["IssuedBy"];
+
+const etiquetaEmisor: Record<IssuedBy, string> = {
+  PROVIDER: "Proveedor",
+  CLIENT: "Cliente",
+  AMVARMAR: "AMVARMAR",
+  CARRIER: "Transportista",
+  AUTHORITY: "Autoridad",
+  OTHER: "Otro",
+};
 
 /**
  * El BL y las facturas del despacho.
@@ -23,18 +35,17 @@ import { clases, formatearFecha } from "@/lib/utilidades";
  */
 export function DocumentosDespacho({
   dispatchId,
-  esCliente,
 }: {
   dispatchId: string;
-  esCliente: boolean;
 }) {
   const { data, isPending, error } = useDocumentosDeDespacho(dispatchId);
-  const tipos = useTiposDeDocumento();
+  const tipos = useTiposDeDocumento("DISPATCH");
   const subir = useSubirDocumentoDeDespacho(dispatchId);
   const descargar = useDescargar();
-  const descargarBls = useDescargarBls(dispatchId);
   const entrada = useRef<HTMLInputElement>(null);
   const [tipoElegido, setTipoElegido] = useState("");
+  const [emisor, setEmisor] = useState<IssuedBy | "">("");
+  const [progreso, setProgreso] = useState(0);
 
   if (isPending) return null;
   if (error) return <AvisoError error={error} />;
@@ -42,11 +53,11 @@ export function DocumentosDespacho({
   const documentos = data ?? [];
   const hayBls = documentos.some((d) => d.document_type_code === "BL");
 
-  // Operaciones sube el BL; el cliente sus facturas. Se filtra el selector en
-  // vez de dejar elegir algo que el servidor va a rechazar.
-  const tiposDisponibles = (tipos.data ?? []).filter((t) =>
-    esCliente ? t.provided_by === "CLIENT" : true,
-  );
+  // El catálogo ya viene filtrado por rol y contexto desde el backend.
+  const tiposDisponibles = tipos.data ?? [];
+  const tipoSeleccionado = tiposDisponibles.find((tipo) => tipo.id === tipoElegido);
+  const opcionesEmisor = (tipoSeleccionado?.issued_by_options ?? []) as IssuedBy[];
+  const emisorEfectivo = emisor || opcionesEmisor[0];
 
   async function abrir(documentoId: string) {
     const enlace = await descargar.mutateAsync(documentoId);
@@ -61,22 +72,10 @@ export function DocumentosDespacho({
           <h2 className="text-base font-bold">Documentos del despacho</h2>
         </div>
 
-        {hayBls ? (
-          <button
-            type="button"
-            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
-            onClick={() => descargarBls.mutate()}
-            disabled={descargarBls.isPending}
-            title="Todos los Bills of Lading juntos, para mandárselos al agente"
-          >
-            <Download className="size-4" aria-hidden="true" />
-            {descargarBls.isPending ? "Preparando…" : "Descargar BLs"}
-          </button>
-        ) : null}
+        {hayBls ? <ExportacionBls dispatchId={dispatchId} /> : null}
       </div>
 
       {subir.error ? <AvisoError error={subir.error} /> : null}
-      {descargarBls.error ? <AvisoError error={descargarBls.error} /> : null}
       {descargar.error ? <AvisoError error={descargar.error} /> : null}
 
       {documentos.length > 0 ? (
@@ -126,7 +125,10 @@ export function DocumentosDespacho({
             <select
               className="w-full rounded-md border px-3 py-2 text-sm"
               value={tipoElegido}
-              onChange={(evento) => setTipoElegido(evento.target.value)}
+              onChange={(evento) => {
+                setTipoElegido(evento.target.value);
+                setEmisor("");
+              }}
             >
               <option value="">¿Qué documento es?</option>
               {tiposDisponibles.map((tipo) => (
@@ -136,6 +138,23 @@ export function DocumentosDespacho({
               ))}
             </select>
           </label>
+
+          {opcionesEmisor.length > 1 ? (
+            <label>
+              <span className="mb-1 block text-sm font-medium">Emitido por</span>
+              <select
+                className="h-10 rounded-md border bg-[var(--superficie)] px-3 text-sm"
+                value={emisorEfectivo}
+                onChange={(evento) => setEmisor(evento.target.value as IssuedBy)}
+              >
+                {opcionesEmisor.map((opcion) => (
+                  <option key={opcion} value={opcion}>
+                    {etiquetaEmisor[opcion]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
 
           <input
             ref={entrada}
@@ -149,8 +168,15 @@ export function DocumentosDespacho({
             onChange={async (evento) => {
               const archivo = evento.target.files?.[0];
               evento.target.value = "";
-              if (archivo && tipoElegido) {
-                await subir.mutateAsync({ archivo, tipoId: tipoElegido });
+              if (archivo && tipoElegido && emisorEfectivo) {
+                setProgreso(0);
+                await subir.mutateAsync({
+                  archivo,
+                  tipoId: tipoElegido,
+                  issuedBy: emisorEfectivo,
+                  onProgress: setProgreso,
+                });
+                setProgreso(0);
               }
             }}
           />
@@ -161,10 +187,10 @@ export function DocumentosDespacho({
               (!tipoElegido || subir.isPending) && "opacity-60",
             )}
             onClick={() => entrada.current?.click()}
-            disabled={!tipoElegido || subir.isPending}
+            disabled={!tipoElegido || !emisorEfectivo || subir.isPending}
           >
             <Upload className="size-4" aria-hidden="true" />
-            {subir.isPending ? "Subiendo…" : "Elegir archivo"}
+            {subir.isPending && progreso > 0 ? `Subiendo ${progreso}%` : subir.isPending ? "Subiendo…" : "Elegir archivo"}
           </button>
         </div>
       ) : null}

@@ -1,8 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, convertirErrorApi, ErrorApi, exigirDatos } from "@/lib/api/client";
+import { api, ErrorApi, exigirDatos } from "@/lib/api/client";
+import type { components } from "@/lib/api/generated";
 import type { Expediente } from "@/lib/api/tipos";
+
+type IssuedBy = components["schemas"]["IssuedBy"];
+export type TrabajoExportacion = components["schemas"]["ExportJobResponse"];
 
 export const claveExpediente = (cargaId: string) => ["expediente", cargaId] as const;
 
@@ -16,30 +21,71 @@ export function useExpediente(cargaId: string) {
         }),
       ),
     enabled: Boolean(cargaId),
+    refetchInterval: (consulta) =>
+      consulta.state.data?.documentos.some((d) => d.upload_status === "PROCESSING")
+        ? 1500
+        : false,
   });
 }
 
-/**
- * Sube un archivo en los tres tiempos que exige el backend.
- *
- * 1. `presign` reserva el documento y firma la URL.
- * 2. El archivo va DIRECTO al storage, sin pasar por la aplicación: un PDF de
- *    200 MB no tiene por qué atravesar el servidor de la API.
- * 3. `complete` verifica lo que realmente llegó — tipo, tamaño y hash se miden
- *    sobre los bytes almacenados, no sobre lo que el navegador declaró.
- *
- * Si el paso 2 falla, no se llama a `complete`: el documento queda a medias en
- * el servidor y se puede reintentar, en vez de darse por bueno.
- */
+function subirAStorage(
+  url: string,
+  archivo: File,
+  onProgress?: (porcentaje: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const solicitud = new XMLHttpRequest();
+    solicitud.open("PUT", url);
+    solicitud.upload.addEventListener("progress", (evento) => {
+      if (evento.lengthComputable) {
+        onProgress?.(Math.round((evento.loaded / evento.total) * 100));
+      }
+    });
+    solicitud.addEventListener("load", () => {
+      if (solicitud.status >= 200 && solicitud.status < 300) {
+        onProgress?.(100);
+        resolve();
+      } else {
+        reject(
+          new ErrorApi("No se pudo subir el archivo al almacenamiento.", {
+            status: solicitud.status,
+            code: "SUBIDA_FALLIDA",
+          }),
+        );
+      }
+    });
+    solicitud.addEventListener("error", () =>
+      reject(
+        new ErrorApi("No se pudo conectar con el almacenamiento.", {
+          status: 503,
+          code: "SUBIDA_FALLIDA",
+        }),
+      ),
+    );
+    solicitud.send(archivo);
+  });
+}
+
+interface SubirDocumentoArgs {
+  archivo: File;
+  tipoId: string;
+  issuedBy: IssuedBy;
+  onProgress?: (porcentaje: number) => void;
+}
+
 export function useSubirDocumento(cargaId: string) {
   const cliente = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ archivo, tipoId }: { archivo: File; tipoId: string }) => {
+    mutationFn: async ({ archivo, tipoId, issuedBy, onProgress }: SubirDocumentoArgs) => {
       const reserva = exigirDatos(
         await api.POST("/api/v1/shipments/{shipment_id}/documents/presign", {
           params: { path: { shipment_id: cargaId } },
-          body: { document_type_id: tipoId, original_name: archivo.name },
+          body: {
+            document_type_id: tipoId,
+            issued_by: issuedBy,
+            original_name: archivo.name,
+          },
         }),
       );
 
@@ -50,16 +96,7 @@ export function useSubirDocumento(cargaId: string) {
         );
       }
 
-      // Sin cabeceras propias: la URL se firmó solo sobre el destino, así que
-      // agregar `Content-Type` invalidaría la firma.
-      const subida = await fetch(reserva.upload_url, { method: "PUT", body: archivo });
-      if (!subida.ok) {
-        throw new ErrorApi("No se pudo subir el archivo al almacenamiento.", {
-          status: subida.status,
-          code: "SUBIDA_FALLIDA",
-        });
-      }
-
+      await subirAStorage(reserva.upload_url, archivo, onProgress);
       return exigirDatos(
         await api.POST("/api/v1/shipments/{shipment_id}/documents/complete", {
           params: { path: { shipment_id: cargaId } },
@@ -75,13 +112,6 @@ export function useSubirDocumento(cargaId: string) {
   });
 }
 
-/**
- * Corrige el nombre visible de un documento.
- *
- * Es la acción `rename` de `edit_files` del sistema viejo. Solo personal
- * interno: el nombre es cómo Operaciones y el agente aduanal encuentran el
- * papel en el expediente.
- */
 export function useRenombrarDocumento(cargaId: string) {
   const cliente = useQueryClient();
   return useMutation({
@@ -92,28 +122,21 @@ export function useRenombrarDocumento(cargaId: string) {
           body: { original_name: nombre },
         }),
       ),
-    onSuccess: () => cliente.invalidateQueries({ queryKey: ["expediente", cargaId] }),
+    onSuccess: () => cliente.invalidateQueries({ queryKey: claveExpediente(cargaId) }),
   });
 }
 
-/**
- * Saca un documento del expediente.
- *
- * El archivo NO se borra del storage. Si el documento satisfacía un requisito y
- * no queda otro de su tipo, ese requisito vuelve a pendiente, así que se
- * invalida también el detalle de la carga: su contador de pendientes cambió.
- */
 export function useQuitarDocumento(cargaId: string) {
   const cliente = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
       const resultado = await api.DELETE("/api/v1/documents/{document_id}", {
-        params: { path: { document_id: id } },
+        params: { path: { document_id: id }, query: { motivo } },
       });
       if (resultado.error) throw resultado.error;
     },
     onSuccess: () => {
-      cliente.invalidateQueries({ queryKey: ["expediente", cargaId] });
+      cliente.invalidateQueries({ queryKey: claveExpediente(cargaId) });
       cliente.invalidateQueries({ queryKey: ["carga", cargaId] });
       cliente.invalidateQueries({ queryKey: ["cargas"] });
     },
@@ -134,46 +157,104 @@ export function useDescargar() {
 export function formatearTamano(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-/**
- * Descarga todos los documentos de una carga en un ZIP.
- *
- * A diferencia de la descarga individual, el archivo viene por la aplicación y
- * no por una URL firmada: hay que leer cada objeto para comprimirlo, y no se
- * puede firmar algo que todavía no existe.
- */
-export function useDescargarTodos(cargaId: string) {
-  return useMutation({
-    mutationFn: async () => {
-      const respuesta = await api.GET("/api/v1/shipments/{shipment_id}/documents/download-all", {
-        params: { path: { shipment_id: cargaId } },
-        parseAs: "blob",
-      });
+type RecursoExportacion =
+  | { contexto: "SHIPMENT"; id: string }
+  | { contexto: "DISPATCH"; id: string };
 
-      if (respuesta.error) {
-        throw convertirErrorApi(respuesta.error, respuesta.response);
+function useExportacion(recurso: RecursoExportacion) {
+  const cliente = useQueryClient();
+  const claveLocal = `document-export:${recurso.contexto}:${recurso.id}`;
+  const [jobId, setJobId] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : window.localStorage.getItem(claveLocal),
+  );
+
+  const solicitud = useMutation({
+    mutationFn: async (): Promise<TrabajoExportacion> => {
+      if (recurso.contexto === "SHIPMENT") {
+        return exigirDatos(
+          await api.POST("/api/v1/shipments/{shipment_id}/documents/exports", {
+            params: { path: { shipment_id: recurso.id } },
+          }),
+        );
       }
-
-      const nombre =
-        respuesta.response.headers
-          .get("content-disposition")
-          ?.match(/filename="?([^"]+)"?/)?.[1] ?? "documentos.zip";
-
-      // Se descarga creando un enlace temporal: no hay forma de que el
-      // navegador guarde un blob sin uno.
-      const url = URL.createObjectURL(respuesta.data as Blob);
-      const enlace = document.createElement("a");
-      enlace.href = url;
-      enlace.download = nombre;
-      enlace.click();
-      URL.revokeObjectURL(url);
+      return exigirDatos(
+        await api.POST("/api/v1/dispatch-requests/{dispatch_id}/documents/exports", {
+          params: { path: { dispatch_id: recurso.id } },
+          body: { kind: "BLS" },
+        }),
+      );
+    },
+    onSuccess: (job) => {
+      window.localStorage.setItem(claveLocal, job.id);
+      setJobId(job.id);
+      cliente.setQueryData(["exportacion-documental", job.id], job);
     },
   });
+
+  const estado = useQuery({
+    queryKey: ["exportacion-documental", jobId],
+    queryFn: async (): Promise<TrabajoExportacion> => {
+      try {
+        return exigirDatos(
+          await api.GET("/api/v1/document-export-jobs/{job_id}", {
+            params: { path: { job_id: jobId as string } },
+          }),
+        );
+      } catch (error) {
+        if (error instanceof ErrorApi && error.status === 404) {
+          window.localStorage.removeItem(claveLocal);
+        }
+        throw error;
+      }
+    },
+    enabled: Boolean(jobId),
+    retry: false,
+    refetchInterval: (consulta) =>
+      ["PENDING", "PROCESSING"].includes(consulta.state.data?.status ?? "")
+        ? 1500
+        : false,
+  });
+
+  const trabajoNoEncontrado = estado.error instanceof ErrorApi && estado.error.status === 404;
+
+  const descargar = useMutation({
+    mutationFn: async () => {
+      if (!jobId) return;
+      const enlace = exigirDatos(
+        await api.GET("/api/v1/document-export-jobs/{job_id}/download", {
+          params: { path: { job_id: jobId } },
+        }),
+      );
+      const elemento = document.createElement("a");
+      elemento.href = enlace.url;
+      elemento.download = enlace.filename;
+      elemento.rel = "noopener noreferrer";
+      elemento.click();
+    },
+  });
+
+  return {
+    job: trabajoNoEncontrado ? null : (estado.data ?? solicitud.data ?? null),
+    solicitar: solicitud.mutate,
+    descargar: descargar.mutate,
+    preparando:
+      solicitud.isPending || ["PENDING", "PROCESSING"].includes(estado.data?.status ?? ""),
+    descargando: descargar.isPending,
+    error: solicitud.error ?? (trabajoNoEncontrado ? null : estado.error) ?? descargar.error,
+  };
 }
 
-// --- Documentos que cuelgan del despacho, no de una carga suelta ---
+export function useExportacionCarga(cargaId: string) {
+  return useExportacion({ contexto: "SHIPMENT", id: cargaId });
+}
+
+export function useExportacionBls(dispatchId: string) {
+  return useExportacion({ contexto: "DISPATCH", id: dispatchId });
+}
 
 export const claveDocsDespacho = (id: string) => ["despacho", id, "documentos"] as const;
 
@@ -187,6 +268,8 @@ export function useDocumentosDeDespacho(dispatchId: string) {
         }),
       ),
     enabled: Boolean(dispatchId),
+    refetchInterval: (consulta) =>
+      consulta.state.data?.some((d) => d.upload_status === "PROCESSING") ? 1500 : false,
   });
 }
 
@@ -194,63 +277,31 @@ export function useSubirDocumentoDeDespacho(dispatchId: string) {
   const cliente = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ archivo, tipoId }: { archivo: File; tipoId: string }) => {
+    mutationFn: async ({ archivo, tipoId, issuedBy, onProgress }: SubirDocumentoArgs) => {
       const reserva = exigirDatos(
         await api.POST("/api/v1/dispatch-requests/{dispatch_id}/documents/presign", {
           params: { path: { dispatch_id: dispatchId } },
-          body: { document_type_id: tipoId, original_name: archivo.name },
+          body: {
+            document_type_id: tipoId,
+            issued_by: issuedBy,
+            original_name: archivo.name,
+          },
         }),
       );
-
       if (archivo.size > reserva.max_bytes) {
         throw new ErrorApi(
           `El archivo pesa ${formatearTamano(archivo.size)} y el máximo es ${formatearTamano(reserva.max_bytes)}.`,
           { status: 413, code: "ARCHIVO_MUY_GRANDE" },
         );
       }
-
-      const subida = await fetch(reserva.upload_url, { method: "PUT", body: archivo });
-      if (!subida.ok) {
-        throw new ErrorApi("No se pudo subir el archivo al almacenamiento.", {
-          status: subida.status,
-          code: "SUBIDA_FALLIDA",
-        });
-      }
-
-      // `complete` es el de la carga: el documento vive ahí y el despacho solo
-      // lo referencia. Un segundo endpoint duplicaría la verificación de bytes.
+      await subirAStorage(reserva.upload_url, archivo, onProgress);
       return exigirDatos(
-        await api.POST("/api/v1/shipments/{shipment_id}/documents/complete", {
-          params: { path: { shipment_id: reserva.shipment_id } },
+        await api.POST("/api/v1/dispatch-requests/{dispatch_id}/documents/complete", {
+          params: { path: { dispatch_id: dispatchId } },
           body: { document_id: reserva.document_id },
         }),
       );
     },
     onSuccess: () => cliente.invalidateQueries({ queryKey: claveDocsDespacho(dispatchId) }),
-  });
-}
-
-export function useDescargarBls(dispatchId: string) {
-  return useMutation({
-    mutationFn: async () => {
-      const respuesta = await api.GET("/api/v1/dispatch-requests/{dispatch_id}/documents/bls", {
-        params: { path: { dispatch_id: dispatchId } },
-        parseAs: "blob",
-      });
-
-      if (respuesta.error) throw convertirErrorApi(respuesta.error, respuesta.response);
-
-      const nombre =
-        respuesta.response.headers
-          .get("content-disposition")
-          ?.match(/filename="?([^"]+)"?/)?.[1] ?? "bls.zip";
-
-      const url = URL.createObjectURL(respuesta.data as Blob);
-      const enlace = document.createElement("a");
-      enlace.href = url;
-      enlace.download = nombre;
-      enlace.click();
-      URL.revokeObjectURL(url);
-    },
   });
 }

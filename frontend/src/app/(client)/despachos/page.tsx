@@ -1,10 +1,11 @@
 "use client";
 
-import { PackageCheck, Plus } from "lucide-react";
+import { Download, PackageCheck, Plus } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { InsigniaDespacho } from "@/components/despachos/insignia-despacho";
 import { AvisoError } from "@/components/ui/aviso-error";
+import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { etiquetaDespacho, type EstadoDespacho } from "@/features/despachos/catalogo";
@@ -21,7 +22,12 @@ const FILTROS: { valor: EstadoDespacho | undefined; etiqueta: string }[] = [
 export default function PaginaDespachos() {
   const [estado, setEstado] = useState<EstadoDespacho | undefined>(undefined);
   const { usuario } = useSesion();
-  const { data, isPending, error } = useDespachos({ estado });
+  const consulta = useDespachos({ estado });
+  const { isPending, error } = consulta;
+  const data = useMemo(
+    () => consulta.data?.pages.flatMap((pagina) => pagina.items) ?? [],
+    [consulta.data],
+  );
 
   const esCliente = Boolean(usuario?.empresa);
 
@@ -69,9 +75,9 @@ export default function PaginaDespachos() {
       {error ? <AvisoError error={error} /> : null}
       {isPending ? <CargandoPagina /> : null}
 
-      {data && data.items.length > 0 ? (
+      {data.length > 0 ? (
         <ul className="grid gap-3">
-          {data.items.map((despacho) => (
+          {data.map((despacho) => (
             <li key={despacho.id}>
               <Link
                 href={`/despachos/${despacho.id}`}
@@ -93,7 +99,20 @@ export default function PaginaDespachos() {
         </ul>
       ) : null}
 
-      {data && data.items.length === 0 ? (
+      {consulta.hasNextPage ? (
+        <div className="flex justify-center pt-2">
+          <Boton
+            variante="secundario"
+            cargando={consulta.isFetchingNextPage}
+            onClick={() => void consulta.fetchNextPage()}
+          >
+            <Download className="size-4" aria-hidden="true" />
+            Cargar más
+          </Boton>
+        </div>
+      ) : null}
+
+      {!isPending && data.length === 0 ? (
         <div className="rounded-md border bg-[var(--superficie)] px-6 py-16 text-center">
           <PackageCheck
             className="mx-auto size-8 text-[var(--texto-secundario)]"

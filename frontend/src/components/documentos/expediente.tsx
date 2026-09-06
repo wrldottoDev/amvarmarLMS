@@ -2,10 +2,10 @@
 
 import { AlertTriangle, Clock, Download, FileText, Pencil, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
+import { ExportacionCarga } from "@/components/documentos/progreso-exportacion";
 import {
   formatearTamano,
   useDescargar,
-  useDescargarTodos,
   useExpediente,
   useQuitarDocumento,
   useRenombrarDocumento,
@@ -19,7 +19,19 @@ import {
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Modal } from "@/components/ui/modal";
 import { clases, formatearFecha } from "@/lib/utilidades";
+import type { components } from "@/lib/api/generated";
 import type { RequisitoDocumental } from "@/lib/api/tipos";
+
+type IssuedBy = components["schemas"]["IssuedBy"];
+
+const etiquetaEmisor: Record<IssuedBy, string> = {
+  PROVIDER: "Proveedor",
+  CLIENT: "Cliente",
+  AMVARMAR: "AMVARMAR",
+  CARRIER: "Transportista",
+  AUTHORITY: "Autoridad",
+  OTHER: "Otro",
+};
 
 const tonos = {
   falta: "border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] text-[var(--advertencia)]",
@@ -42,14 +54,18 @@ export function Expediente({
   const { data, isPending, error } = useExpediente(cargaId);
   const subir = useSubirDocumento(cargaId);
   const descargar = useDescargar();
-  const descargarTodos = useDescargarTodos(cargaId);
   const renombrar = useRenombrarDocumento(cargaId);
   const quitar = useQuitarDocumento(cargaId);
 
   const [subiendo, setSubiendo] = useState<string | null>(null);
+  const [progreso, setProgreso] = useState(0);
+  const [emisores, setEmisores] = useState<Record<string, IssuedBy>>({});
+  const [tipoLibre, setTipoLibre] = useState("");
+  const [emisorLibre, setEmisorLibre] = useState<IssuedBy | "">("");
   const [renombrando, setRenombrando] = useState<string | null>(null);
   const [nombreNuevo, setNombreNuevo] = useState("");
   const [aQuitar, setAQuitar] = useState<{ id: string; original_name: string } | null>(null);
+  const [motivoQuitar, setMotivoQuitar] = useState("");
 
   // Renombrar y quitar son de personal interno, igual que `edit_files` del
   // sistema viejo, que estaba bajo `@staff_member_required`.
@@ -73,13 +89,24 @@ export function Expediente({
     setRenombrando(null);
   }
 
-  async function alElegirArchivo(requisito: RequisitoDocumental, archivo: File | undefined) {
+  async function alElegirArchivo(
+    requisito: RequisitoDocumental,
+    archivo: File | undefined,
+    issuedBy: IssuedBy,
+  ) {
     if (!archivo || !requisito.document_type_id) return;
     setSubiendo(requisito.id);
+    setProgreso(0);
     try {
-      await subir.mutateAsync({ archivo, tipoId: requisito.document_type_id });
+      await subir.mutateAsync({
+        archivo,
+        tipoId: requisito.document_type_id,
+        issuedBy,
+        onProgress: setProgreso,
+      });
     } finally {
       setSubiendo(null);
+      setProgreso(0);
     }
   }
 
@@ -87,6 +114,27 @@ export function Expediente({
     const enlace = await descargar.mutateAsync(documentoId);
     // Pestaña nueva: si el usuario vuelve atrás no pierde la página de la carga.
     window.open(enlace.url, "_blank", "noopener,noreferrer");
+  }
+
+  const tipoLibreSeleccionado = data.tipos.find((tipo) => tipo.id === tipoLibre);
+  const opcionesEmisorLibre = (tipoLibreSeleccionado?.issued_by_options ?? []) as IssuedBy[];
+  const emisorLibreEfectivo = emisorLibre || opcionesEmisorLibre[0];
+
+  async function alElegirArchivoLibre(archivo: File | undefined) {
+    if (!archivo || !tipoLibreSeleccionado || !emisorLibreEfectivo) return;
+    setSubiendo("libre");
+    setProgreso(0);
+    try {
+      await subir.mutateAsync({
+        archivo,
+        tipoId: tipoLibreSeleccionado.id,
+        issuedBy: emisorLibreEfectivo,
+        onProgress: setProgreso,
+      });
+    } finally {
+      setSubiendo(null);
+      setProgreso(0);
+    }
   }
 
   return (
@@ -99,18 +147,7 @@ export function Expediente({
           </h2>
         </div>
 
-        {data.documentos.length > 1 ? (
-          <button
-            type="button"
-            className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)] disabled:opacity-60"
-            onClick={() => descargarTodos.mutate()}
-            disabled={descargarTodos.isPending}
-            title="Un solo archivo con todo el expediente, para mandarlo completo"
-          >
-            <Download className="size-4" aria-hidden="true" />
-            {descargarTodos.isPending ? "Preparando…" : "Descargar todos"}
-          </button>
-        ) : null}
+        {data.documentos.length > 1 ? <ExportacionCarga cargaId={cargaId} /> : null}
       </div>
 
       {esCliente ? (
@@ -130,7 +167,6 @@ export function Expediente({
 
       {subir.error ? <AvisoError error={subir.error} /> : null}
       {descargar.error ? <AvisoError error={descargar.error} /> : null}
-      {descargarTodos.error ? <AvisoError error={descargarTodos.error} /> : null}
 
       {requisitos.length > 0 ? (
         <ul className="divide-y overflow-hidden rounded-lg border bg-[var(--superficie)]">
@@ -140,9 +176,12 @@ export function Expediente({
               explicacion: "",
               tono: "espera" as const,
             };
+            const tipo = data.tipos.find((item) => item.id === requisito.document_type_id);
+            const opcionesEmisor = (tipo?.issued_by_options ?? []) as IssuedBy[];
+            const emisor = emisores[requisito.id] ?? opcionesEmisor[0];
             const puedeSubir =
               !soloLectura &&
-              esCliente &&
+              Boolean(tipo) &&
               ["PENDING", "REJECTED", "OPEN"].includes(requisito.status);
             const enProgreso = subiendo === requisito.id;
 
@@ -180,11 +219,37 @@ export function Expediente({
                 ) : null}
 
                 {puedeSubir ? (
-                  <BotonSubir
-                    enProgreso={enProgreso}
-                    formatos={requisito.allowed_formats}
-                    onElegir={(archivo) => void alElegirArchivo(requisito, archivo)}
-                  />
+                  <span className="flex flex-wrap items-center justify-end gap-2">
+                    {opcionesEmisor.length > 1 ? (
+                      <label className="text-xs text-[var(--texto-secundario)]">
+                        Emitido por
+                        <select
+                          className="ml-1 h-9 rounded-md border bg-[var(--superficie)] px-2 text-sm text-[var(--texto)]"
+                          value={emisor}
+                          onChange={(evento) =>
+                            setEmisores((actuales) => ({
+                              ...actuales,
+                              [requisito.id]: evento.target.value as IssuedBy,
+                            }))
+                          }
+                        >
+                          {opcionesEmisor.map((opcion) => (
+                            <option key={opcion} value={opcion}>
+                              {etiquetaEmisor[opcion]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <BotonSubir
+                      enProgreso={enProgreso}
+                      progreso={enProgreso ? progreso : 0}
+                      formatos={requisito.allowed_formats}
+                      onElegir={(archivo) =>
+                        emisor && void alElegirArchivo(requisito, archivo, emisor)
+                      }
+                    />
+                  </span>
                 ) : null}
               </li>
             );
@@ -195,6 +260,54 @@ export function Expediente({
           Esta carga no tiene documentos pendientes.
         </p>
       )}
+
+      {data.tipos.length > 0 && !soloLectura ? (
+        <div className="flex flex-wrap items-end gap-2 border-y bg-[var(--superficie)] px-4 py-3">
+          <label className="min-w-56 flex-1">
+            <span className="mb-1 block text-sm font-medium">Adjuntar otro documento</span>
+            <select
+              className="h-10 w-full rounded-md border bg-[var(--superficie)] px-3 text-sm"
+              value={tipoLibre}
+              onChange={(evento) => {
+                setTipoLibre(evento.target.value);
+                setEmisorLibre("");
+              }}
+            >
+              <option value="">Seleccioná el tipo</option>
+              {data.tipos.map((tipo) => (
+                <option key={tipo.id} value={tipo.id}>
+                  {tipo.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {opcionesEmisorLibre.length > 1 ? (
+            <label>
+              <span className="mb-1 block text-sm font-medium">Emitido por</span>
+              <select
+                className="h-10 rounded-md border bg-[var(--superficie)] px-3 text-sm"
+                value={emisorLibreEfectivo}
+                onChange={(evento) => setEmisorLibre(evento.target.value as IssuedBy)}
+              >
+                {opcionesEmisorLibre.map((opcion) => (
+                  <option key={opcion} value={opcion}>
+                    {etiquetaEmisor[opcion]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <BotonSubir
+            enProgreso={subiendo === "libre"}
+            progreso={subiendo === "libre" ? progreso : 0}
+            formatos={tipoLibreSeleccionado?.allowed_formats ?? []}
+            onElegir={(archivo) => void alElegirArchivoLibre(archivo)}
+            deshabilitado={!tipoLibreSeleccionado || !emisorLibreEfectivo}
+          />
+        </div>
+      ) : null}
 
       {data.documentos.length > 0 ? (
         <details className="rounded-lg border bg-[var(--superficie)]">
@@ -235,7 +348,10 @@ export function Expediente({
                       <button
                         type="button"
                         className="grid size-9 place-items-center rounded-md border text-[var(--peligro)] hover:bg-[var(--peligro-tenue)]"
-                        onClick={() => setAQuitar(documento)}
+                        onClick={() => {
+                          setAQuitar(documento);
+                          setMotivoQuitar("");
+                        }}
                         aria-label={`Quitar ${documento.original_name}`}
                         title="Quitar del expediente"
                       >
@@ -324,6 +440,16 @@ export function Expediente({
         <p className="mt-2 text-sm text-[var(--texto-secundario)]">
           El archivo no se borra del almacenamiento: queda como constancia de que estuvo.
         </p>
+        <label className="mt-3 block text-sm font-medium">
+          Motivo de la invalidación
+          <textarea
+            className="mt-1 w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+            rows={2}
+            maxLength={1000}
+            value={motivoQuitar}
+            onChange={(evento) => setMotivoQuitar(evento.target.value)}
+          />
+        </label>
 
         {quitar.error ? (
           <div className="mt-3">
@@ -342,9 +468,11 @@ export function Expediente({
           <button
             type="button"
             className="h-10 rounded-md bg-[var(--peligro)] px-4 text-sm font-semibold text-white disabled:opacity-60"
-            disabled={quitar.isPending}
+            disabled={quitar.isPending || !motivoQuitar.trim()}
             onClick={async () => {
-              if (aQuitar) await quitar.mutateAsync(aQuitar.id);
+              if (aQuitar) {
+                await quitar.mutateAsync({ id: aQuitar.id, motivo: motivoQuitar.trim() });
+              }
               setAQuitar(null);
             }}
           >
@@ -358,10 +486,14 @@ export function Expediente({
 
 function BotonSubir({
   enProgreso,
+  progreso,
+  deshabilitado = false,
   formatos,
   onElegir,
 }: {
   enProgreso: boolean;
+  progreso: number;
+  deshabilitado?: boolean;
   formatos: string[];
   onElegir: (archivo: File | undefined) => void;
 }) {
@@ -386,12 +518,12 @@ function BotonSubir({
         type="button"
         className="flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-[var(--mar)] px-3.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
         onClick={() => entrada.current?.click()}
-        disabled={enProgreso}
+        disabled={enProgreso || deshabilitado}
       >
         {enProgreso ? (
           <>
             <Clock className="size-4 animate-pulse" aria-hidden="true" />
-            Subiendo…
+            {progreso > 0 ? `Subiendo ${progreso}%` : "Subiendo…"}
           </>
         ) : (
           <>

@@ -59,6 +59,15 @@ export default function PaginaNuevoDespacho() {
   }
 
   const cargas = disponibles.data?.items ?? [];
+  const cargasElegidas = cargas.filter((carga) => seleccionadas.includes(carga.id));
+  const piezasElegidas = cargasElegidas.reduce(
+    (total, carga) => total + carga.package_count,
+    0,
+  );
+  const pesoElegidoKg = cargasElegidas.reduce(
+    (total, carga) => total + Number(carga.weight_kg ?? 0),
+    0,
+  );
 
   return (
     <section className="mx-auto max-w-3xl space-y-5">
@@ -236,7 +245,9 @@ export default function PaginaNuevoDespacho() {
                   <strong>
                     {seleccionadas.length === 1 ? "1 carga" : `${seleccionadas.length} cargas`}
                   </strong>{" "}
-                  · {metodos.find((m) => m.valor === metodo)?.etiqueta}
+                  · {piezasElegidas} {piezasElegidas === 1 ? "pieza" : "piezas"} ·{" "}
+                  {pesoElegidoKg.toFixed(3)} kg ·{" "}
+                  {metodos.find((m) => m.valor === metodo)?.etiqueta}
                 </>
               )}
             </p>
@@ -259,6 +270,10 @@ export default function PaginaNuevoDespacho() {
               {seleccionadas.length === 1 ? "1 carga" : `${seleccionadas.length} cargas`}
             </strong>{" "}
             por vía <strong>{metodos.find((m) => m.valor === metodo)?.etiqueta.toLowerCase()}</strong>.
+          </p>
+          <p className="text-[var(--texto-secundario)]">
+            Total: {piezasElegidas} {piezasElegidas === 1 ? "pieza" : "piezas"} y{" "}
+            {pesoElegidoKg.toFixed(3)} kg.
           </p>
 
           {/* ADR-0013: el cliente solo cancela antes de la aprobación. Se dice

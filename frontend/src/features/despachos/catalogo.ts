@@ -27,7 +27,8 @@ export const etiquetaDespacho: Record<string, string> = {
   PENDING: "Esperando aprobación",
   APPROVED: "Aprobado",
   PREPARING: "Preparando",
-  COMPLETED: "Despachado",
+  DISPATCHED: "Despachado",
+  COMPLETED: "Completado",
   REJECTED: "Rechazado",
   CANCELLED: "Cancelado",
 };
@@ -37,7 +38,8 @@ export const explicacionDespacho: Record<string, string> = {
   PENDING: "Recibimos tu solicitud. Operaciones la va a revisar.",
   APPROVED: "Aprobado. Estamos coordinando el envío.",
   PREPARING: "Estamos preparando tu carga para salir.",
-  COMPLETED: "Tu carga salió. Podés seguirla desde el detalle.",
+  DISPATCHED: "La carga ya salió físicamente de bodega.",
+  COMPLETED: "El despacho quedó cerrado con toda su documentación.",
   REJECTED: "No se pudo procesar. Abajo está el motivo.",
   CANCELLED: "La solicitud se canceló.",
 };
@@ -46,6 +48,7 @@ export const tonoDespacho: Record<string, "espera" | "avance" | "listo" | "alto"
   PENDING: "espera",
   APPROVED: "avance",
   PREPARING: "avance",
+  DISPATCHED: "avance",
   COMPLETED: "listo",
   REJECTED: "alto",
   CANCELLED: "alto",

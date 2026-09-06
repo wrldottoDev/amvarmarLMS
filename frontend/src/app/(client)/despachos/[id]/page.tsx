@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowLeft, Ban, Check, PackageCheck, Truck, X } from "lucide-react";
+import { ArrowLeft, Ban, Check, CircleCheckBig, PackageCheck, Truck, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { DocumentosDespacho } from "@/components/despachos/documentos-despacho";
 import { InsigniaDespacho } from "@/components/despachos/insignia-despacho";
 import { PasosDespacho } from "@/components/despachos/pasos-despacho";
+import { BadgeEstado } from "@/components/shipments/badges-carga";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
@@ -17,10 +18,12 @@ import {
   useAprobar,
   useCancelar,
   useCompletar,
+  useDespachar,
   useDespacho,
   usePreparar,
   useRechazar,
 } from "@/features/despachos/consultas";
+import { ErrorApi } from "@/lib/api/client";
 import { formatearFechaHora } from "@/lib/utilidades";
 
 export default function PaginaDetalleDespacho() {
@@ -32,10 +35,12 @@ export default function PaginaDetalleDespacho() {
   const [cancelando, setCancelando] = useState(false);
   const [rechazando, setRechazando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  const [motivoCancelacion, setMotivoCancelacion] = useState("");
 
   const aprobar = useAprobar(id);
   const rechazar = useRechazar(id);
   const preparar = usePreparar(id);
+  const despachar = useDespachar(id);
   const completar = useCompletar(id);
   const cancelar = useCancelar(id);
 
@@ -47,8 +52,16 @@ export default function PaginaDetalleDespacho() {
   const puedeCancelarCliente = esCliente && clienteCancelaDesde.includes(data.status);
   const puedeCancelarOperaciones =
     !esCliente && ["PENDING", "APPROVED", "PREPARING"].includes(data.status);
-  const enCurso = aprobar.isPending || preparar.isPending || completar.isPending;
-  const fallo = aprobar.error ?? preparar.error ?? completar.error ?? cancelar.error;
+  const enCurso =
+    aprobar.isPending || preparar.isPending || despachar.isPending || completar.isPending;
+  const fallo =
+    aprobar.error ??
+    rechazar.error ??
+    preparar.error ??
+    despachar.error ??
+    completar.error ??
+    cancelar.error;
+  const conflictoVersion = fallo instanceof ErrorApi && fallo.code === "DISPATCH_VERSION_CONFLICT";
 
   return (
     <section className="mx-auto max-w-3xl space-y-5">
@@ -86,12 +99,21 @@ export default function PaginaDetalleDespacho() {
       ) : null}
 
       {fallo ? <AvisoError error={fallo} /> : null}
+      {conflictoVersion ? (
+        <p className="bg-[var(--advertencia-tenue)] px-4 py-3 text-sm text-[var(--advertencia)]">
+          Otra persona modificó este despacho. Se actualizó con los datos más recientes; revisá el
+          estado antes de reintentar.
+        </p>
+      ) : null}
 
       {!esCliente ? (
         <div className="flex flex-wrap gap-2 rounded-md border bg-[var(--superficie)] px-4 py-4">
           {data.status === "PENDING" ? (
             <>
-              <Boton onClick={() => aprobar.mutate(undefined)} cargando={aprobar.isPending}>
+              <Boton
+                onClick={() => aprobar.mutate({ rowVersion: data.row_version })}
+                cargando={aprobar.isPending}
+              >
                 <Check className="size-4" aria-hidden="true" />
                 Aprobar
               </Boton>
@@ -103,16 +125,23 @@ export default function PaginaDetalleDespacho() {
           ) : null}
 
           {data.status === "APPROVED" ? (
-            <Boton onClick={() => preparar.mutate()} cargando={preparar.isPending}>
+            <Boton onClick={() => preparar.mutate(data.row_version)} cargando={preparar.isPending}>
               <PackageCheck className="size-4" aria-hidden="true" />
               Marcar en preparación
             </Boton>
           ) : null}
 
           {data.status === "PREPARING" ? (
-            <Boton onClick={() => completar.mutate()} cargando={completar.isPending}>
+            <Boton onClick={() => despachar.mutate(data.row_version)} cargando={despachar.isPending}>
               <Truck className="size-4" aria-hidden="true" />
-              Confirmar despacho
+              Registrar salida
+            </Boton>
+          ) : null}
+
+          {data.status === "DISPATCHED" ? (
+            <Boton onClick={() => completar.mutate(data.row_version)} cargando={completar.isPending}>
+              <CircleCheckBig className="size-4" aria-hidden="true" />
+              Completar despacho
             </Boton>
           ) : null}
 
@@ -137,13 +166,44 @@ export default function PaginaDetalleDespacho() {
         </div>
       ) : null}
 
-      <DocumentosDespacho dispatchId={id} esCliente={esCliente} />
+      <section aria-labelledby="cargas-incluidas">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 id="cargas-incluidas" className="text-base font-bold">
+            Cargas incluidas
+          </h2>
+          <span className="text-sm text-[var(--texto-secundario)]">{data.shipment_count}</span>
+        </div>
+        <ul className="divide-y overflow-hidden rounded-md border bg-[var(--superficie)]">
+          {data.shipments.map((carga) => (
+            <li key={carga.id}>
+              <Link
+                href={`/shipments/${carga.id}`}
+                className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-[var(--hover)]"
+              >
+                <span className="min-w-0 flex-1">
+                  <strong className="block truncate text-sm">
+                    {carga.wr || carga.invoice || carga.shipment_number}
+                  </strong>
+                  <span className="block text-xs text-[var(--texto-secundario)]">
+                    {carga.shipment_number} · {carga.package_count} piezas
+                    {carga.weight_kg ? ` · ${carga.weight_kg} kg` : ""}
+                  </span>
+                </span>
+                <BadgeEstado estado={carga.status} />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <DocumentosDespacho dispatchId={id} />
 
       <dl className="grid gap-px overflow-hidden rounded-md border bg-[var(--borde)] sm:grid-cols-2">
         {[
           { termino: "Solicitado", valor: formatearFechaHora(data.requested_at) },
           { termino: "Aprobado", valor: formatearFechaHora(data.approved_at) },
-          { termino: "Despachado", valor: formatearFechaHora(data.completed_at) },
+          { termino: "Salida física", valor: formatearFechaHora(data.dispatched_at) },
+          { termino: "Completado", valor: formatearFechaHora(data.completed_at) },
           { termino: "Dirección de entrega", valor: data.delivery_address || "La habitual" },
           { termino: "Instrucciones", valor: data.instructions || "Sin instrucciones" },
         ].map((dato) => (
@@ -160,6 +220,16 @@ export default function PaginaDetalleDespacho() {
             Las cargas vuelven a quedar almacenadas y podés solicitar el despacho de nuevo cuando
             quieras.
           </p>
+          <label className="block">
+            <span className="mb-1 block font-medium">Motivo de la cancelación</span>
+            <textarea
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              rows={2}
+              maxLength={2000}
+              value={motivoCancelacion}
+              onChange={(evento) => setMotivoCancelacion(evento.target.value)}
+            />
+          </label>
           {cancelar.error ? <AvisoError error={cancelar.error} /> : null}
           <div className="flex justify-end gap-2 pt-1">
             <button
@@ -172,9 +242,14 @@ export default function PaginaDetalleDespacho() {
             <Boton
               variante="peligro"
               cargando={cancelar.isPending}
+              disabled={!motivoCancelacion.trim()}
               onClick={async () => {
-                await cancelar.mutateAsync(undefined);
+                await cancelar.mutateAsync({
+                  motivo: motivoCancelacion.trim(),
+                  rowVersion: data.row_version,
+                });
                 setCancelando(false);
+                setMotivoCancelacion("");
               }}
             >
               Sí, cancelar
@@ -211,7 +286,7 @@ export default function PaginaDetalleDespacho() {
               disabled={!motivo.trim()}
               cargando={rechazar.isPending}
               onClick={async () => {
-                await rechazar.mutateAsync(motivo.trim());
+                await rechazar.mutateAsync({ motivo: motivo.trim(), rowVersion: data.row_version });
                 setRechazando(false);
                 setMotivo("");
               }}

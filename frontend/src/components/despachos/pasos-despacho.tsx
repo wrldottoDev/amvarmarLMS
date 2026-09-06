@@ -11,7 +11,8 @@ const PASOS = [
   { estado: "PENDING", etiqueta: "Solicitado" },
   { estado: "APPROVED", etiqueta: "Aprobado" },
   { estado: "PREPARING", etiqueta: "Preparando" },
-  { estado: "COMPLETED", etiqueta: "Despachado" },
+  { estado: "DISPATCHED", etiqueta: "Despachado" },
+  { estado: "COMPLETED", etiqueta: "Completado" },
 ] as const;
 
 const TERMINADOS = new Set(["REJECTED", "CANCELLED"]);
