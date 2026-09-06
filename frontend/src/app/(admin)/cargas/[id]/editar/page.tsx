@@ -8,7 +8,23 @@ import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useUbicaciones } from "@/features/admin/consultas";
-import { useActualizarCarga, useCarga } from "@/features/shipments/consultas";
+import {
+  aPayload,
+  EditorPiezas,
+  type Pieza,
+  problemaDePiezas,
+} from "@/components/shipments/editor-piezas";
+import {
+  EditorPeso,
+  pesoParaApi,
+  pesoValido,
+  type PesoEditable,
+} from "@/components/shipments/editor-peso";
+import {
+  useActualizarCarga,
+  useCarga,
+  useReemplazarPiezas,
+} from "@/features/shipments/consultas";
 
 /**
  * Corregir los datos de una carga.
@@ -31,14 +47,40 @@ export default function PaginaEditarCarga({
   const carga = useCarga(id);
   const ubicaciones = useUbicaciones();
   const actualizar = useActualizarCarga(id);
+  const reemplazarPiezas = useReemplazarPiezas(id);
 
   // `null` = sin tocar. Distinto de cadena vacía, que significa "borralo".
   const [cambios, setCambios] = useState<Record<string, string>>({});
+  // `null` mientras no se toque el desglose: así guardar solo el shipper no
+  // reescribe piezas que nadie miró.
+  const [piezas, setPiezas] = useState<Pieza[] | null>(null);
+  const [peso, setPeso] = useState<PesoEditable | null>(null);
 
   if (carga.isPending || ubicaciones.isPending) return <CargandoPagina />;
   if (carga.isError) return <AvisoError error={carga.error} />;
 
   const datos = carga.data;
+
+  const piezasActuales: Pieza[] =
+    piezas ??
+    datos.packages.map((p) => ({
+      clave: p.id,
+      package_type: p.package_type,
+      quantity: String(p.quantity),
+      description: p.description ?? "",
+      weight_kg: p.weight_kg == null ? "" : String(p.weight_kg),
+      length_cm: p.length_cm == null ? "" : String(p.length_cm),
+      width_cm: p.width_cm == null ? "" : String(p.width_cm),
+      height_cm: p.height_cm == null ? "" : String(p.height_cm),
+    }));
+
+  const pesoActual: PesoEditable =
+    peso ??
+    ({
+      kg: datos.weight_kg == null ? "" : String(datos.weight_kg),
+      lb: datos.weight_lb == null ? "" : String(datos.weight_lb),
+      unidadFuente: datos.weight_source_unit ?? "KG",
+    } satisfies PesoEditable);
 
   function valor(campo: string, actual: string | number | null | undefined): string {
     return cambios[campo] ?? (actual == null ? "" : String(actual));
@@ -58,12 +100,32 @@ export default function PaginaEditarCarga({
       // entiende, así que no se descarta.
       cuerpo[campo] = NUMERICOS.has(campo) ? (limpio === "" ? null : limpio) : limpio;
     }
+    if (peso !== null) cuerpo.weight = pesoParaApi(peso);
 
-    await actualizar.mutateAsync(cuerpo as never);
+    // Las piezas van por su propio endpoint atómico, y primero: si fallan, no
+    // queda una carga con datos corregidos y desglose viejo.
+    //
+    // Cada llamada sube `row_version`, así que la segunda usa la que devolvió
+    // la primera. Mandar la original daría un 409 contra un cambio propio.
+    let version = datos.row_version;
+
+    if (piezas !== null) {
+      const resultado = await reemplazarPiezas.mutateAsync({
+        row_version: version,
+        packages: aPayload(piezas) as never,
+      });
+      version = resultado.row_version;
+    }
+
+    if (Object.keys(cambios).length > 0) {
+      await actualizar.mutateAsync({ ...cuerpo, row_version: version } as never);
+    }
+
     router.push(`/shipments/${id}`);
   }
 
-  const sinCambios = Object.keys(cambios).length === 0;
+  const problema = piezas === null ? null : problemaDePiezas(piezas);
+  const sinCambios = Object.keys(cambios).length === 0 && piezas === null && peso === null;
 
   return (
     <section className="mx-auto max-w-4xl space-y-4">
@@ -114,6 +176,19 @@ export default function PaginaEditarCarga({
       <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
         <legend className="px-1 font-semibold">Datos comerciales</legend>
         <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Método de transporte</span>
+            <select
+              className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+              value={valor("transport_mode", datos.transport_mode)}
+              onChange={(evento) => cambiar("transport_mode", evento.target.value)}
+            >
+              <option value="">Sin registrar</option>
+              <option value="SEA">Marítimo</option>
+              <option value="AIR">Aéreo</option>
+              <option value="LAND">Terrestre</option>
+            </select>
+          </label>
           {(
             [
               ["shipper", "Shipper", datos.shipper],
@@ -134,12 +209,16 @@ export default function PaginaEditarCarga({
 
       <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
         <legend className="px-1 font-semibold">Peso y volumen</legend>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <EditorPeso
+          valor={pesoActual}
+          alCambiar={setPeso}
+          mostrarError={peso !== null && !pesoValido(peso)}
+        />
+        <div className="grid gap-3 sm:grid-cols-3">
           {(
             [
-              ["weight_kg", "Peso en kg", datos.weight_kg],
-              ["weight_lb", "Peso en libras", datos.weight_lb],
-              ["volumetric_weight_kg", "Volumétrico (kg)", null],
+              ["volumetric_weight_kg", "Volumétrico (kg)", datos.volumetric_weight_kg],
+              ["volume_m3", "Volumen (m³)", datos.volume_m3],
               ["foots_cft", "Pies cúbicos (CFT)", datos.foots_cft],
             ] as const
           ).map(([campo, etiqueta, actual]) => (
@@ -157,6 +236,8 @@ export default function PaginaEditarCarga({
           ))}
         </div>
       </fieldset>
+
+      <EditorPiezas piezas={piezasActuales} alCambiar={setPiezas} />
 
       <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
         <legend className="px-1 font-semibold">Ruta y entrega</legend>
@@ -197,6 +278,7 @@ export default function PaginaEditarCarga({
       </fieldset>
 
       {actualizar.error ? <AvisoError error={actualizar.error} /> : null}
+      {reemplazarPiezas.error ? <AvisoError error={reemplazarPiezas.error} /> : null}
 
       <div className="flex justify-end gap-2 pb-4">
         <Link
@@ -205,7 +287,11 @@ export default function PaginaEditarCarga({
         >
           Cancelar
         </Link>
-        <Boton onClick={() => void guardar()} disabled={sinCambios} cargando={actualizar.isPending}>
+        <Boton
+          onClick={() => void guardar()}
+          disabled={sinCambios || problema !== null || (peso !== null && !pesoValido(peso))}
+          cargando={actualizar.isPending || reemplazarPiezas.isPending}
+        >
           <Save className="size-4" aria-hidden="true" />
           Guardar cambios
         </Boton>
@@ -216,8 +302,7 @@ export default function PaginaEditarCarga({
 
 /** Campos que el backend espera como número, no como texto. */
 const NUMERICOS = new Set([
-  "weight_kg",
-  "weight_lb",
   "volumetric_weight_kg",
+  "volume_m3",
   "foots_cft",
 ]);

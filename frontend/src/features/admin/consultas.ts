@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, exigirDatos } from "@/lib/api/client";
 import type {
   CrearCarga,
@@ -13,15 +13,37 @@ import type {
 export const claveEmpresas = ["admin", "empresas"] as const;
 export const claveUsuarios = ["admin", "usuarios"] as const;
 
-export function useEmpresas(incluirInactivas = false) {
+// Para selectores y filtros que necesitan "todas las empresas" en una sola
+// lista, no una página: el tope duro del servidor (ver `LIMITE_MAXIMO` en
+// `app/core/pagination.py`), no una paginación real. `useEmpresasPaginadas`
+// es la versión con "Cargar más" para el listado de /empresas.
+export function useEmpresas(incluirInactivas = false, habilitada = true) {
   return useQuery({
-    queryKey: [...claveEmpresas, incluirInactivas],
-    queryFn: async (): Promise<EmpresaAdmin[]> =>
+    queryKey: [...claveEmpresas, incluirInactivas, "simple"],
+    queryFn: async (): Promise<EmpresaAdmin[]> => {
+      const pagina = exigirDatos(
+        await api.GET("/api/v1/admin/companies", {
+          params: { query: { incluir_inactivas: incluirInactivas, limit: 100 } },
+        }),
+      );
+      return pagina.items;
+    },
+    enabled: habilitada,
+  });
+}
+
+export function useEmpresasPaginadas(incluirInactivas = false) {
+  return useInfiniteQuery({
+    queryKey: [...claveEmpresas, incluirInactivas, "paginado"],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) =>
       exigirDatos(
         await api.GET("/api/v1/admin/companies", {
-          params: { query: { incluir_inactivas: incluirInactivas } },
+          params: { query: { incluir_inactivas: incluirInactivas, cursor: pageParam } },
         }),
       ),
+    getNextPageParam: (ultimaPagina) =>
+      ultimaPagina.has_more && ultimaPagina.next_cursor ? ultimaPagina.next_cursor : undefined,
   });
 }
 

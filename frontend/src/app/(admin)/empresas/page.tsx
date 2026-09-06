@@ -1,8 +1,8 @@
 "use client";
 
-import { Building2, Pencil, Plus, Power, Users } from "lucide-react";
+import { Building2, Download, Pencil, Plus, Power, Users } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
@@ -11,7 +11,7 @@ import {
   useActualizarEmpresa,
   useCrearEmpresa,
   useDesactivarEmpresa,
-  useEmpresas,
+  useEmpresasPaginadas,
 } from "@/features/admin/consultas";
 import { etiquetaEstadoCuenta } from "@/features/admin/roles";
 import { clases, formatearFecha } from "@/lib/utilidades";
@@ -21,7 +21,12 @@ export default function PaginaEmpresas() {
   const [creando, setCreando] = useState(false);
   const [aDesactivar, setADesactivar] = useState<{ id: string; nombre: string } | null>(null);
 
-  const { data, isPending, error } = useEmpresas(incluirInactivas);
+  const consulta = useEmpresasPaginadas(incluirInactivas);
+  const { isPending, error } = consulta;
+  const data = useMemo(
+    () => consulta.data?.pages.flatMap((pagina) => pagina.items) ?? [],
+    [consulta.data],
+  );
   const crear = useCrearEmpresa();
   const desactivar = useDesactivarEmpresa();
   const actualizar = useActualizarEmpresa();
@@ -166,7 +171,20 @@ export default function PaginaEmpresas() {
         </ul>
       ) : null}
 
-      {data && data.length === 0 ? (
+      {consulta.hasNextPage ? (
+        <div className="flex justify-center pt-2">
+          <Boton
+            variante="secundario"
+            cargando={consulta.isFetchingNextPage}
+            onClick={() => void consulta.fetchNextPage()}
+          >
+            <Download className="size-4" aria-hidden="true" />
+            Cargar más
+          </Boton>
+        </div>
+      ) : null}
+
+      {!isPending && data.length === 0 ? (
         <div className="rounded-md border bg-[var(--superficie)] px-6 py-16 text-center">
           <Building2 className="mx-auto size-8 text-[var(--texto-secundario)]" aria-hidden="true" />
           <p className="mt-3 text-sm font-medium">Todavía no hay empresas.</p>

@@ -1,24 +1,30 @@
 "use client";
 
-import { ArrowLeft, PackagePlus, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, PackagePlus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SelectorEmpresa } from "@/components/admin/selector-empresa";
+import {
+  aPayload,
+  EditorPiezas,
+  type Pieza,
+  piezaVacia,
+  problemaDePiezas,
+} from "@/components/shipments/editor-piezas";
+import {
+  EditorPeso,
+  pesoParaApi,
+  pesoValido,
+  pesoVacio,
+  type PesoEditable,
+} from "@/components/shipments/editor-peso";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useBodegas, useCrearCarga, useEmpresas, useUbicaciones } from "@/features/admin/consultas";
+import { useSesion } from "@/features/auth/contexto-sesion";
 import { clases } from "@/lib/utilidades";
-
-/** Los mismos tipos de pieza que el desplegable del sistema viejo. */
-const TIPOS_DE_PIEZA = [
-  { valor: "PALLET", etiqueta: "Pallets" },
-  { valor: "BOX", etiqueta: "Cajas" },
-  { valor: "DRUM", etiqueta: "Tambores" },
-  { valor: "BUNDLE", etiqueta: "Bultos" },
-  { valor: "OTHER", etiqueta: "Otro" },
-] as const;
 
 const ESTADOS_INICIALES = [
   { valor: "PRE_ALERT", etiqueta: "Prealerta — todavía no llegó" },
@@ -27,16 +33,11 @@ const ESTADOS_INICIALES = [
   { valor: "STORED", etiqueta: "Almacenada — está en bodega y contada" },
 ] as const;
 
-interface Pieza {
-  id: number;
-  package_type: string;
-  quantity: string;
-  description: string;
-}
-
 export default function PaginaNuevaCarga() {
   const router = useRouter();
-  const empresas = useEmpresas();
+  const { usuario, estado: estadoSesion } = useSesion();
+  const esCliente = Boolean(usuario?.empresa);
+  const empresas = useEmpresas(false, estadoSesion === "autenticada" && !esCliente);
   const ubicaciones = useUbicaciones();
   const bodegas = useBodegas();
   const crear = useCrearCarga();
@@ -53,10 +54,10 @@ export default function PaginaNuevaCarga() {
   const [descripcion, setDescripcion] = useState("");
   const [direccion, setDireccion] = useState("");
   const [eta, setEta] = useState("");
-  const [peso, setPeso] = useState("");
-  const [pesoLb, setPesoLb] = useState("");
+  const [peso, setPeso] = useState<PesoEditable>(pesoVacio);
   const [pesoVol, setPesoVol] = useState("");
   const [cft, setCft] = useState("");
+  const [transporte, setTransporte] = useState<"SEA" | "AIR" | "LAND">("SEA");
   const [wr, setWr] = useState("");
   const [factura, setFactura] = useState("");
   const [shipper, setShipper] = useState("");
@@ -65,9 +66,18 @@ export default function PaginaNuevaCarga() {
   const [tracking, setTracking] = useState("");
   const [orden, setOrden] = useState("");
   const [permiso, setPermiso] = useState(false);
-  const [piezas, setPiezas] = useState<Pieza[]>([]);
+  // Nace con una fila. Un formulario que empieza vacío y rechaza el guardado
+  // por eso le hace perder el trabajo a quien ya llenó todo lo demás.
+  const [piezas, setPiezas] = useState<Pieza[]>(() => [piezaVacia()]);
 
-  if (empresas.isPending || ubicaciones.isPending || bodegas.isPending) return <CargandoPagina />;
+  if (
+    estadoSesion !== "autenticada" ||
+    (!esCliente && empresas.isPending) ||
+    ubicaciones.isPending ||
+    bodegas.isPending
+  ) {
+    return <CargandoPagina />;
+  }
 
   // La bodega que emite Warehouse Receipt. Se busca por la bandera y no por el
   // código "MIA": si mañana abren otra bodega que emita WR, esto la encuentra
@@ -76,37 +86,26 @@ export default function PaginaNuevaCarga() {
 
   const origenEfectivo = desdeMiami ? (bodegaConWr?.location_id ?? "") : origen;
   const bodegaEfectiva = desdeMiami ? (bodegaConWr?.id ?? null) : null;
+  const empresaEfectiva = usuario?.empresa?.id ?? empresa;
 
   // La regla del negocio: lo que sale de una bodega que emite WR se identifica
   // por el WR; todo lo demás, por su factura.
   const exigeFactura = desdeMiami === false;
-  const hayPeso = Boolean(peso.trim() || pesoLb.trim());
+  const hayPeso = pesoValido(peso);
 
   const listo = Boolean(
-    empresa &&
+    empresaEfectiva &&
       origenEfectivo &&
       destino &&
       origenEfectivo !== destino &&
       hayPeso &&
+      problemaDePiezas(piezas) === null &&
       (!exigeFactura || factura.trim()),
   );
 
-  function agregarPieza() {
-    setPiezas((actuales) => [
-      ...actuales,
-      { id: Date.now(), package_type: "PALLET", quantity: "1", description: "" },
-    ]);
-  }
-
-  function cambiarPieza(id: number, campo: keyof Pieza, valor: string) {
-    setPiezas((actuales) =>
-      actuales.map((p) => (p.id === id ? { ...p, [campo]: valor } : p)),
-    );
-  }
-
   async function guardar() {
     const creada = await crear.mutateAsync({
-      company_id: empresa,
+      company_id: empresaEfectiva,
       origin_location_id: origenEfectivo,
       destination_location_id: destino,
       origin_facility_id: bodegaEfectiva,
@@ -114,10 +113,10 @@ export default function PaginaNuevaCarga() {
       destination_address: direccion.trim() || null,
       description: descripcion.trim() || null,
       estimated_arrival_at: eta ? new Date(`${eta}T12:00:00`).toISOString() : null,
-      weight_kg: peso || null,
-      weight_lb: pesoLb || null,
+      weight: pesoParaApi(peso)!,
       volumetric_weight_kg: pesoVol || null,
       foots_cft: cft || null,
+      transport_mode: transporte,
       shipper: shipper.trim() || null,
       carrier: carrier.trim() || null,
       wr: desdeMiami ? wr.trim() || null : null,
@@ -126,13 +125,7 @@ export default function PaginaNuevaCarga() {
       tracking: tracking.trim() || null,
       po: orden.trim() || null,
       permit_review_required: permiso,
-      packages: piezas
-        .filter((p) => Number(p.quantity) > 0)
-        .map((p) => ({
-          package_type: p.package_type,
-          quantity: Number(p.quantity),
-          description: p.description.trim() || null,
-        })),
+      packages: aPayload(piezas),
     });
     // Al expediente, no al detalle. Es el flujo del sistema viejo:
     // `create_warehouse` guardaba y redirigía a `warehouse_files`, porque quien
@@ -212,7 +205,13 @@ export default function PaginaNuevaCarga() {
 
             <div className="block">
               <span className="mb-1 block text-sm font-medium">¿De qué cliente es?</span>
-              <SelectorEmpresa valor={empresa} alCambiar={setEmpresa} />
+              {esCliente ? (
+                <p className="rounded-md border bg-[var(--hover)] px-3 py-2 text-sm">
+                  {usuario?.empresa?.trade_name || usuario?.empresa?.legal_name}
+                </p>
+              ) : (
+                <SelectorEmpresa valor={empresa} alCambiar={setEmpresa} />
+              )}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -308,20 +307,26 @@ export default function PaginaNuevaCarga() {
               </label>
             </div>
 
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium">Estado en que se registra</span>
-              <select
-                className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
-                value={estado}
-                onChange={(evento) => setEstado(evento.target.value)}
-              >
-                {ESTADOS_INICIALES.map((e) => (
-                  <option key={e.valor} value={e.valor}>
-                    {e.etiqueta}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {esCliente ? (
+              <p className="rounded-md border bg-[var(--hover)] px-3 py-2 text-sm">
+                La carga se registra como prealerta. Operaciones actualizará su avance.
+              </p>
+            ) : (
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium">Estado en que se registra</span>
+                <select
+                  className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                  value={estado}
+                  onChange={(evento) => setEstado(evento.target.value)}
+                >
+                  {ESTADOS_INICIALES.map((e) => (
+                    <option key={e.valor} value={e.valor}>
+                      {e.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label className="block">
               <span className="mb-1 block text-sm font-medium">
@@ -367,16 +372,11 @@ export default function PaginaNuevaCarga() {
 
           <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
             <legend className="px-1 font-semibold">Peso y volumen</legend>
-            <p className="text-xs text-[var(--texto-secundario)]">
-              Hace falta el peso en kilos o en libras, alguno de los dos. Sin él la carga entra al
-              inventario como un bulto de masa desconocida.
-            </p>
+            <EditorPeso valor={peso} alCambiar={setPeso} mostrarError={!hayPeso} />
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2">
               {(
                 [
-                  ["Peso en kg", peso, setPeso],
-                  ["Peso en libras", pesoLb, setPesoLb],
                   ["Volumétrico (kg)", pesoVol, setPesoVol],
                   ["Pies cúbicos (CFT)", cft, setCft],
                 ] as const
@@ -387,12 +387,7 @@ export default function PaginaNuevaCarga() {
                     type="number"
                     min="0"
                     step="0.001"
-                    className={clases(
-                      "w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm",
-                      !hayPeso &&
-                        (etiqueta === "Peso en kg" || etiqueta === "Peso en libras") &&
-                        "border-[var(--peligro)]",
-                    )}
+                    className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
                     value={valor}
                     onChange={(evento) => asignar(evento.target.value)}
                   />
@@ -405,6 +400,20 @@ export default function PaginaNuevaCarga() {
             <legend className="px-1 font-semibold">Datos comerciales</legend>
 
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium">Método de transporte</span>
+                <select
+                  className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                  value={transporte}
+                  onChange={(evento) =>
+                    setTransporte(evento.target.value as "SEA" | "AIR" | "LAND")
+                  }
+                >
+                  <option value="SEA">Marítimo</option>
+                  <option value="AIR">Aéreo</option>
+                  <option value="LAND">Terrestre</option>
+                </select>
+              </label>
               {(
                 [
                   ["Shipper", shipper, setShipper, "Quién envía la mercancía"],
@@ -427,83 +436,7 @@ export default function PaginaNuevaCarga() {
             </div>
           </fieldset>
 
-          {/* La sección "Tipos de carga (Piezas)" del formulario viejo. */}
-          <div className="rounded-lg border bg-[var(--superficie)]">
-            <div className="flex items-center justify-between border-b px-4 py-2.5">
-              <span className="font-semibold">Tipos de carga (piezas)</span>
-              <button
-                type="button"
-                className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--marca)] px-3 text-sm font-medium text-[var(--marca)] hover:bg-[var(--marca-tenue)]"
-                onClick={agregarPieza}
-              >
-                <Plus className="size-4" aria-hidden="true" />
-                Agregar pieza
-              </button>
-            </div>
-
-            <div className="space-y-3 p-4">
-              {piezas.length === 0 ? (
-                <p className="text-sm text-[var(--texto-secundario)]">
-                  Sin piezas declaradas. Se pueden agregar ahora o después, desde el detalle.
-                </p>
-              ) : null}
-
-              {piezas.map((pieza) => (
-                <div key={pieza.id} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-12">
-                  <label className="block sm:col-span-4">
-                    <span className="mb-1 block text-sm font-medium">Tipo</span>
-                    <select
-                      className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
-                      value={pieza.package_type}
-                      onChange={(evento) =>
-                        cambiarPieza(pieza.id, "package_type", evento.target.value)
-                      }
-                    >
-                      {TIPOS_DE_PIEZA.map((t) => (
-                        <option key={t.valor} value={t.valor}>
-                          {t.etiqueta}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block sm:col-span-2">
-                    <span className="mb-1 block text-sm font-medium">Cantidad</span>
-                    <input
-                      type="number"
-                      min="1"
-                      className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
-                      value={pieza.quantity}
-                      onChange={(evento) => cambiarPieza(pieza.id, "quantity", evento.target.value)}
-                    />
-                  </label>
-
-                  <label className="block sm:col-span-5">
-                    <span className="mb-1 block text-sm font-medium">Descripción</span>
-                    <input
-                      className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
-                      value={pieza.description}
-                      onChange={(evento) =>
-                        cambiarPieza(pieza.id, "description", evento.target.value)
-                      }
-                    />
-                  </label>
-
-                  <div className="flex items-end sm:col-span-1">
-                    <button
-                      type="button"
-                      className="grid h-10 w-full place-items-center rounded-md border text-[var(--peligro)] hover:bg-[var(--peligro-tenue)]"
-                      onClick={() => setPiezas((a) => a.filter((p) => p.id !== pieza.id))}
-                      aria-label="Quitar esta pieza"
-                      title="Quitar esta pieza"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <EditorPiezas piezas={piezas} alCambiar={setPiezas} />
 
           <label className="flex items-start gap-2 rounded-lg border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-4 py-3">
             <input
