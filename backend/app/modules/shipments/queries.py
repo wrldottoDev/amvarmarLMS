@@ -56,8 +56,14 @@ class FiltrosListado:
     company_id: UUID | None = None
     eta_desde: datetime | None = None
     eta_hasta: datetime | None = None
-    # Busca en shipment_number y en el valor de cualquier referencia.
+    # Búsqueda global (OR) y filtros de campo (AND entre sí).
     texto: str | None = None
+    shipment_number: str | None = None
+    wr: str | None = None
+    shipper: str | None = None
+    carrier: str | None = None
+    reference: str | None = None
+    reference_type: str | None = None
     incluir_archivadas: bool = False
     # Historial de despachos: NO mezcla archivadas con activas, muestra SOLO
     # las archivadas. Distinto de `incluir_archivadas`, que las suma al resto
@@ -74,6 +80,7 @@ _COLUMNAS_LISTADO = """
     s.id,
     s.shipment_number,
     s.company_id,
+    c.legal_name AS company_name,
     s.current_status_code,
     s.transport_mode,
     s.estimated_arrival_at,
@@ -81,6 +88,8 @@ _COLUMNAS_LISTADO = """
     s.package_count,
     s.weight_kg,
     s.weight_lb,
+    s.weight_source_unit,
+    s.row_version,
     s.foots_cft,
     s.shipper,
     s.carrier,
@@ -190,12 +199,46 @@ async def listar_shipments(
     if filtros.texto:
         condiciones.append("""(
             s.shipment_number ILIKE :texto
+            OR s.shipper ILIKE :texto
+            OR s.carrier ILIKE :texto
             OR EXISTS (
                 SELECT 1 FROM shipment_references r
                 WHERE r.shipment_id = s.id AND r.value ILIKE :texto
             )
         )""")
         parametros["texto"] = f"%{filtros.texto}%"
+
+    if filtros.shipment_number:
+        condiciones.append("s.shipment_number ILIKE :shipment_number")
+        parametros["shipment_number"] = f"%{filtros.shipment_number}%"
+
+    if filtros.wr:
+        condiciones.append("""EXISTS (
+            SELECT 1 FROM shipment_references wr
+            WHERE wr.shipment_id = s.id AND wr.reference_type = 'WR'
+              AND wr.value ILIKE :wr
+        )""")
+        parametros["wr"] = f"%{filtros.wr}%"
+
+    if filtros.shipper:
+        condiciones.append("s.shipper ILIKE :shipper")
+        parametros["shipper"] = f"%{filtros.shipper}%"
+
+    if filtros.carrier:
+        condiciones.append("s.carrier ILIKE :carrier")
+        parametros["carrier"] = f"%{filtros.carrier}%"
+
+    if filtros.reference:
+        tipo_referencia = ""
+        if filtros.reference_type:
+            tipo_referencia = "AND ref.reference_type = :reference_type"
+            parametros["reference_type"] = filtros.reference_type
+        condiciones.append(f"""EXISTS (
+            SELECT 1 FROM shipment_references ref
+            WHERE ref.shipment_id = s.id AND ref.value ILIKE :reference
+              {tipo_referencia}
+        )""")  # noqa: S608 -- el fragmento variable es una cláusula constante
+        parametros["reference"] = f"%{filtros.reference}%"
 
     if cursor is not None:
         # Keyset: la comparación de tuplas es lo que hace la paginación estable
@@ -207,6 +250,7 @@ async def listar_shipments(
     consulta = f"""
         SELECT {_COLUMNAS_LISTADO}
         FROM shipments s
+        JOIN companies c ON c.id = s.company_id
         JOIN locations origen ON origen.id = s.origin_location_id
         JOIN locations destino ON destino.id = s.destination_location_id
         WHERE {" AND ".join(condiciones)}
@@ -244,9 +288,11 @@ async def obtener_shipment(
         SELECT {_COLUMNAS_LISTADO},
                s.row_version,
                s.description,
+               s.volumetric_weight_kg, s.volume_m3,
                s.received_at, s.stored_at, s.dispatched_at, s.delivered_at,
                s.destination_address
         FROM shipments s
+        JOIN companies c ON c.id = s.company_id
         JOIN locations origen ON origen.id = s.origin_location_id
         JOIN locations destino ON destino.id = s.destination_location_id
         WHERE {" AND ".join(condiciones)}
@@ -420,6 +466,7 @@ async def proximos_movimientos(
                 text(f"""
                     SELECT {_COLUMNAS_LISTADO}
                     FROM shipments s
+                    JOIN companies c ON c.id = s.company_id
                     JOIN shipment_statuses st ON st.code = s.current_status_code
                     JOIN locations origen ON origen.id = s.origin_location_id
                     JOIN locations destino ON destino.id = s.destination_location_id

@@ -34,6 +34,7 @@ from app.modules.shipments.models import (
     ReferenceType,
     ShipmentStatus,
 )
+from app.modules.shipments.peso import PesoConvertido, UnidadPeso, convertir_peso
 from app.modules.shipments.policies import (
     validar_identificador_comercial,
     validar_referencia_permitida,
@@ -97,6 +98,10 @@ class DatosDeCarga:
     description: str | None = None
     transport_mode: str | None = None
     estimated_arrival_at: datetime | None = None
+    weight_value: Decimal | None = None
+    weight_source_unit: str | None = None
+    # Compatibilidad interna para importadores legacy y pruebas antiguas. Una
+    # creación nativa no puede enviar ambos: debe existir una única fuente.
     weight_kg: Decimal | None = None
     weight_lb: Decimal | None = None
     volumetric_weight_kg: Decimal | None = None
@@ -180,11 +185,7 @@ async def crear(
             "Una carga solo puede crearse en prealerta, en tránsito, recibida o almacenada."
         )
 
-    # La regla del sistema viejo (`WarehouseForm.clean`): sin peso no se puede
-    # cotizar ni consolidar, y una carga sin ninguno de los dos entra al
-    # inventario como un bulto de masa desconocida.
-    if datos.weight_kg is None and datos.weight_lb is None:
-        raise DatosInvalidos("Indique el peso, en kilos o en libras.")
+    peso = _peso_de_alta(datos)
 
     _validar_bultos(datos.packages)
 
@@ -197,12 +198,13 @@ async def crear(
                          origin_location_id, origin_facility_id,
                          destination_location_id, destination_address,
                          description, transport_mode, estimated_arrival_at,
-                         weight_kg, weight_lb, volumetric_weight_kg, volume_m3,
+                         weight_kg, weight_lb, weight_source_unit,
+                         volumetric_weight_kg, volume_m3,
                          foots_cft, shipper, carrier, permit_review_required)
                     VALUES (:company, :actor, :asignado, :estado,
                             :origen, :bodega, :destino, :direccion,
                             :descripcion, :modo, :eta,
-                            :peso, :peso_lb, :peso_vol, :volumen,
+                            :peso, :peso_lb, :unidad_peso, :peso_vol, :volumen,
                             :cft, :shipper, :carrier, :permiso)
                     RETURNING id, shipment_number, row_version
                 """),
@@ -218,8 +220,9 @@ async def crear(
                     "descripcion": datos.description,
                     "modo": datos.transport_mode,
                     "eta": datos.estimated_arrival_at,
-                    "peso": datos.weight_kg,
-                    "peso_lb": datos.weight_lb,
+                    "peso": peso.kg,
+                    "peso_lb": peso.lb,
+                    "unidad_peso": peso.source_unit.value,
                     "peso_vol": datos.volumetric_weight_kg,
                     "volumen": datos.volume_m3,
                     "cft": datos.foots_cft,
@@ -292,6 +295,23 @@ async def crear(
         status=estado_inicial,
         row_version=version,
     )
+
+
+def _peso_de_alta(datos: DatosDeCarga) -> PesoConvertido:
+    if datos.weight_value is not None or datos.weight_source_unit is not None:
+        if datos.weight_value is None or datos.weight_source_unit is None:
+            raise DatosInvalidos("Indique el valor y la unidad del peso.")
+        return convertir_peso(datos.weight_value, datos.weight_source_unit)
+
+    # Este camino conserva compatibilidad para servicios internos mientras el
+    # contrato HTTP ya usa `PesoInput`. Sigue exigiendo una sola fuente.
+    if datos.weight_kg is not None and datos.weight_lb is not None:
+        raise DatosInvalidos("Indique una sola fuente de peso: kilos o libras, no ambas.")
+    if datos.weight_kg is not None:
+        return convertir_peso(datos.weight_kg, UnidadPeso.KG)
+    if datos.weight_lb is not None:
+        return convertir_peso(datos.weight_lb, UnidadPeso.LB)
+    raise DatosInvalidos("Indique el peso, en kilos o en libras.")
 
 
 def _validar_bultos(bultos: tuple[DatosDeBulto, ...]) -> None:
@@ -407,6 +427,7 @@ _EDITABLES_CAMPOS: dict[str, str] = {
     "estimated_arrival_at": "eta",
     "weight_kg": "peso",
     "weight_lb": "peso_lb",
+    "weight_source_unit": "unidad_peso",
     "volumetric_weight_kg": "peso_vol",
     "volume_m3": "volumen",
     "foots_cft": "cft",
@@ -468,8 +489,23 @@ async def actualizar(
             "otros datos."
         )
 
-    aplicables = {c: v for c, v in cambios.items() if c in _EDITABLES_CAMPOS}
-    referencias = {c: v for c, v in cambios.items() if c in _REFERENCIAS_EDITABLES}
+    cambios_normalizados = dict(cambios)
+    if "weight" in cambios_normalizados:
+        peso_entrada = cambios_normalizados.pop("weight")
+        try:
+            peso = convertir_peso(peso_entrada["value"], peso_entrada["unit"])
+        except (KeyError, TypeError) as error:
+            raise DatosInvalidos("Indique el valor y la unidad del peso.") from error
+        cambios_normalizados.update(
+            {
+                "weight_kg": peso.kg,
+                "weight_lb": peso.lb,
+                "weight_source_unit": peso.source_unit.value,
+            }
+        )
+
+    aplicables = {c: v for c, v in cambios_normalizados.items() if c in _EDITABLES_CAMPOS}
+    referencias = {c: v for c, v in cambios_normalizados.items() if c in _REFERENCIAS_EDITABLES}
 
     if not aplicables and not referencias:
         raise DatosInvalidos("No hay ningún campo editable en la solicitud.")
@@ -508,7 +544,13 @@ async def actualizar(
     await _registrar_correccion(
         session,
         shipment_id,
-        sorted([*aplicables, *referencias]),
+        sorted(
+            [
+                "weight" if c == "weight_kg" else c
+                for c in [*aplicables, *referencias]
+                if c not in {"weight_lb", "weight_source_unit"}
+            ]
+        ),
         actor_user_id=actor_user_id,
     )
 

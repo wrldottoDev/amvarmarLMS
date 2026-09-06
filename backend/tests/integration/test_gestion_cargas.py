@@ -95,7 +95,8 @@ def _datos(entorno, **extra) -> gestion.DatosDeCarga:
     extra.setdefault("invoice", f"INV-{uuid.uuid4().hex[:8].upper()}")
     # Y peso, que el alta exige igual que lo exigía el sistema viejo: sin él la
     # carga entra al inventario como un bulto de masa desconocida.
-    extra.setdefault("weight_kg", Decimal("10"))
+    extra.setdefault("weight_value", Decimal("10"))
+    extra.setdefault("weight_source_unit", "KG")
     # Y al menos una pieza: sin desglose, la carga podría almacenarse y entrar
     # en un despacho sin que nadie sepa cuántos bultos se están moviendo.
     extra.setdefault("packages", (gestion.DatosDeBulto(package_type="BOX", quantity=1),))
@@ -156,7 +157,8 @@ class TestCrear:
                     company_id=entorno["empresa"],
                     origin_location_id=entorno["origen"],
                     destination_location_id=entorno["destino"],
-                    weight_kg=Decimal("10"),
+                    weight_value=Decimal("10"),
+                    weight_source_unit="KG",
                     packages=(gestion.DatosDeBulto(package_type="BOX", quantity=1),),
                 ),
                 actor_user_id=entorno["ops"],
@@ -186,7 +188,8 @@ class TestCrear:
                 origin_location_id=entorno["origen"],
                 destination_location_id=entorno["destino"],
                 origin_facility_id=bodega,
-                weight_kg=Decimal("10"),
+                weight_value=Decimal("10"),
+                weight_source_unit="KG",
                 packages=(gestion.DatosDeBulto(package_type="BOX", quantity=1),),
             ),
             actor_user_id=entorno["ops"],
@@ -214,16 +217,29 @@ class TestCrear:
                 permisos=await _permisos(session, redis, entorno["ops"]),
             )
 
-    async def test_con_libras_alcanza(self, session: AsyncSession, redis, entorno) -> None:
-        """Uno de los dos, no los dos: el viejo pedía `lbs` o `kgs`."""
+    async def test_con_libras_calcula_ambas_unidades(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
         creada = await gestion.crear(
             session,
-            datos=_datos(entorno, weight_kg=None, weight_lb=Decimal("550")),
+            datos=_datos(
+                entorno,
+                weight_value=Decimal("550"),
+                weight_source_unit="LB",
+            ),
             actor_user_id=entorno["ops"],
             permisos=await _permisos(session, redis, entorno["ops"]),
         )
 
-        assert creada.id
+        fila = (
+            await session.execute(
+                text("SELECT weight_kg, weight_lb, weight_source_unit FROM shipments WHERE id=:s"),
+                {"s": creada.id},
+            )
+        ).one()
+        assert fila.weight_kg == Decimal("249.476")
+        assert fila.weight_lb == Decimal("550.000")
+        assert fila.weight_source_unit == "LB"
 
     async def test_guarda_las_piezas(self, session: AsyncSession, redis, entorno) -> None:
         """La sección "Tipos de carga" del alta del sistema viejo.
@@ -387,8 +403,8 @@ class TestCrear:
                 shipper="Proveedor Ejemplo",
                 carrier="Naviera Ejemplo",
                 foots_cft=Decimal("42.50"),
-                weight_lb=Decimal("120.000"),
-                weight_kg=Decimal("54.431"),
+                weight_value=Decimal("120.000"),
+                weight_source_unit="LB",
                 tracking="1Z999",
                 po="PO-77",
                 container="MSCU1234567",
@@ -400,7 +416,8 @@ class TestCrear:
         fila = (
             await session.execute(
                 text("""
-                    SELECT shipper, carrier, foots_cft, weight_lb, weight_kg
+                    SELECT shipper, carrier, foots_cft, weight_lb, weight_kg,
+                           weight_source_unit
                     FROM shipments WHERE id = :s
                 """),
                 {"s": creada.id},
@@ -409,9 +426,9 @@ class TestCrear:
         assert fila.shipper == "Proveedor Ejemplo"
         assert fila.carrier == "Naviera Ejemplo"
         assert fila.foots_cft == Decimal("42.50")
-        # Kilos y libras se guardan por separado: no se calcula uno del otro.
         assert fila.weight_lb == Decimal("120.000")
         assert fila.weight_kg == Decimal("54.431")
+        assert fila.weight_source_unit == "LB"
 
         referencias = {
             f.reference_type: f.value
@@ -587,7 +604,7 @@ class TestActualizar:
         await gestion.actualizar(
             session,
             shipment_id=carga.id,
-            cambios={"description": "Corregido", "weight_kg": 12},
+            cambios={"description": "Corregido", "weight": {"value": 12, "unit": "KG"}},
             row_version=carga.row_version,
             actor_user_id=entorno["ops"],
             permisos=await _permisos(session, redis, entorno["ops"]),
@@ -604,7 +621,7 @@ class TestActualizar:
         ).one()
         assert nota.title == "Datos corregidos"
         assert "description" in nota.description
-        assert "weight_kg" in nota.description
+        assert "weight" in nota.description
 
 
 class TestPiezasComoInvariante:
