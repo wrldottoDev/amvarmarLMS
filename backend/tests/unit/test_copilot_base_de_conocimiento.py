@@ -36,6 +36,21 @@ class TestBuscar:
         assert entrada is not None
         assert "documento" in entrada.titulo.lower()
 
+    def test_encuentra_el_historial_de_una_carga(self) -> None:
+        entrada = bc.buscar("¿dónde veo el historial de una carga?")
+        assert entrada is not None
+        assert "historial" in entrada.titulo.lower()
+
+    def test_encuentra_como_editar_una_carga(self) -> None:
+        entrada = bc.buscar("necesito corregir un dato de una carga")
+        assert entrada is not None
+        assert "edito" in entrada.titulo.lower() or "editar" in entrada.titulo.lower()
+
+    def test_encuentra_alta_de_usuario_de_la_propia_empresa(self) -> None:
+        entrada = bc.buscar("cómo agrego un usuario a mi empresa")
+        assert entrada is not None
+        assert "usuario" in entrada.titulo.lower()
+
     def test_es_determinista_ante_la_misma_pregunta(self) -> None:
         primera = bc.buscar("¿cómo veo mis avisos?")
         segunda = bc.buscar("¿cómo veo mis avisos?")
