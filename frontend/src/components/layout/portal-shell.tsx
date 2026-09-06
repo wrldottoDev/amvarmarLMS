@@ -22,6 +22,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { AmviChat } from "@/components/copilot/amvi-chat";
 import { CampanaNotificaciones } from "@/components/notificaciones/campana";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { useSidebar, useTema } from "@/features/preferencias/apariencia";
@@ -64,7 +65,7 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
     { href: "/despachos", etiqueta: "Despachos", icono: Truck },
     { href: "/avisos", etiqueta: "Avisos", icono: Bell },
     ...(esCliente
-      ? []
+      ? [{ href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound }]
       : [
           { href: "/inventario", etiqueta: "Inventario", icono: Warehouse },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },
@@ -153,6 +154,7 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
             {tema === "oscuro" ? <Sun className="size-5" /> : <Moon className="size-5" />}
           </button>
 
+          <AmviChat />
           <CampanaNotificaciones />
 
           <div className="relative">

@@ -4,6 +4,10 @@
  * `CLIENT_ADMIN` no le dice nada a quien está dando de alta a un empleado. La
  * descripción sí: es lo que necesita para elegir bien a la primera.
  */
+// Los dos tienen EXACTAMENTE los mismos permisos (ADR-0004): ve todas las
+// cargas, pide despachos, y gestiona a sus compañeros de empresa. Los
+// códigos y etiquetas se conservan separados porque la distinción puede
+// volver a tener contenido, no porque hoy hagan algo distinto.
 export const rolesDeCliente = [
   {
     codigo: "CLIENT_ADMIN",
@@ -13,7 +17,7 @@ export const rolesDeCliente = [
   {
     codigo: "CLIENT_USER",
     etiqueta: "Usuario",
-    descripcion: "Ve las cargas y sube documentos. No gestiona usuarios.",
+    descripcion: "Ve todas las cargas, pide despachos y gestiona a sus compañeros.",
   },
 ] as const;
 
