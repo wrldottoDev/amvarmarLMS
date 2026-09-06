@@ -78,6 +78,10 @@ _COLUMNA_DE_FECHA: dict[str, str] = {
     ShipmentStatus.DELIVERED: "delivered_at",
 }
 
+# ADR-0007: retención operativa de 6 meses desde que la carga llega a
+# cualquiera de estos dos estados finales.
+_DISPARA_RETENCION: frozenset[str] = frozenset({ShipmentStatus.DELIVERED, ShipmentStatus.CANCELLED})
+
 
 @dataclass(frozen=True)
 class CargaBloqueada:
@@ -226,6 +230,21 @@ async def transicionar(
     # 6. Aplicar. La fecha del hito se graba junto al estado.
     columna_fecha = _COLUMNA_DE_FECHA.get(datos.to_status)
     set_fecha = f", {columna_fecha} = :occurred_at" if columna_fecha else ""
+
+    # ADR-0007: `retention_until` se calcula en la MISMA transacción que la
+    # transición a DELIVERED/CANCELLED — nunca al vuelo, para que el barrido
+    # de archivado pueda hacer `WHERE retention_until <= now()` barato. Si la
+    # carga sale de ahí (revertir una entrega, reabrir una cancelada), deja
+    # de estar cerrada y la fecha ya no aplica.
+    if datos.to_status in _DISPARA_RETENCION:
+        set_retencion = (
+            ", retention_until = CAST(:occurred_at AS timestamptz) + interval '6 months'"
+        )
+    elif desde in _DISPARA_RETENCION:
+        set_retencion = ", retention_until = NULL"
+    else:
+        set_retencion = ""
+
     nueva_version = (
         await session.execute(
             text(f"""
@@ -235,6 +254,7 @@ async def transicionar(
                     updated_at = now(),
                     current_location = COALESCE(:location, current_location)
                     {set_fecha}
+                    {set_retencion}
                 WHERE id = :id AND row_version = :version
                 RETURNING row_version
             """),  # noqa: S608
@@ -810,6 +830,58 @@ async def resolver_inconformidad(
 
     shipment_id: UUID = fila.shipment_id
     return shipment_id
+
+
+async def archivar_pendientes(session: AsyncSession, *, limite: int = 500) -> int:
+    """Barrido de archivado (ADR-0007): retención operativa cumplida, sin
+    bloqueos. Devuelve cuántas cargas archivó.
+
+    No borra nada — `archived_at IS NOT NULL` es lo único que cambia, y toda
+    consulta operativa ya filtra por eso desde su diseño original (Paso 2.5).
+    La recompresión de los documentos de cada carga archivada es un paso
+    aparte: que falle ahí no puede impedirle a esta carga salir del flujo
+    activo a tiempo.
+
+    `FOR UPDATE SKIP LOCKED`: si dos workers corrieran a la vez, cada uno
+    toma cargas distintas en vez de esperarse o pisarse.
+    """
+    filas = list(
+        (
+            await session.execute(
+                text("""
+                    SELECT id, company_id FROM shipments
+                    WHERE current_status_code IN ('DELIVERED', 'CANCELLED')
+                      AND retention_until <= now()
+                      AND archived_at IS NULL
+                      AND legal_hold = false
+                      AND legacy_review_required = false
+                      AND NOT EXISTS (
+                          SELECT 1 FROM delivery_disputes d
+                          WHERE d.shipment_id = shipments.id AND d.status = 'OPEN'
+                      )
+                    ORDER BY retention_until
+                    LIMIT :limite
+                    FOR UPDATE SKIP LOCKED
+                """),
+                {"limite": limite},
+            )
+        ).all()
+    )
+
+    for fila in filas:
+        await session.execute(
+            text("UPDATE shipments SET archived_at = now() WHERE id = :id"), {"id": fila.id}
+        )
+        await registrar(
+            session,
+            action="shipment.archived",
+            resource_type="shipment",
+            resource_id=fila.id,
+            company_id=fila.company_id,
+            # `actor_user_id=None`: lo ejecutó el barrido, no una persona.
+        )
+
+    return len(filas)
 
 
 class EvidenciaDocumentalInvalida(ReglaDeNegocioViolada):

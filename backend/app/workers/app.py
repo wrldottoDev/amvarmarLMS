@@ -5,6 +5,7 @@ sistema (correos, archivado) no justifica sumar RabbitMQ.
 """
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import get_settings
 
@@ -21,6 +22,7 @@ def crear_celery() -> Celery:
             "app.workers.tasks.documents",
             "app.workers.tasks.exports",
             "app.workers.tasks.copilot",
+            "app.workers.tasks.shipments",
         ],
     )
 
@@ -61,6 +63,12 @@ def crear_celery() -> Celery:
             "expire-copilot-proposals": {
                 "task": "copilot.expire_proposals",
                 "schedule": 600.0,
+            },
+            # ADR-0007: "un barrido periódico (ej. diario)" — a las 3am, fuera
+            # de horario de oficina, distinto del patrón reactivo del outbox.
+            "archive-pending-shipments-daily": {
+                "task": "shipments.archive_pending",
+                "schedule": crontab(hour=3, minute=0),
             },
         },
     )

@@ -21,6 +21,7 @@ from app.modules.shipments.models import (
     RequirementType,
     ShipmentStatus,
 )
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -118,7 +119,7 @@ async def _carga(
     estado: str = ShipmentStatus.PRE_ALERT,
     con_bodega_miami: bool = False,
 ) -> uuid.UUID:
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
@@ -137,6 +138,9 @@ async def _carga(
             },
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _permisos(session: AsyncSession, redis, ctx: dict[str, object]):
@@ -287,6 +291,58 @@ class TestPermisos:
             )
 
 
+class TestTransicionesDisponibles:
+    async def test_operaciones_recibe_solo_destinos_del_catalogo_y_su_permiso(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        shipment_id = await _carga(session, ctx)
+
+        opciones = await service.transiciones_disponibles(
+            session,
+            shipment_id=shipment_id,
+            permisos=await _permisos(session, redis, ctx),
+        )
+
+        assert {o.to_status for o in opciones} == {"IN_TRANSIT", "CANCELLED"}
+        cancelar = next(o for o in opciones if o.to_status == "CANCELLED")
+        assert cancelar.requires_reason is True
+        assert cancelar.blocked is False
+
+    async def test_cliente_solo_recibe_cancelacion_de_su_prealerta(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.CLIENT_USER)
+        shipment_id = await _carga(session, ctx)
+
+        opciones = await service.transiciones_disponibles(
+            session,
+            shipment_id=shipment_id,
+            permisos=await _permisos(session, redis, ctx),
+        )
+
+        assert [o.to_status for o in opciones] == ["CANCELLED"]
+        assert opciones[0].requires_reason is True
+
+    async def test_muestra_el_wr_faltante_como_bloqueo_sin_ocultar_el_destino(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        shipment_id = await _carga(
+            session, ctx, estado=ShipmentStatus.RECEIVED, con_bodega_miami=True
+        )
+
+        opciones = await service.transiciones_disponibles(
+            session,
+            shipment_id=shipment_id,
+            permisos=await _permisos(session, redis, ctx),
+        )
+
+        almacenar = next(o for o in opciones if o.to_status == "STORED")
+        assert almacenar.blocked is True
+        assert almacenar.blockers[0]["code"] == "SHIPMENT_MISSING_WR"
+
+
 class TestMotivoYVersion:
     async def test_un_retroceso_exige_motivo(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session, RoleCode.OPS_ADMIN)
@@ -409,6 +465,79 @@ class TestEfectosDeLaTransicion:
         assert fila.occurred_at < fila.recorded_at
 
 
+class TestRetencion:
+    """ADR-0007: `retention_until` se calcula en la misma transacción que la
+    transición a DELIVERED/CANCELLED — nunca al vuelo."""
+
+    async def test_entrar_a_delivered_calcula_seis_meses_de_retencion(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DISPATCHED)
+
+        await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DELIVERED)
+
+        fila = (
+            await session.execute(
+                text("SELECT delivered_at, retention_until FROM shipments WHERE id = :s"),
+                {"s": shipment_id},
+            )
+        ).one()
+        assert fila.retention_until is not None
+        diferencia = fila.retention_until - fila.delivered_at
+        assert timedelta(days=175) < diferencia < timedelta(days=190)
+
+    async def test_entrar_a_cancelled_tambien_calcula_retencion(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PRE_ALERT)
+
+        await _transicionar(
+            session, redis, ctx, shipment_id, ShipmentStatus.CANCELLED, note="motivo"
+        )
+
+        retention_until = (
+            await session.execute(
+                text("SELECT retention_until FROM shipments WHERE id = :s"), {"s": shipment_id}
+            )
+        ).scalar_one()
+        assert retention_until is not None
+
+    async def test_revertir_una_entrega_borra_la_retencion(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """La carga vuelve a estar abierta: `retention_until` ya no aplica."""
+        ctx = await _entorno(session, RoleCode.SUPER_ADMIN)
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DELIVERED)
+
+        await _transicionar(
+            session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED, note="error"
+        )
+
+        retention_until = (
+            await session.execute(
+                text("SELECT retention_until FROM shipments WHERE id = :s"), {"s": shipment_id}
+            )
+        ).scalar_one()
+        assert retention_until is None
+
+    async def test_una_transicion_normal_no_toca_la_retencion(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        shipment_id = await _carga(session, ctx)
+
+        await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
+
+        retention_until = (
+            await session.execute(
+                text("SELECT retention_until FROM shipments WHERE id = :s"), {"s": shipment_id}
+            )
+        ).scalar_one()
+        assert retention_until is None
+
+
 class TestPoliticasDeDominio:
     async def test_miami_no_almacena_sin_wr(self, session: AsyncSession, redis) -> None:
         """ADR-0005, aplicado desde el motor de transiciones."""
@@ -514,11 +643,13 @@ class TestRequisitos:
         ctx = await _entorno(session, RoleCode.OPS_ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
+        document_id = await _documento_listo(session, ctx, shipment_id)
 
-        await service.resolver_requisito(
+        await service.verificar_requisito_documental(
             session,
+            shipment_id=shipment_id,
             requirement_id=requirement_id,
-            nuevo_estado=RequirementStatus.VERIFIED,
+            document_id=document_id,
             actor_user_id=ctx["user_id"],
             permisos=await _permisos(session, redis, ctx),
         )
@@ -577,14 +708,17 @@ class TestRequisitos:
         ctx = await _entorno(session, RoleCode.OPS_ADMIN)
         shipment_id = await _carga(session, ctx)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
+        document_id = await _documento_listo(session, ctx, shipment_id)
 
         with pytest.raises(service.MotivoRequerido):
-            await service.resolver_requisito(
+            await service.rechazar_requisito_documental(
                 session,
+                shipment_id=shipment_id,
                 requirement_id=requirement_id,
-                nuevo_estado=RequirementStatus.REJECTED,
+                document_id=document_id,
                 actor_user_id=ctx["user_id"],
                 permisos=await _permisos(session, redis, ctx),
+                motivo="",
             )
 
     async def test_un_requisito_de_pago_no_admite_estados_documentales(
@@ -619,6 +753,52 @@ class TestRequisitos:
                 """),
                 {"s": shipment_id, "u": ctx["user_id"]},
             )
+
+
+async def _documento_listo(
+    session: AsyncSession, ctx: dict[str, object], shipment_id: uuid.UUID
+) -> uuid.UUID:
+    """Crea evidencia READY del requisito de factura comercial ya abierto."""
+    document_id = (
+        await session.execute(
+            text("""
+                INSERT INTO documents
+                    (company_id, uploaded_by, storage_provider, storage_key,
+                     original_name, safe_name, media_type, size_bytes, sha256,
+                     upload_status, issued_by)
+                VALUES (:c, :u, 's3', :key, 'factura.pdf', 'factura.pdf',
+                        'application/pdf', 10, :sha, 'READY', 'PROVIDER')
+                RETURNING id
+            """),
+            {
+                "c": ctx["company_id"],
+                "u": ctx["user_id"],
+                "key": f"test/{uuid.uuid4()}.pdf",
+                "sha": "a" * 64,
+            },
+        )
+    ).scalar_one()
+    tipo_id = (
+        await session.execute(
+            text("SELECT id FROM document_types WHERE code = 'COMMERCIAL_INVOICE'")
+        )
+    ).scalar_one()
+    await session.execute(
+        text("""
+            INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
+            VALUES (:s, :d, :t)
+        """),
+        {"s": shipment_id, "d": document_id, "t": tipo_id},
+    )
+    await session.execute(
+        text("""
+            UPDATE shipment_requirements SET status = 'UPLOADED'
+            WHERE shipment_id = :s AND document_type_id = :t
+        """),
+        {"s": shipment_id, "t": tipo_id},
+    )
+    document: uuid.UUID = document_id
+    return document
 
 
 async def _abrir_documental(
