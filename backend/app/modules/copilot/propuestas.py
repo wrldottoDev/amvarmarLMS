@@ -66,3 +66,26 @@ async def obtener(session: AsyncSession, propuesta_id: UUID) -> Any:
             {"id": propuesta_id},
         )
     ).one()
+
+
+async def expirar(session: AsyncSession, *, limite: int = 500) -> int:
+    """Barrido de vencimiento: una `PENDING` con `expires_at` pasado ya se
+    marca `EXPIRED` al intentar confirmarla (`router.confirmar_propuesta`),
+    pero si nadie lo intenta nunca se corrige sola — esto la pone al día
+    igual, para que un listado o un reporte no la sigan mostrando como
+    accionable. Usa el índice parcial `ix_copilot_proposals_vencimiento`
+    (`models.py`), pensado para esto desde que se creó la tabla."""
+    resultado = await session.execute(
+        text("""
+            UPDATE copilot_action_proposals
+            SET status = 'EXPIRED', resolved_at = now()
+            WHERE id IN (
+                SELECT id FROM copilot_action_proposals
+                WHERE status = 'PENDING' AND expires_at <= now()
+                LIMIT :limite
+            )
+            RETURNING id
+        """),
+        {"limite": limite},
+    )
+    return len(resultado.all())

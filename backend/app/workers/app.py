@@ -16,7 +16,12 @@ def crear_celery() -> Celery:
         "amvarmar",
         broker=settings.redis_url,
         backend=settings.redis_url,
-        include=["app.workers.tasks.outbox"],
+        include=[
+            "app.workers.tasks.outbox",
+            "app.workers.tasks.documents",
+            "app.workers.tasks.exports",
+            "app.workers.tasks.copilot",
+        ],
     )
 
     celery.conf.update(
@@ -35,6 +40,29 @@ def crear_celery() -> Celery:
         # Una tarea que tarda más que esto es un problema, no una espera. Tres
         # minutos: el lote más pesado es el del outbox, que hace red por evento.
         task_time_limit=180,
+        task_annotations={
+            # Un expediente grande puede superar ampliamente tres minutos. El
+            # proceso usa disco temporal y memoria acotada, por lo que darle
+            # una hora no reserva RAM proporcional al tamaño del ZIP.
+            "documents.export": {
+                "soft_time_limit": 3300,
+                "time_limit": 3600,
+            }
+        },
+        beat_schedule={
+            "expire-document-exports-hourly": {
+                "task": "documents.expire_exports",
+                "schedule": 3600.0,
+            },
+            # Cada 10 minutos, no cada hora: el TTL de una propuesta
+            # (`copilot_propuesta_ttl_minutos`) es 30 minutos por defecto —
+            # con un barrido horario, una propuesta vencida podría figurar
+            # `PENDING` casi una hora de más.
+            "expire-copilot-proposals": {
+                "task": "copilot.expire_proposals",
+                "schedule": 600.0,
+            },
+        },
     )
 
     return celery
