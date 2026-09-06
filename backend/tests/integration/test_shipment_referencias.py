@@ -18,6 +18,7 @@ from app.modules.shipments.policies import (
     validar_referencia_permitida,
     validar_wr_presente_para_almacenar,
 )
+from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
 
@@ -112,7 +113,7 @@ async def _crear_carga(
     if con_bodega:
         facility = ctx["bodega_miami"] if origen == "miami" else ctx["oficina_sha"]
 
-    return (
+    carga = (
         await session.execute(
             text("""
                 INSERT INTO shipments
@@ -130,6 +131,9 @@ async def _crear_carga(
             },
         )
     ).scalar_one()
+    # Toda carga activa necesita al menos una pieza.
+    await sembrar_pieza(session, carga)
+    return carga
 
 
 async def _agregar_referencia(
@@ -277,12 +281,44 @@ class TestReferencias:
         with pytest.raises(IntegrityError):
             await _agregar_referencia(session, shipment_id, "INVENTADO", "X")
 
+    async def test_wr_es_unico_por_bodega_y_normalizado(self, session: AsyncSession) -> None:
+        ctx = await _contexto(session)
+        una = await _crear_carga(session, ctx)
+        otra = await _crear_carga(session, ctx)
+        await _agregar_referencia(session, una, ReferenceType.WR, "wr-10 5921")
+
+        with pytest.raises(IntegrityError):
+            await _agregar_referencia(session, otra, ReferenceType.WR, "WR105921")
+
+    async def test_el_mismo_wr_puede_existir_en_otra_bodega(self, session: AsyncSession) -> None:
+        ctx = await _contexto(session)
+        otra_bodega = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:loc, :codigo, 'WAREHOUSE', true) RETURNING id
+                """),
+                {"loc": ctx["miami"], "codigo": f"MIA-OTRA-{uuid.uuid4().hex[:5]}"},
+            )
+        ).scalar_one()
+        una = await _crear_carga(session, ctx)
+        otra = await _crear_carga(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET origin_facility_id = :f WHERE id = :s"),
+            {"f": otra_bodega, "s": otra},
+        )
+
+        await _agregar_referencia(session, una, ReferenceType.WR, "WR-77")
+        await _agregar_referencia(session, otra, ReferenceType.WR, "wr 77")
+
 
 class TestPaquetes:
     async def test_se_registran_los_bultos(self, session: AsyncSession) -> None:
         ctx = await _contexto(session)
         shipment_id = await _crear_carga(session, ctx)
 
+        # La carga nace con su pieza mínima; acá se agrega la que se examina.
         await session.execute(
             text("""
                 INSERT INTO shipment_packages
@@ -296,7 +332,7 @@ class TestPaquetes:
             await session.execute(
                 text("""
                     SELECT package_type, quantity, weight_kg FROM shipment_packages
-                    WHERE shipment_id = :s
+                    WHERE shipment_id = :s AND package_type = 'PALLET'
                 """),
                 {"s": shipment_id},
             )
