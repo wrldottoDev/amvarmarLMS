@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, EmailStr, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +47,12 @@ class EmpresaAdminResponse(BaseModel):
     created_at: datetime
 
 
+class PaginaEmpresas(BaseModel):
+    items: list[EmpresaAdminResponse]
+    next_cursor: str | None
+    has_more: bool
+
+
 class CrearEmpresaRequest(BaseModel):
     legal_name: str = Field(min_length=1, max_length=255)
     trade_name: str | None = Field(default=None, max_length=255)
@@ -64,15 +70,28 @@ class CreadoResponse(BaseModel):
     id: UUID
 
 
-@router.get("/companies", response_model=list[EmpresaAdminResponse])
+@router.get("/companies", response_model=PaginaEmpresas)
 async def listar_empresas(
-    actor: ActorDep, db: SesionDb, redis: RedisDep, incluir_inactivas: bool = False
-) -> list[EmpresaAdminResponse]:
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+    incluir_inactivas: bool = False,
+    limit: Annotated[int | None, Query(ge=1)] = None,
+    cursor: str | None = None,
+) -> PaginaEmpresas:
     permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
-    empresas = await service.listar_empresas(
-        db, permisos=permisos, incluir_inactivas=incluir_inactivas
+    pagina = await service.listar_empresas(
+        db,
+        permisos=permisos,
+        incluir_inactivas=incluir_inactivas,
+        limit=limit,
+        cursor=cursor,
     )
-    return [EmpresaAdminResponse(**vars(e)) for e in empresas]
+    return PaginaEmpresas(
+        items=[EmpresaAdminResponse(**vars(e)) for e in pagina.items],
+        next_cursor=pagina.next_cursor,
+        has_more=pagina.has_more,
+    )
 
 
 @router.post("/companies", response_model=CreadoResponse, status_code=status.HTTP_201_CREATED)
@@ -201,7 +220,7 @@ class ActualizarUsuarioRequest(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=80)
     last_name: str | None = Field(default=None, min_length=1, max_length=80)
     phone: str | None = Field(default=None, max_length=40)
-    status: str | None = Field(default=None, pattern="^(ACTIVE|SUSPENDED|DISABLED)$")
+    status: str | None = Field(default=None, pattern="^(ACTIVE|SUSPENDED)$")
     role_code: str | None = None
 
 

@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada, SinPermiso
+from app.core.pagination import Cursor, Pagina, armar_pagina, normalizar_limite
 from app.core.security.argon2 import hash_password
 from app.modules.auth import service as auth_service
 from app.modules.notifications import service as notificaciones
@@ -85,11 +86,26 @@ def _exigir(permisos: PermisosEfectivos, permiso: str, company_id: UUID | None =
 
 
 async def listar_empresas(
-    session: AsyncSession, *, permisos: PermisosEfectivos, incluir_inactivas: bool = False
-) -> list[EmpresaResumen]:
+    session: AsyncSession,
+    *,
+    permisos: PermisosEfectivos,
+    incluir_inactivas: bool = False,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> Pagina[EmpresaResumen]:
     _exigir(permisos, Perm.COMPANIES_MANAGE)
 
-    condicion = "" if incluir_inactivas else "WHERE c.deleted_at IS NULL"
+    limite = normalizar_limite(limit)
+    condiciones = [] if incluir_inactivas else ["c.deleted_at IS NULL"]
+    parametros: dict[str, Any] = {"limite": limite + 1}
+
+    if cursor:
+        posicion = Cursor.decodificar(cursor)
+        condiciones.append("(c.created_at, c.id) < (:cursor_fecha, :cursor_id)")
+        parametros["cursor_fecha"] = posicion.created_at
+        parametros["cursor_id"] = posicion.id
+
+    where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
     filas = (
         await session.execute(
             text(f"""
@@ -99,25 +115,31 @@ async def listar_empresas(
                        (SELECT count(*) FROM shipments s
                          WHERE s.company_id = c.id AND s.deleted_at IS NULL) AS cargas
                 FROM companies c
-                {condicion}
-                ORDER BY c.legal_name
-            """)  # noqa: S608
+                {where}
+                ORDER BY c.created_at DESC, c.id DESC
+                LIMIT :limite
+            """),  # noqa: S608
+            parametros,
         )
     ).all()
 
-    return [
-        EmpresaResumen(
-            id=f.id,
-            legal_name=f.legal_name,
-            trade_name=f.trade_name,
-            tax_id=f.tax_id,
-            status=f.status,
-            usuarios=f.usuarios,
-            cargas=f.cargas,
-            created_at=f.created_at,
-        )
-        for f in filas
-    ]
+    return armar_pagina(
+        [
+            EmpresaResumen(
+                id=f.id,
+                legal_name=f.legal_name,
+                trade_name=f.trade_name,
+                tax_id=f.tax_id,
+                status=f.status,
+                usuarios=f.usuarios,
+                cargas=f.cargas,
+                created_at=f.created_at,
+            )
+            for f in filas
+        ],
+        limite=limite,
+        cursor_de=lambda e: Cursor(created_at=e.created_at, id=e.id),
+    )
 
 
 async def crear_empresa(
@@ -494,7 +516,7 @@ async def actualizar_usuario(
     if rol:
         await _cambiar_rol(session, user_id=user_id, role_code=rol, company_id=empresa)
 
-    if aplicables.get("status") in {"SUSPENDED", "DISABLED"} or rol:
+    if aplicables.get("status") == "SUSPENDED" or rol:
         # Cambiar rol o suspender tiene que surtir efecto ya, no cuando expire
         # la caché de permisos.
         await session.execute(

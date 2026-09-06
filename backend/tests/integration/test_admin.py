@@ -96,7 +96,7 @@ class TestEmpresas:
             permisos=permisos,
         )
 
-        empresas = await service.listar_empresas(session, permisos=permisos)
+        empresas = (await service.listar_empresas(session, permisos=permisos)).items
         assert nueva in {e.id for e in empresas}
         gamma = next(e for e in empresas if e.id == nueva)
         assert gamma.trade_name == "Gamma"
