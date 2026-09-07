@@ -1,8 +1,10 @@
 # ADR-0012: Asistente virtual (copiloto) — arquitectura y límites
 
 - **Fecha:** 2026-08-24
-- **Estado:** Propuesto — solo se prepara la estructura; la implementación no está autorizada todavía
-- **Aprobado por:** (pendiente)
+- **Estado:** Aprobado (2026-09-06) — implementación revisada (código en `copilot/`, Fases 2-7), revalidación
+  de permisos y aislamiento multiempresa verificados sin hallazgos bloqueantes; ver enmienda abajo por el
+  tope de tokens por conversación, que sigue pendiente al momento de esta aprobación.
+- **Aprobado por:** Otoniel Gonzalez
 
 ## Contexto
 
@@ -140,6 +142,10 @@ secreto se sostenga.
 - `Settings` gana `copilot_name`, `copilot_model`, `copilot_temperature`, `openai_api_key`.
 - **Costo por token**: cada conversación tiene precio. Hace falta límite por usuario (`rate_limit.py` ya
   tiene el mecanismo) y un tope de tokens por conversación antes de habilitarlo en producción.
+  **Enmienda (2026-09-06, al aprobar este ADR):** implementado hoy solo `copilot_max_tokens_salida`
+  (tope por respuesta) y los topes por turno (`copilot_max_mensajes_por_turno`,
+  `copilot_max_tool_calls_por_turno`); no existe todavía un tope de tokens acumulados por conversación
+  completa. Queda pendiente antes de exponer el asistente a tráfico de producción real.
 - **La auditoría del copiloto es su propia entrada**: `copilot.tool.invoked` con la herramienta, los
   argumentos redactados y el resultado. Sin eso, no hay forma de investigar por qué el asistente hizo algo.
 - `procesar_factura_ocr` depende de la subida de documentos (Paso 3.1): hasta entonces, solo existe el
