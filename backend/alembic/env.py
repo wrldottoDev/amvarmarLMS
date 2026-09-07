@@ -16,6 +16,7 @@ from app.modules.audit import legacy as audit_legacy  # noqa: F401
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.companies import models as companies_models  # noqa: F401
+from app.modules.copilot import models as copilot_models  # noqa: F401
 from app.modules.dispatches import models as dispatches_models  # noqa: F401
 from app.modules.documents import models as documents_models  # noqa: F401
 from app.modules.notifications import models as notifications_models  # noqa: F401

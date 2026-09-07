@@ -60,3 +60,6 @@ sentry-sdk[fastapi]>=2.18,<3.0
 # --- Utilidades ---
 orjson>=3.10,<4.0
 python-dateutil>=2.9,<3.0
+
+# --- Asistente virtual (ADR-0012) ---
+openai>=3.7,<4.0                  # Responses API, function calling estricto

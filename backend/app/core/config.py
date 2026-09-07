@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,15 +67,51 @@ class Settings(BaseSettings):
     copilot_model: str = "gpt-5.6-luna"
     # Temperatura baja: en un contexto logístico, una respuesta creativa sobre
     # dónde está una carga es una respuesta equivocada.
+    # NO se envía a `gpt-5.6-luna`: es un modelo de razonamiento y la API
+    # rechaza `temperature` con 400 (verificado, ADR-0012 enmienda 2026-09).
+    # Se conserva el campo por si el modelo configurado cambia a uno que sí lo
+    # admita; `provider.py` decide en runtime cuál de los dos enviar.
     copilot_temperature: float = 0.2
+    # Control de determinismo real para modelos de razonamiento como el
+    # configurado hoy. "low" mantiene la intención original: para datos
+    # logísticos, una respuesta creativa es una respuesta equivocada.
+    copilot_reasoning_effort: str = "low"
     # Sin default y opcional: el módulo no está activo todavía. Cuando lo esté,
     # la ausencia de clave debe impedir que el endpoint funcione, no que la app
     # entera no arranque.
     openai_api_key: str | None = None
+    copilot_timeout_segundos: float = 30.0
+    # Circuit breaker en memoria de proceso: tras N fallos seguidos del
+    # proveedor, deja de intentar por un rato en vez de que cada request espere
+    # el timeout completo. La caída del proveedor no puede parecer una caída
+    # del LMS.
+    copilot_breaker_fallos_para_abrir: int = 5
+    copilot_breaker_segundos_abierto: float = 60.0
+    copilot_max_mensajes_por_turno: int = 20
+    copilot_max_tool_calls_por_turno: int = 5
+    copilot_max_tokens_salida: int = 1000
+    # ADR-0012: clientes tienen tope mensual; personal interno no.
+    copilot_limite_mensajes_cliente_por_mes: int = 100
+    # Fase 4: cuánto dura una propuesta de escritura (`PropuestaAccion`)
+    # pendiente de confirmación antes de vencer. Ni tan corto que la persona
+    # no llegue a revisarla, ni tan largo que confirme algo desactualizado.
+    copilot_propuesta_ttl_minutos: int = 30
+    # Solo para Playwright (ADR-0012, Fase 3): cambia `ProveedorOpenAI` por
+    # `ProveedorFalsoDeterministico` en `_fabrica_proveedor` (copilot/router.py),
+    # así el e2e prueba el turno completo (frontend → backend → ejecutor) sin
+    # tocar la API real ni necesitar `OPENAI_API_KEY`. El validador de abajo
+    # impide que esto llegue a producción por una variable olvidada.
+    copilot_proveedor_falso: bool = False
+
+    @model_validator(mode="after")
+    def _proveedor_falso_solo_en_local(self) -> "Settings":
+        if self.copilot_proveedor_falso and self.environment != "local":
+            raise ValueError("COPILOT_PROVEEDOR_FALSO solo puede activarse con ENVIRONMENT=local.")
+        return self
 
     @property
     def copilot_habilitado(self) -> bool:
-        return bool(self.openai_api_key)
+        return bool(self.openai_api_key) or self.copilot_proveedor_falso
 
     # --- Correo (Paso 4.2) ---
     # Mailpit en local y en las pruebas; un relay real en producción. El correo

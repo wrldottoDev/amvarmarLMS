@@ -11,6 +11,7 @@ from app.core.observability.tracing import configurar_trazas
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import me_router
 from app.modules.auth.router import router as auth_router
+from app.modules.copilot.router import router as copilot_router
 from app.modules.dispatches.router import router as dispatches_router
 from app.modules.documents.router import router as documents_router
 from app.modules.notifications.router import router as notifications_router
@@ -42,3 +43,4 @@ app.include_router(documents_router)
 app.include_router(dispatches_router)
 app.include_router(notifications_router)
 app.include_router(admin_router)
+app.include_router(copilot_router)

@@ -62,3 +62,14 @@ async def limpiar(redis: Redis, *, clave: str) -> None:
     """Borra el contador. Se llama tras un login exitoso: quien acertó la
     contraseña no debe arrastrar los fallos anteriores."""
     await redis.delete(f"rl:{clave}")
+
+
+async def restantes(redis: Redis, *, clave: str, limite: Limite) -> int:
+    """Cuántos intentos quedan en la ventana actual, sin consumir uno.
+
+    Usado por `GET /copilot/capabilities` (ADR-0012): mostrar la cuota
+    restante no puede, en sí mismo, gastar cuota.
+    """
+    actual = await redis.get(f"rl:{clave}")
+    usados = int(actual) if actual is not None else 0
+    return max(0, limite.intentos - usados)

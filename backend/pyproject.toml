@@ -198,13 +198,18 @@ disallow_untyped_defs = false
 minversion = "8.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-ra --strict-markers --strict-config"
+# `not smoke` por defecto: a diferencia de "slow" (que sí corre en un `pytest`
+# local plano y solo se excluye en el job rápido de CI), "smoke" llama a la
+# API real de un proveedor externo y el ADR-0012 exige que ninguna corrida
+# normal la toque. `pytest -m smoke` la corre explícitamente cuando hace falta.
+addopts = "-ra --strict-markers --strict-config -m \"not smoke\""
 markers = [
     "unit: pruebas puras de dominio y políticas",
     "integration: requieren PostgreSQL y Redis reales",
     "security: RBAC, aislamiento de empresa/IDOR, rotación y reuse de refresh",
     "e2e: flujo prealerta -> recepción -> almacenamiento -> despacho",
     "slow",
+    "smoke: llama a la API real de un proveedor externo; excluido por defecto (opt-in, ADR-0012)",
 ]
 filterwarnings = [
     # Un DeprecationWarning en nuestro código es un error: obliga a arreglarlo
@@ -223,6 +228,9 @@ omit = ["app/main.py", "alembic/*"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# Medido en 84% (2026-09-02, ver docs/reescritura/06-implementacion-y-verificacion.md).
+# Piso 2 puntos abajo: falla si la cobertura retrocede, no exige que suba.
+fail_under = 82
 
 # ---------------------------------------------------------------------------
 # Bandit — SAST (sección 9.2, paso 7)
