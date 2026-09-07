@@ -588,10 +588,10 @@ exceden el alcance de un defecto puntual:
 8. **`rbac/dependencies.py` quedó obsoleto.** Su `_user_id_actual()` siempre responde 401. No rompe
    los routers actuales porque estos usan `auth.dependencies.actor_actual`, pero no debe reutilizarse
    sin actualizarlo. Es código de autenticación; no se toca en esta corrección.
-9. **Los hooks de acciones de despacho no envían `row_version`.** El backend lo acepta como
-   opcional, por lo que esas acciones no aprovechan el bloqueo optimista que sí muestra el detalle
-   de carga. No es una regresión de datos (el backend sigue siendo la fuente de verdad), es una
-   mejora de UX pendiente.
+9. ~~Los hooks de acciones de despacho no envían `row_version`.~~ **Resuelto (2026-09-06).** Todas las
+   mutaciones de `features/despachos/consultas.ts` (`useAprobar`, `useRechazar`, `usePreparar`,
+   `useCompletar`, `useDespachar`, `useCancelar`) ahora lo requieren y manejan el conflicto
+   `DISPATCH_VERSION_CONFLICT`.
 10. **La observabilidad asume servicios externos.** Prometheus apunta a `backend:8000` y a exporters
     que no están definidos en este compose; esa topología debe completarse en el despliegue.
 
