@@ -305,7 +305,10 @@ class TestRespond:
             resp = await cliente.post(
                 "/api/v1/copilot/respond",
                 headers=headers,
-                json={"mensajes": [{"rol": "user", "contenido": "hola"}]},
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "hola"}],
+                    "conversacion_id": "conv-test",
+                },
             )
 
         assert resp.status_code == 200
@@ -325,7 +328,10 @@ class TestRespond:
             resp = await cliente.post(
                 "/api/v1/copilot/respond",
                 headers=headers,
-                json={"mensajes": [{"rol": "user", "contenido": "hola"}]},
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "hola"}],
+                    "conversacion_id": "conv-test",
+                },
             )
 
         assert resp.status_code == 200  # SSE: el error viaja como evento, no como status
@@ -349,10 +355,67 @@ class TestRespond:
             resp = await cliente.post(
                 "/api/v1/copilot/respond",
                 headers=headers,
-                json={"mensajes": [{"rol": "user", "contenido": "hola"}]},
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "hola"}],
+                    "conversacion_id": "conv-test",
+                },
             )
 
         assert resp.status_code == 429
+
+    async def test_conversacion_en_su_limite_de_tokens_no_llama_al_proveedor(
+        self, cliente: AsyncClient, db_directa: AsyncSession, redis, usar_proveedor
+    ) -> None:
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        proveedor = _ProveedorFalso(guion=[_texto("no debería llegar acá")])
+        usar_proveedor(proveedor)
+        # Agota el tope directamente en Redis: más rápido y más claro que
+        # acumular turnos reales hasta llegar al límite.
+        await redis.set(
+            "rl:copilot:conversacion:conv-agotada",
+            get_settings().copilot_max_tokens_conversacion,
+        )
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "hola"}],
+                    "conversacion_id": "conv-agotada",
+                },
+            )
+
+        assert resp.status_code == 200  # SSE: el error viaja como evento, no como status
+        assert "COPILOT_LIMITE_CONVERSACION_ALCANZADO" in resp.text
+        assert proveedor.llamadas == 0
+
+    async def test_los_tokens_de_un_turno_se_acumulan_en_la_conversacion(
+        self, cliente: AsyncClient, db_directa: AsyncSession, redis, usar_proveedor
+    ) -> None:
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        usar_proveedor(_ProveedorFalso(guion=[_texto("ok")]))
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "hola"}],
+                    "conversacion_id": "conv-acumula",
+                },
+            )
+
+        assert resp.status_code == 200
+        # `_texto` responde 5 tokens de entrada + 5 de salida (ver arriba).
+        acumulado = await redis.get("rl:copilot:conversacion:conv-acumula")
+        assert acumulado == "10"
 
 
 class TestPropuestas:
@@ -629,7 +692,10 @@ class TestProveedorFalsoDeterministico:
             resp = await cliente.post(
                 "/api/v1/copilot/respond",
                 headers=headers,
-                json={"mensajes": [{"rol": "user", "contenido": f"¿Cómo está la carga {numero}?"}]},
+                json={
+                    "mensajes": [{"rol": "user", "contenido": f"¿Cómo está la carga {numero}?"}],
+                    "conversacion_id": "conv-test",
+                },
             )
 
         assert resp.status_code == 200

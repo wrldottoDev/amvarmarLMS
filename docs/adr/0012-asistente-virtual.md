@@ -2,8 +2,8 @@
 
 - **Fecha:** 2026-08-24
 - **Estado:** Aprobado (2026-09-06) — implementación revisada (código en `copilot/`, Fases 2-7), revalidación
-  de permisos y aislamiento multiempresa verificados sin hallazgos bloqueantes; ver enmienda abajo por el
-  tope de tokens por conversación, que sigue pendiente al momento de esta aprobación.
+  de permisos y aislamiento multiempresa verificados sin hallazgos bloqueantes. El tope de tokens por
+  conversación que quedó pendiente al aprobar se implementó el mismo día (ver enmienda abajo).
 - **Aprobado por:** Otoniel Gonzalez
 
 ## Contexto
@@ -142,10 +142,15 @@ secreto se sostenga.
 - `Settings` gana `copilot_name`, `copilot_model`, `copilot_temperature`, `openai_api_key`.
 - **Costo por token**: cada conversación tiene precio. Hace falta límite por usuario (`rate_limit.py` ya
   tiene el mecanismo) y un tope de tokens por conversación antes de habilitarlo en producción.
-  **Enmienda (2026-09-06, al aprobar este ADR):** implementado hoy solo `copilot_max_tokens_salida`
-  (tope por respuesta) y los topes por turno (`copilot_max_mensajes_por_turno`,
-  `copilot_max_tool_calls_por_turno`); no existe todavía un tope de tokens acumulados por conversación
-  completa. Queda pendiente antes de exponer el asistente a tráfico de producción real.
+  **Enmienda (2026-09-06, al aprobar este ADR):** implementado `copilot_max_tokens_salida` (tope por
+  respuesta) y los topes por turno (`copilot_max_mensajes_por_turno`, `copilot_max_tool_calls_por_turno`).
+  **Enmienda (2026-09-06, tope de conversación):** agregado `copilot_max_tokens_conversacion` — se
+  acumula en Redis (`rate_limit.sumar`/`restantes`) namespaced por `conversacion_id` (opaco, lo genera
+  el frontend con `crypto.randomUUID()` una vez por chat, se renueva al reiniciar la conversación), con
+  vencimiento a las `copilot_conversacion_ttl_horas` horas. El chequeo ocurre ANTES de llamar al
+  proveedor (no se paga un turno que la conversación ya no puede seguir cobrando); el gasto real se
+  suma DESPUÉS de responder, así que lo que bloquea es siempre el turno siguiente, nunca el que ya
+  ocurrió. No guarda texto de conversación, solo un contador que expira solo.
 - **La auditoría del copiloto es su propia entrada**: `copilot.tool.invoked` con la herramienta, los
   argumentos redactados y el resultado. Sin eso, no hay forma de investigar por qué el asistente hizo algo.
 - `procesar_factura_ocr` depende de la subida de documentos (Paso 3.1): hasta entonces, solo existe el

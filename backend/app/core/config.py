@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     copilot_max_mensajes_por_turno: int = 20
     copilot_max_tool_calls_por_turno: int = 5
     copilot_max_tokens_salida: int = 1000
+    # Enmienda (2026-09-06, al aprobar el ADR): tope de tokens ACUMULADOS por
+    # conversación completa, no solo por respuesta. Se cuenta en Redis con la
+    # misma mecánica de `rate_limit.py` (ver `sumar`/`restantes`), namespaced
+    # por `conversacion_id` (opaco, lo genera el frontend) — nunca se guarda
+    # el texto de la conversación, solo un contador que vence solo.
+    copilot_max_tokens_conversacion: int = 50_000
+    copilot_conversacion_ttl_horas: int = 4
     # ADR-0012: clientes tienen tope mensual; personal interno no.
     copilot_limite_mensajes_cliente_por_mes: int = 100
     # Fase 4: cuánto dura una propuesta de escritura (`PropuestaAccion`)

@@ -73,3 +73,20 @@ async def restantes(redis: Redis, *, clave: str, limite: Limite) -> int:
     actual = await redis.get(f"rl:{clave}")
     usados = int(actual) if actual is not None else 0
     return max(0, limite.intentos - usados)
+
+
+async def sumar(redis: Redis, *, clave: str, cantidad: int, ventana_segundos: int) -> None:
+    """Suma `cantidad` al contador sin lanzar si se pasa del límite.
+
+    Para registrar gasto que YA ocurrió — los tokens de un turno del
+    copiloto (ADR-0012) que ya se le respondió a la persona — no para
+    bloquear un intento antes de que pase. El bloqueo va aparte, con
+    `restantes` antes de empezar el turno.
+    """
+    if cantidad <= 0:
+        return
+    clave_redis = f"rl:{clave}"
+    nuevo = await redis.incrby(clave_redis, cantidad)
+    if nuevo == cantidad:
+        # Primera suma de la ventana: recién aquí se fija el vencimiento.
+        await redis.expire(clave_redis, ventana_segundos)

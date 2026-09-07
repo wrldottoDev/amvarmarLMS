@@ -76,6 +76,10 @@ export function useChatAsistente() {
   const [propuestas, setPropuestas] = useState<PropuestaEnConversacion[]>([]);
   const [error, setError] = useState<ErrorAsistente | null>(null);
   const controladorRef = useRef<AbortController | null>(null);
+  // Opaco: solo namespacea el tope de tokens por conversación en el backend
+  // (ADR-0012, enmienda 2026-09-06). Uno por pestaña de chat; se renueva en
+  // `reiniciar()`, igual que se vacía `mensajes`.
+  const conversacionIdRef = useRef(crypto.randomUUID());
 
   useEffect(() => () => controladorRef.current?.abort(), []);
 
@@ -96,7 +100,10 @@ export function useChatAsistente() {
         const respuesta = await fetchAutenticado(`${baseUrl}/api/v1/copilot/respond`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mensajes: historial }),
+          body: JSON.stringify({
+            mensajes: historial,
+            conversacion_id: conversacionIdRef.current,
+          }),
           signal: controlador.signal,
         });
 
@@ -168,6 +175,7 @@ export function useChatAsistente() {
     setPropuestas([]);
     setError(null);
     setEnviando(false);
+    conversacionIdRef.current = crypto.randomUUID();
   }, []);
 
   return {

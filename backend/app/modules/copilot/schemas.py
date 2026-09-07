@@ -26,6 +26,13 @@ class RespondRequest(BaseModel):
     # (ADR-0012, enmienda 2026-09).
     mensajes: list[MensajeChat] = Field(min_length=1, max_length=20)
     contexto_pagina: ContextoPagina | None = None
+    # Opaco: solo namespacea el contador de tokens en Redis (ADR-0012,
+    # enmienda 2026-09-06). El frontend lo genera una vez por conversación
+    # (`crypto.randomUUID()`) y lo reenvía en cada turno; nunca es una
+    # referencia a datos guardados, así que no hace falta validarlo contra
+    # nada — solo acotar su forma para no dejar crecer claves de Redis sin
+    # límite.
+    conversacion_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class CapabilitiesResponse(BaseModel):

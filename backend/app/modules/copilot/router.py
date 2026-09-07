@@ -27,7 +27,7 @@ from app.core.idempotency import (
     hash_de_solicitud,
     reservar,
 )
-from app.core.rate_limit import Limite, consumir, restantes
+from app.core.rate_limit import Limite, consumir, restantes, sumar
 from app.core.redis import get_redis
 from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
@@ -102,6 +102,14 @@ def _limite_mensual_cliente() -> Limite:
     return Limite(
         intentos=settings.copilot_limite_mensajes_cliente_por_mes,
         ventana_segundos=30 * 24 * 3600,
+    )
+
+
+def _limite_conversacion() -> Limite:
+    settings = get_settings()
+    return Limite(
+        intentos=settings.copilot_max_tokens_conversacion,
+        ventana_segundos=settings.copilot_conversacion_ttl_horas * 3600,
     )
 
 
@@ -208,6 +216,27 @@ async def respond(
             redis, clave=f"copilot:mensual:{actor.user_id}", limite=_limite_mensual_cliente()
         )
 
+    # Tope de tokens ACUMULADOS por conversación (ADR-0012, enmienda
+    # 2026-09-06): se chequea ANTES de llamar al proveedor — igual que
+    # "demasiados mensajes" en `procesar_turno` — para no pagar un turno que
+    # ya sabemos que no se va a poder seguir cobrando a esta conversación.
+    clave_conversacion = f"copilot:conversacion:{datos.conversacion_id}"
+    if (await restantes(redis, clave=clave_conversacion, limite=_limite_conversacion())) <= 0:
+        return StreamingResponse(
+            iter(
+                [
+                    _formatear_sse(
+                        "error",
+                        {
+                            "code": "COPILOT_LIMITE_CONVERSACION_ALCANZADO",
+                            "message": "Esta conversación ya usó su límite de tokens. Iniciá una nueva.",
+                        },
+                    )
+                ]
+            ),
+            media_type="text/event-stream",
+        )
+
     proveedor = fabrica_proveedor()
 
     async def flujo() -> AsyncIterator[str]:
@@ -224,6 +253,17 @@ async def respond(
                 mensajes=[m.model_dump() for m in datos.mensajes],
             ):
                 yield _formatear_sse(evento.evento, evento.datos)
+                if evento.evento == "fin":
+                    # Se registra el gasto REAL después de que ya se le
+                    # respondió a la persona: bloquear acá no evitaría nada,
+                    # el turno ya ocurrió. El próximo turno de esta misma
+                    # conversación es lo que el chequeo de arriba frena.
+                    await sumar(
+                        redis,
+                        clave=clave_conversacion,
+                        cantidad=evento.datos["tokens_entrada"] + evento.datos["tokens_salida"],
+                        ventana_segundos=_limite_conversacion().ventana_segundos,
+                    )
         except ProveedorNoDisponible as error:
             yield _formatear_sse("error", {"code": "COPILOT_NO_DISPONIBLE", "message": str(error)})
 
