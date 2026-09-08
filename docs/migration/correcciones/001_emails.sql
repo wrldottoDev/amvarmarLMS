@@ -20,7 +20,7 @@
 BEGIN;
 
 -- Quién toma la decisión. Se registra junto a cada cambio.
-\set decidido_por 'PENDIENTE — poner el nombre de quien decide'
+\set decidido_por 'Otoniel Gonzalez'
 
 CREATE TEMP TABLE decisiones (
     user_id       integer PRIMARY KEY,
@@ -30,25 +30,32 @@ CREATE TEMP TABLE decisiones (
 ) ON COMMIT DROP;
 
 -- ###########################################################################
--- LLENAR ESTO CON EL RESULTADO DEL DIAGNÓSTICO. Los ejemplos están comentados.
+-- Decisiones tomadas 2026-09-07. Las 6 cuentas de staff (3-8) son internas
+-- (is_staff, sin empresa, sin cargas/despachos como cliente): se les pone un
+-- correo de prueba temporal a propósito — el real se consigue después y se
+-- actualiza con un UPDATE directo, sin volver a correr esta migración. Nadie
+-- puede recuperar acceso por ese correo mientras tanto; conocido y aceptado.
+--
+-- La cuenta 26 (pprueba11, empresa "pruenterprise") es una cuenta de
+-- prueba/demo propia con actividad real (3 cargas, 2 despachos) que comparte
+-- el correo real de la cuenta 1 (otto, staff, la cuenta admin real). Se
+-- queda con un correo de prueba propio; la cuenta 1 conserva el correo real.
 -- ###########################################################################
---
--- Cuenta sin correo que sigue en uso: se le pone el correo real.
---   INSERT INTO decisiones VALUES (12, 'persona@empresa.com', false,
---       'Cuenta activa con 34 cargas; correo confirmado con la empresa');
---
--- Cuenta sin correo, sin accesos y sin cargas: se desactiva. NO se le inventa
--- un correo, porque un correo sintético en una cuenta activa es una cuenta a la
--- que nadie puede recuperar el acceso ni avisarle nada.
---   INSERT INTO decisiones VALUES (18, NULL, true,
---       'Sin accesos desde el alta y sin cargas asociadas');
---
--- Duplicado: la cuenta que NO se queda con el correo. Si sigue activa hay que
--- darle uno propio; si no se usa, desactivarla.
---   INSERT INTO decisiones VALUES (7, NULL, true,
---       'Duplicado de la cuenta 3; sin accesos, se conserva aquella');
---
--- ###########################################################################
+
+INSERT INTO decisiones VALUES (3, 'meli@local.amvarmar.com', false,
+    'Cuenta de staff sin correo capturado; correo de prueba temporal, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (4, 'kriss@local.amvarmar.com', false,
+    'Cuenta de staff sin correo capturado; correo de prueba temporal, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (5, 'ari@local.amvarmar.com', false,
+    'Cuenta de staff sin correo capturado; correo de prueba temporal, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (6, 'luis@local.amvarmar.com', false,
+    'Cuenta de staff sin correo capturado; correo de prueba temporal, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (7, 'henry@local.amvarmar.com', false,
+    'Cuenta de staff sin correo capturado; correo de prueba temporal, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (8, 'ana@local.amvarmar.com', false,
+    'Cuenta de staff sin correo capturado; correo de prueba temporal, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (26, 'pprueba11@local.amvarmar.com', false,
+    'Duplicado del correo real de la cuenta 1 (otto); pprueba11/pruenterprise es cuenta de prueba/demo propia con actividad real, se le da correo de prueba propio');
 
 -- Nada que hacer sin decisiones: mejor abortar que dejar la impresión de que se
 -- corrigió algo.
