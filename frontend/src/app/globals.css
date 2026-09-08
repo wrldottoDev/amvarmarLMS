@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+/*
+  Paleta y esqueleto del sistema anterior.
+  ---------------------------------------
+  Los valores salen tal cual de `templates/admin/base_admin.html` del WMS de
+  Django: el equipo lleva años con esta pantalla y la reconoce de un vistazo.
+  Lo que cambia es lo que hay dentro, no el aspecto.
+
+  Los nombres de los tokens se conservan de la versión anterior de este archivo
+  para no tocar cada componente; lo que cambia es a qué color apunta cada uno.
+*/
+
+:root {
+  /* --- Base (legacy `--bg`, `--text`, `--muted`, `--border`, `--hover`) --- */
+  --fondo: #ffffff;
+  --superficie: #ffffff;
+  --texto: #32363b;
+  --texto-secundario: #707780;
+  --borde: #e6e9ed;
+  --hover: #f7f9fa;
+
+  /* Azul de selección del sidebar viejo (`--sel` / `--sel-bg`). Es el color de
+     acción del sistema: botones primarios, enlaces, item activo. */
+  --marca: #355cc0;
+  --marca-oscura: #2a4899;
+  --marca-tenue: #ebf0ff;
+
+  /* Teal de los títulos (`--title`). Es la marca, no la acción. */
+  --mar: #053d4e;
+  --mar-oscuro: #032a36;
+  --mar-tenue: #e7eef1;
+
+  /* --- Estados, en los tonos de Bootstrap 5 que usaba el sistema viejo --- */
+  --exito: #146c43;
+  --exito-tenue: #d1e7dd;
+  --exito-borde: #a3cfbb;
+
+  --advertencia: #997404;
+  --advertencia-tenue: #fff3cd;
+  --advertencia-borde: #ffe69c;
+
+  --peligro: #b02a37;
+  --peligro-tenue: #f8d7da;
+  --peligro-borde: #f1aeb5;
+
+  /* Alto de la barra y anchos del sidebar, iguales a los del viejo. */
+  --header-h: 56px;
+  --sb-w: 72px;
+  --sb-w-expanded: 260px;
+}
+
+/*
+  Modo oscuro. El sistema viejo lo activaba con `body.theme-dark` y una
+  preferencia guardada, no con `prefers-color-scheme`: quien trabaja en bodega
+  con luz fuerte quiere claro aunque su equipo esté en oscuro.
+*/
+body.theme-dark {
+  --fondo: #0f172a;
+  --superficie: #131f38;
+  --texto: #e2e8f0;
+  --texto-secundario: #94a3b8;
+  --borde: #1e293b;
+  --hover: rgba(148, 163, 184, 0.12);
+
+  --marca: #93c5fd;
+  --marca-oscura: #60a5fa;
+  --marca-tenue: #1d4ed8;
+
+  --mar: #38bdf8;
+  --mar-oscuro: #7dd3fc;
+  --mar-tenue: #172554;
+
+  --exito: #75b798;
+  --exito-tenue: #0f5132;
+  --exito-borde: #146c43;
+
+  --advertencia: #ffda6a;
+  --advertencia-tenue: #664d03;
+  --advertencia-borde: #997404;
+
+  --peligro: #ea868f;
+  --peligro-tenue: #58151c;
+  --peligro-borde: #842029;
+}
+
+@theme inline {
+  --color-background: var(--fondo);
+  --color-foreground: var(--texto);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--borde);
+  letter-spacing: 0;
+}
+
+html {
+  min-width: 320px;
+  max-width: 100%;
+  overflow-x: clip;
+  background: var(--fondo);
+}
+
+body {
+  max-width: 100%;
+  overflow-x: clip;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  /* La pila del sistema viejo, que venía de Bootstrap 5. */
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+body.theme-dark {
+  background: radial-gradient(circle at top, #172554 0%, #0f172a 40%, #0f172a 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--marca) 45%, transparent);
+  outline-offset: 2px;
+}
+
+
+::selection {
+  color: white;
+  background: var(--mar);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

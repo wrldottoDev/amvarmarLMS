@@ -74,6 +74,9 @@ logs/
 media/
 uploads/
 storage/
+!backend/app/infrastructure/storage/
+!backend/app/infrastructure/storage/**
+backend/app/infrastructure/storage/__pycache__/
 minio-data/
 pgdata/
 postgres-data/
@@ -102,5 +105,18 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 PLAN_DE_TRABAJO.md
 docs/migration/inventario.md
+docs/migration/inventario_raw_*.txt
 archivos_faltantes.csv
 backup_checksums.txt
+
+# Código fuente del sistema viejo. Se conserva aparte, en su propio repositorio;
+# acá solo estorbaría y duplicaría historia que ya existe en otro lado.
+amvarmarProduccion*.zip
+
+# Copia local de los archivos del sistema viejo (Paso 5.3). Son documentos de
+# clientes y pesan cerca de 10 GB.
+media-legacy/
+
+# Salida de graphify (análisis de dependencias). Se regenera; 11 MB de JSON
+# y hashes que no aportan nada a la revisión.
+graphify-out/

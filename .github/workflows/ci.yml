@@ -1,0 +1,226 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancela corridas anteriores del mismo PR: no tiene sentido gastar minutos
+# validando un commit que ya fue reemplazado.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  calidad:
+    name: Lint, formato y tipos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+      - name: ruff check
+        working-directory: backend
+        run: ruff check app tests scripts alembic
+      - name: ruff format
+        working-directory: backend
+        run: ruff format --check app tests scripts alembic
+      - name: mypy
+        working-directory: backend
+        run: mypy app scripts
+
+  pruebas:
+    name: Pruebas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+      # Los contenedores de PostgreSQL y Redis los levanta testcontainers desde
+      # el propio test, no `services:`. Así la misma orden corre igual en local
+      # y en CI, sin dos configuraciones que puedan divergir.
+      - name: Suite completa
+        working-directory: backend
+        env:
+          ENVIRONMENT: ci
+          DEBUG: "false"
+          # Valores de juguete: los tests reales usan testcontainers. Estos solo
+          # existen para que `Settings` valide al importar la app.
+          DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SIGNING_KEY: clave-de-firma-solo-para-ci-no-usar-en-produccion
+          REFRESH_FINGERPRINT_KEY: clave-de-fingerprint-solo-para-ci-no-usar
+          FCM_TOKEN_ENCRYPTION_KEY: clave-de-cifrado-solo-para-ci-no-usar
+        # Se excluyen los `slow`: levantan contenedores propios (Mailpit, un
+        # PostgreSQL con forma de legacy) y tardan de más para la vuelta rápida.
+        # Corren igual en la suite completa antes de desplegar.
+        run: pytest -q -m "not slow" --cov=app --cov-report=term-missing
+
+  frontend:
+    name: Frontend — lint, tipos, pruebas y build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # No hay .nvmrc ni "engines" en package.json que fije la versión;
+          # 22 es la LTS activa al momento de escribir este job. Si el
+          # proyecto fija una versión más adelante, hay que leerla de ahí en
+          # vez de este número suelto.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm ci
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
+      - name: Tipos (tsc)
+        working-directory: frontend
+        run: npm run types
+      - name: Vitest
+        working-directory: frontend
+        run: npm test
+      - name: Build de producción
+        working-directory: frontend
+        run: npm run build
+      # Playwright (npm run test:e2e) queda fuera de CI a propósito: el
+      # webServer que arranca (ver frontend/playwright.config.ts) necesita
+      # PostgreSQL, Redis y MinIO reales más datos de seed_demo, y hoy eso
+      # significa levantar el stack completo dentro del runner. Vale la pena
+      # sumarlo cuando el spec de escritura (tests/e2e) demuestre ser estable
+      # corriendo así en CI, no antes: un e2e frágil en CI entrena a ignorar
+      # el rojo, que es peor que no tenerlo.
+
+  migraciones:
+    name: Migraciones al día
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: amvarmar_lms
+          POSTGRES_USER: amvarmar
+          POSTGRES_PASSWORD: ci-solo-para-pruebas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+      - name: Ciclo completo y detección de modelos sin migración
+        working-directory: backend
+        env:
+          ENVIRONMENT: ci
+          DATABASE_URL: postgresql+asyncpg://amvarmar:ci-solo-para-pruebas@localhost:5432/amvarmar_lms
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SIGNING_KEY: clave-de-firma-solo-para-ci-no-usar-en-produccion
+          REFRESH_FINGERPRINT_KEY: clave-de-fingerprint-solo-para-ci-no-usar
+          FCM_TOKEN_ENCRYPTION_KEY: clave-de-cifrado-solo-para-ci-no-usar
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+          # Falla si un modelo cambió sin su migración correspondiente.
+          alembic check
+          python -m scripts.seed_rbac
+          # Idempotencia: correrlo dos veces debe dejar el mismo estado.
+          python -m scripts.seed_rbac
+
+  seguridad:
+    name: Secretos, dependencias y SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # detect-secrets necesita el historial para comparar contra la línea base.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+      - name: detect-secrets
+        run: |
+          cp .secrets.baseline /tmp/baseline-antes.json
+          detect-secrets scan \
+            --baseline .secrets.baseline \
+            --exclude-files 'backend/\.venv/.*|frontend/node_modules/.*' \
+            --exclude-lines '^(revision|down_revision|Revision ID|Revises)'
+          # Se comparan los HALLAZGOS, no el archivo entero: el escaneo reescribe
+          # `generated_at` en cada corrida, así que `git diff --exit-code` sobre
+          # el fichero completo fallaría siempre y el paso no diría nada útil.
+          python - <<'FIN'
+          import json, sys
+
+          antes = json.load(open("/tmp/baseline-antes.json"))["results"]
+          despues = json.load(open(".secrets.baseline"))["results"]
+
+          if antes != despues:
+              nuevos = {k: v for k, v in despues.items() if antes.get(k) != v}
+              print("Secretos nuevos sin auditar:", json.dumps(nuevos, indent=2))
+              print("Revise cada uno y, si son valores de prueba, actualice .secrets.baseline")
+              sys.exit(1)
+          print("Sin secretos nuevos.")
+          FIN
+      - name: pip-audit
+        working-directory: backend
+        run: pip-audit --requirement requirements.txt --strict
+      - name: bandit
+        working-directory: backend
+        run: bandit -c pyproject.toml -r app scripts
+
+  imagen:
+    name: Build de imagen sin secretos
+    runs-on: ubuntu-latest
+    needs: [calidad, pruebas]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Construir
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: amvarmar-lms-backend:ci
+      - name: Verificar que la imagen no lleva .env
+        run: |
+          if docker run --rm --entrypoint sh amvarmar-lms-backend:ci -c 'ls /app/.env' 2>/dev/null; then
+            echo "La imagen contiene un archivo .env"
+            exit 1
+          fi
+          echo "Sin .env en la imagen"
+      - name: Escaneo de vulnerabilidades
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: amvarmar-lms-backend:ci
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true

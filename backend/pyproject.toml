@@ -133,11 +133,30 @@ select = [
 ignore = [
     "E501",      # longitud gestionada por el formatter
     "B008",      # Depends() en defaults es idiomático en FastAPI
+    # N818 exige sufijo "Error" en excepciones. El proyecto nombra en español y
+    # `CredencialesInvalidasError` no aporta claridad sobre `CredencialesInvalidas`:
+    # el `raise` ya deja claro que es una excepción.
+    "N818",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]   # asserts y credenciales de prueba
+# Los objetivos no funcionales se miden ejecutando: imprimir los números es el
+# resultado del test, y las herramientas de PostgreSQL se invocan a propósito.
+# Los scripts de limpieza legacy se prueban ejecutándolos con psql dentro del
+# contenedor: rutas fijas y `docker` por nombre son parte de eso.
+"tests/migration/**" = ["S101", "S105", "S106", "S603", "S607", "S108"]
+"tests/integration/test_objetivos_no_funcionales.py" = [
+    "S101", "S105", "S106", "T201", "S603", "S607", "S608", "S108", "ASYNC221", "ASYNC240",
+]
 "scripts/**" = ["T20"]
+# El sembrado de demo escribe su contraseña a la vista y usa `random` con semilla
+# fija: las dos cosas son deliberadas y el script se niega a correr fuera de local.
+"scripts/seed_demo.py" = ["T20", "S105", "S311"]
+# El migrador de archivos lee del disco y sube por boto3, las dos cosas
+# síncronas. Es un script por lotes: no hay event loop atendiendo peticiones al
+# que bloquear, y envolver cada `open()` en un hilo solo agregaría ruido.
+"scripts/migrate_files.py" = ["T20", "ASYNC230", "ASYNC240", "SLF001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
@@ -158,8 +177,15 @@ show_error_codes = true
 exclude = ["^alembic/versions/"]
 
 [[tool.mypy.overrides]]
-module = ["firebase_admin.*", "magic.*", "testcontainers.*"]
+# Paquetes sin stubs publicados.
+module = ["firebase_admin.*", "magic.*", "testcontainers.*", "celery.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# El decorador de Celery no está tipado; sin esto toda tarea quedaría como
+# `Any` y perderíamos el chequeo del resto del módulo.
+module = "app.workers.tasks.*"
+disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -172,15 +198,27 @@ disallow_untyped_defs = false
 minversion = "8.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-ra --strict-markers --strict-config"
+# `not smoke` por defecto: a diferencia de "slow" (que sí corre en un `pytest`
+# local plano y solo se excluye en el job rápido de CI), "smoke" llama a la
+# API real de un proveedor externo y el ADR-0012 exige que ninguna corrida
+# normal la toque. `pytest -m smoke` la corre explícitamente cuando hace falta.
+addopts = "-ra --strict-markers --strict-config -m \"not smoke\""
 markers = [
     "unit: pruebas puras de dominio y políticas",
     "integration: requieren PostgreSQL y Redis reales",
     "security: RBAC, aislamiento de empresa/IDOR, rotación y reuse de refresh",
     "e2e: flujo prealerta -> recepción -> almacenamiento -> despacho",
     "slow",
+    "smoke: llama a la API real de un proveedor externo; excluido por defecto (opt-in, ADR-0012)",
 ]
-filterwarnings = ["error::DeprecationWarning"]
+filterwarnings = [
+    # Un DeprecationWarning en nuestro código es un error: obliga a arreglarlo
+    # antes de que la API desaparezca.
+    "error::DeprecationWarning",
+    # Deprecaciones internas de dependencias: no podemos arreglarlas y romperían
+    # la suite por algo ajeno al proyecto.
+    "ignore::DeprecationWarning:testcontainers.*",
+]
 
 [tool.coverage.run]
 source = ["app"]
@@ -190,6 +228,9 @@ omit = ["app/main.py", "alembic/*"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# Medido en 84% (2026-09-02, ver docs/reescritura/06-implementacion-y-verificacion.md).
+# Piso 2 puntos abajo: falla si la cobertura retrocede, no exige que suba.
+fail_under = 82
 
 # ---------------------------------------------------------------------------
 # Bandit — SAST (sección 9.2, paso 7)
