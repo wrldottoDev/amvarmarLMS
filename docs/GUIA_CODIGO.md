@@ -592,8 +592,11 @@ exceden el alcance de un defecto puntual:
    mutaciones de `features/despachos/consultas.ts` (`useAprobar`, `useRechazar`, `usePreparar`,
    `useCompletar`, `useDespachar`, `useCancelar`) ahora lo requieren y manejan el conflicto
    `DISPATCH_VERSION_CONFLICT`.
-10. **La observabilidad asume servicios externos.** Prometheus apunta a `backend:8000` y a exporters
-    que no están definidos en este compose; esa topología debe completarse en el despliegue.
+10. **Observabilidad — parcialmente resuelto (2026-09-07).** `postgres-exporter` y `redis-exporter` ya
+    están definidos en `infra/docker/docker-compose.yml` (perfil `observabilidad`), así que esos dos
+    jobs de Prometheus resuelven dentro de la red del compose. El target `backend:8000` sigue sin
+    definirse a propósito: en local el backend corre por `uvicorn` en el host (no en un contenedor de
+    este compose), y esa topología es del despliegue real, no de desarrollo.
 
 ## 13. Regla para orientarse al modificar algo
 

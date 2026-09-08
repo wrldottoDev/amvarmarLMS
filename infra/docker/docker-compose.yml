@@ -109,6 +109,31 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
 
+  # `prometheus.yml` los raspa por nombre de servicio; sin definirlos acá,
+  # los jobs `postgres`/`redis` de Prometheus fallaban con DNS inexistente
+  # (GUIA_CODIGO.md, hallazgo #10). El de `backend:8000` sigue sin definirse
+  # a propósito: en local corre por `uvicorn` en el host, no en un contenedor
+  # — esa topología es de despliegue, no de este compose de desarrollo.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-amvarmar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-amvarmar_lms}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   alertmanager:
     image: prom/alertmanager:latest
     profiles: ["observabilidad"]
