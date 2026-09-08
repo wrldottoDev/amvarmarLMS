@@ -72,10 +72,14 @@ los WR mal capturados, con el contexto para decidir uno por uno.
 
 El orden es:
 
-1. **5.1** — corregir en el sistema viejo lo que impide migrar (nueve usuarios
-   con correos vacíos o duplicados, diecisiete cargas sin cliente). Los scripts
-   están en `docs/migration/correcciones/` y probados; falta tomar las
-   decisiones y ejecutarlos.
+1. **5.1** — corregir en el sistema viejo lo que impide migrar. **Ejecutado
+   (2026-09-07).** 7 cuentas de staff sin correo real/duplicado recibieron un
+   correo de prueba temporal (`docs/migration/correcciones/001_emails.sql`,
+   decisiones de Otoniel Gonzalez); las 16 cargas sin cliente quedaron sin
+   asignar a propósito (`002_cargas_sin_cliente.sql`, el migrador las marca
+   `legacy_review_required`). Aplicado primero contra `amvarmar_restore`,
+   verificado, y luego contra `amvarmar_legacy`. El WR con formato
+   inconsistente no bloquea (ver `003_wr_formato.OMITIDO.md`).
 2. **5.2** — el migrador. **Ya está construido**: `backend/scripts/migrate_legacy.py`
    lee el esquema Django con psycopg, escribe el LMS con SQLAlchemy, usa
    `legacy_id_map` para ser repetible y admite `--dry-run`. Traduce
