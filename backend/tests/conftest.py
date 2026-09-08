@@ -277,6 +277,50 @@ def storage_de_prueba(minio_container: "DockerContainer") -> Generator[str]:
     s3._cliente.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _smtp_nunca_al_relay_real() -> Generator[None]:
+    """Ningún test envía correo por el relay real, sin importar qué haya en
+    `.env`. `backend/.env` guarda las credenciales reales para que el
+    servidor de desarrollo pueda mandar correo — un `pytest -q` normal nunca
+    debe tocar esas credenciales, igual que nunca llama a la API real de
+    OpenAI (ver `tests/integration/test_copilot_smoke.py`).
+
+    El valor por defecto apunta al Mailpit persistente del docker-compose
+    (puerto 1025, siempre arriba en desarrollo): un test que quiera leer lo
+    recibido pide el fixture `correo_de_prueba`, que apunta a un Mailpit
+    efímero aparte y restaura esto al terminar.
+    """
+    from app.core.config import get_settings
+
+    claves = (
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USE_TLS",
+        "SMTP_USE_SSL",
+        "SMTP_USERNAME",
+        "SMTP_PASSWORD",
+    )
+    anteriores = {clave: os.environ.get(clave) for clave in claves}
+    os.environ["SMTP_HOST"] = "localhost"
+    os.environ["SMTP_PORT"] = "1025"
+    os.environ["SMTP_USE_TLS"] = "false"
+    os.environ["SMTP_USE_SSL"] = "false"
+    # El Mailpit persistente no pide autenticación; forzar vacío evita que
+    # una credencial real de `.env` viaje hasta él sin necesidad.
+    os.environ["SMTP_USERNAME"] = ""
+    os.environ["SMTP_PASSWORD"] = ""
+    get_settings.cache_clear()
+
+    yield
+
+    for clave, valor in anteriores.items():
+        if valor is None:
+            os.environ.pop(clave, None)
+        else:
+            os.environ[clave] = valor
+    get_settings.cache_clear()
+
+
 @pytest.fixture(scope="session")
 def mailpit_container() -> Generator["DockerContainer"]:
     """Mailpit efímero: relay SMTP real con API para leer lo recibido.
@@ -333,11 +377,13 @@ def correo_de_prueba(mailpit_container: "DockerContainer") -> Generator[str]:
         "SMTP_HOST": os.environ.get("SMTP_HOST"),
         "SMTP_PORT": os.environ.get("SMTP_PORT"),
         "SMTP_USE_TLS": os.environ.get("SMTP_USE_TLS"),
+        "SMTP_USE_SSL": os.environ.get("SMTP_USE_SSL"),
         "FRONTEND_BASE_URL": os.environ.get("FRONTEND_BASE_URL"),
     }
     os.environ["SMTP_HOST"] = host
     os.environ["SMTP_PORT"] = str(smtp)
     os.environ["SMTP_USE_TLS"] = "false"
+    os.environ["SMTP_USE_SSL"] = "false"
     os.environ["FRONTEND_BASE_URL"] = "https://app.amvarmar.test"
     get_settings.cache_clear()
 

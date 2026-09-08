@@ -130,7 +130,14 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     # Mailpit no habla TLS. En producción es obligatorio: sin esto las
     # credenciales del relay viajarían en claro.
+    #
+    # Dos modos de TLS, no uno: `smtp_use_tls` es STARTTLS (conexión en claro
+    # que se sube a TLS después del saludo, típico del puerto 587).
+    # `smtp_use_ssl` es TLS implícito desde el primer byte (típico del puerto
+    # 465). Son mecanismos distintos a nivel de protocolo — no alcanza con un
+    # solo flag, y usar el equivocado para el puerto configurado no conecta.
     smtp_use_tls: bool = False
+    smtp_use_ssl: bool = False
     smtp_timeout_seconds: int = 20
 
     email_from: str = "AMVARMAR <no-responder@amvarmar.com>"

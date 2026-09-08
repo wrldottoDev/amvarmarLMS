@@ -123,9 +123,14 @@ async def enviar(destino: str, correo: CorreoCompuesto) -> None:
             _armar_mensaje(destino, correo),
             hostname=settings.smtp_host,
             port=settings.smtp_port,
-            username=settings.smtp_username,
-            password=settings.smtp_password,
+            # `aiosmtplib` decide autenticar con `is not None`, no con
+            # verdadero/falso: un string vacío igual dispara el login y
+            # Mailpit (sin TLS) lo rechaza porque no anuncia AUTH. `or None`
+            # asegura que "sin usuario" viaje como ausencia real, no vacía.
+            username=settings.smtp_username or None,
+            password=settings.smtp_password or None,
             start_tls=settings.smtp_use_tls,
+            use_tls=settings.smtp_use_ssl,
             timeout=settings.smtp_timeout_seconds,
         )
     except Exception as error:
