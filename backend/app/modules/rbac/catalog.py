@@ -43,7 +43,8 @@ class Perm:
     SHIPMENTS_DISPUTE_RESOLVE = "shipments.dispute.resolve"
     SHIPMENTS_REQUIREMENT_MANAGE = "shipments.requirement.manage"
     # Exonerar es distinto de gestionar: deja avanzar una carga SIN el documento
-    # obligatorio. Por eso es permiso propio y no lo tiene OPS_AGENT.
+    # obligatorio. Por eso es permiso propio: SUPER_ADMIN y ADMIN lo tienen,
+    # el cliente no.
     SHIPMENTS_REQUIREMENT_WAIVE = "shipments.requirement.waive"
 
     DISPATCH_REQUESTS_CREATE = "dispatch_requests.create"
@@ -122,55 +123,62 @@ PERMISSIONS: dict[str, str] = {
 }
 
 
-# Los dos roles de cliente comparten EXACTAMENTE la misma matriz.
+# ADR-0017: el cliente NO crea cargas. Las carga AMVARMAR desde Miami con la
+# factura, y el cliente las ve llegar a su inventario. Lo que el cliente hace
+# es lo suyo: pedir que se despache lo que quiere, elegir por qué vía viaja y
+# subir los papeles que le exigen.
 #
-# Antes `CLIENT_USER` era un subconjunto de `CLIENT_ADMIN`, y en la práctica eso
-# significaba que una empresa con una sola persona no podía dar de alta a la
-# segunda: quien recibía la cuenta inicial quedaba sin `users.manage` y tenía que
-# pedirle a Operaciones que le creara los compañeros. AMVARMAR decidió que dentro
-# de una empresa cliente todos pueden lo mismo.
-#
-# Es un solo conjunto y no dos que casualmente coinciden: dos definiciones
-# separadas vuelven a divergir en cuanto alguien agrega un permiso a una sola.
-# Los códigos de rol se conservan separados porque la distinción puede volver a
-# tener contenido, y renombrarlos obligaría a migrar asignaciones existentes.
-_CLIENT_PERMS: frozenset[str] = frozenset(
+# Por eso salieron `shipments.create`, `shipments.update` y
+# `shipments.cancel.prealert`: sin creación no hay prealerta propia que editar
+# ni cancelar. Y salió `users.manage` porque el panel del cliente ya no
+# muestra a la gente de su empresa — eso lo administra AMVARMAR.
+_CLIENTE_PERMS: frozenset[str] = frozenset(
     {
         Perm.SHIPMENTS_READ,
-        Perm.SHIPMENTS_CREATE,
-        Perm.SHIPMENTS_UPDATE,
-        Perm.SHIPMENTS_CANCEL_PREALERT,
         Perm.SHIPMENTS_DISPUTE_CREATE,
         Perm.DISPATCH_REQUESTS_CREATE,
         Perm.DISPATCH_REQUESTS_CANCEL,
         Perm.DOCUMENTS_UPLOAD_CLIENT,
-        Perm.USERS_MANAGE,
         Perm.AUDIT_LOGS_READ,
         Perm.REPORTS_EXPORT,
         Perm.NOTIFICATIONS_PREFERENCES_OWN,
         Perm.NOTIFICATIONS_PREFERENCES_COMPANY,
+        # Solo `use`, sin `tools.draft` (ADR-0017): para el cliente AMVI es una
+        # guía —dónde está mi carga, qué me falta, cómo pido un despacho—, no
+        # algo que le prepare acciones. Las propuestas de escritura son para
+        # AMVARMAR, que es quien registra.
         Perm.COPILOT_USE,
-        # ADR-0012, enmienda 2026-09: no amplía capacidades — cada herramienta de
-        # propuesta sigue exigiendo el permiso de dominio de la operación que hace
-        # (proponer_despacho exige dispatch_requests.create, que el cliente ya
-        # tiene). Sin esto, AMVI podía conversar con un cliente pero nunca
-        # prepararle una propuesta.
-        Perm.COPILOT_TOOLS_DRAFT,
     }
 )
 
-# Ninguno de los dos lleva permisos de transición logística: mover una carga por
-# la cadena es trabajo de Operaciones, y el alcance `ORGANIZATION` no cambia eso.
-_CLIENT_USER_PERMS: frozenset[str] = _CLIENT_PERMS
-_CLIENT_ADMIN_PERMS: frozenset[str] = _CLIENT_PERMS
+# Sin permisos de transición logística: mover una carga por la cadena es
+# trabajo de AMVARMAR, y el alcance `ORGANIZATION` no cambia eso.
 
-_OPS_AGENT_PERMS: frozenset[str] = frozenset(
+# ADMIN es el personal de AMVARMAR: registra las cargas que llegan a Miami,
+# mueve la cadena logística, aprueba despachos, exige y verifica documentos.
+# Antes esto estaba partido en `OPS_AGENT` y `OPS_ADMIN`, donde el segundo era
+# el primero más correcciones. La distinción existía para limitar quién podía
+# retroceder un estado o exonerar un requisito, pero AMVARMAR opera con un solo
+# equipo y elegir entre dos nombres no aportaba (ADR-0017).
+#
+# Sigue afuera lo que solo toca SUPER_ADMIN: revertir una entrega ya cerrada,
+# gestionar roles y permisos, y los ajustes de sistema.
+_ADMIN_PERMS: frozenset[str] = frozenset(
     {
         Perm.SHIPMENTS_READ,
         Perm.SHIPMENTS_CREATE,
         Perm.SHIPMENTS_UPDATE,
         Perm.SHIPMENTS_TRANSITION_FORWARD,
+        Perm.SHIPMENTS_TRANSITION_BACKWARD,
         Perm.SHIPMENTS_CANCEL_PREALERT,
+        Perm.SHIPMENTS_CANCEL_IN_TRANSIT,
+        Perm.SHIPMENTS_REOPEN,
+        Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE,
+        Perm.SHIPMENTS_LEGAL_HOLD_MANAGE,
+        Perm.SHIPMENTS_DISPUTE_CREATE,
+        Perm.SHIPMENTS_DISPUTE_RESOLVE,
+        Perm.SHIPMENTS_REQUIREMENT_MANAGE,
+        Perm.SHIPMENTS_REQUIREMENT_WAIVE,
         Perm.DISPATCH_REQUESTS_CREATE,
         Perm.DISPATCH_REQUESTS_APPROVE,
         Perm.DISPATCH_REQUESTS_REJECT,
@@ -181,31 +189,16 @@ _OPS_AGENT_PERMS: frozenset[str] = frozenset(
         Perm.DOCUMENTS_UPLOAD_CLIENT,
         Perm.DOCUMENTS_UPLOAD_INTERNAL,
         Perm.DOCUMENTS_VERIFY,
-        Perm.SHIPMENTS_REQUIREMENT_MANAGE,
-        Perm.REPORTS_EXPORT,
-        Perm.NOTIFICATIONS_PREFERENCES_OWN,
-        Perm.COPILOT_USE,
-        Perm.COPILOT_TOOLS_DRAFT,
-    }
-)
-
-# OPS_ADMIN = OPS_AGENT + correcciones, gestión y auditoría.
-# No incluye revert_delivered, rbac.manage ni system_settings.manage.
-_OPS_ADMIN_PERMS: frozenset[str] = _OPS_AGENT_PERMS | frozenset(
-    {
-        Perm.SHIPMENTS_TRANSITION_BACKWARD,
-        Perm.SHIPMENTS_CANCEL_IN_TRANSIT,
-        Perm.SHIPMENTS_REOPEN,
-        Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE,
-        Perm.SHIPMENTS_LEGAL_HOLD_MANAGE,
-        Perm.SHIPMENTS_DISPUTE_RESOLVE,
-        Perm.SHIPMENTS_REQUIREMENT_WAIVE,
         Perm.DOCUMENTS_INVALIDATE,
         Perm.COMPANIES_MANAGE,
         Perm.USERS_CREATE_INTERNAL,
         Perm.USERS_MANAGE,
         Perm.AUDIT_LOGS_READ,
+        Perm.REPORTS_EXPORT,
+        Perm.NOTIFICATIONS_PREFERENCES_OWN,
         Perm.NOTIFICATIONS_PREFERENCES_COMPANY,
+        Perm.COPILOT_USE,
+        Perm.COPILOT_TOOLS_DRAFT,
     }
 )
 
@@ -224,37 +217,22 @@ ROLES: dict[str, RoleDefinition] = {
         allowed_scopes=(ScopeType.GLOBAL,),
         permissions=_SUPER_ADMIN_PERMS,
     ),
-    RoleCode.OPS_ADMIN: RoleDefinition(
-        name="Administrador de operaciones",
+    RoleCode.ADMIN: RoleDefinition(
+        name="Administrador",
         description=(
-            "Gestiona cargas, clientes, usuarios internos y documentos. "
-            "Corrige estados hacia atrás con justificación."
-        ),
-        allowed_scopes=(ScopeType.GLOBAL,),
-        permissions=_OPS_ADMIN_PERMS,
-    ),
-    RoleCode.OPS_AGENT: RoleDefinition(
-        name="Agente de operaciones",
-        description=(
-            "Colaborador operativo: recepción, almacenamiento, preparación, despacho y entrega. "
-            "Su alcance es GLOBAL o ASSIGNED según el puesto de cada persona."
+            "Personal de AMVARMAR. Registra las cargas que llegan a Miami, mueve la cadena "
+            "logística, aprueba despachos y exige, verifica e invalida documentos."
         ),
         allowed_scopes=(ScopeType.GLOBAL, ScopeType.ASSIGNED),
-        permissions=_OPS_AGENT_PERMS,
+        permissions=_ADMIN_PERMS,
     ),
-    RoleCode.CLIENT_ADMIN: RoleDefinition(
-        name="Administrador de empresa cliente",
-        description="Gestiona los usuarios y las cargas de su propia empresa.",
-        allowed_scopes=(ScopeType.ORGANIZATION,),
-        permissions=_CLIENT_ADMIN_PERMS,
-    ),
-    RoleCode.CLIENT_USER: RoleDefinition(
-        name="Usuario de empresa cliente",
+    RoleCode.CLIENTE: RoleDefinition(
+        name="Cliente",
         description=(
-            "Las mismas capacidades que el administrador de la empresa: cargas, "
-            "documentos, despachos y usuarios de su propia empresa."
+            "Empresa cliente y su gente. Ve su inventario, pide despachos eligiendo la vía, "
+            "sube los documentos que le exigen y consulta a AMVI. No registra cargas."
         ),
         allowed_scopes=(ScopeType.ORGANIZATION,),
-        permissions=_CLIENT_USER_PERMS,
+        permissions=_CLIENTE_PERMS,
     ),
 }

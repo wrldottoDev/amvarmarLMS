@@ -62,7 +62,7 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
     await db_directa.execute(
         text("""
             INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENT_ADMIN'
+            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENTE'
         """),
         {"u": user_id, "c": empresa},
     )
@@ -86,7 +86,7 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
     await db_directa.execute(
         text("""
             INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENT_USER'
+            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENTE'
         """),
         {"u": user_ajeno_id, "c": ajena},
     )
@@ -113,7 +113,7 @@ async def entorno(db_directa: AsyncSession, storage_de_prueba: str):
     await db_directa.execute(
         text("""
             INSERT INTO user_role_assignments (user_id, role_id, scope_type)
-            SELECT :u, r.id, 'GLOBAL' FROM roles r WHERE r.code = 'OPS_ADMIN'
+            SELECT :u, r.id, 'GLOBAL' FROM roles r WHERE r.code = 'ADMIN'
         """),
         {"u": ops_id},
     )

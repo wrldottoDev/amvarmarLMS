@@ -47,15 +47,18 @@ PASSWORD_DEMO = "Demo-AMVARMAR-2026"
 # llegar a comprobar la contraseña.
 DOMINIO = "demo.amvarmar.com"
 
+# `cliente@` y `cliente2@` comparten empresa y ahora también rol: sirven para
+# ver que dos personas de la misma empresa ven exactamente lo mismo. `beta@` es
+# de otra empresa, y entrar con esa y con `cliente@` comprueba el aislamiento.
 CUENTAS = [
     ("admin@" + DOMINIO, "Sofía", "Ramírez", RoleCode.SUPER_ADMIN, ScopeType.GLOBAL, None),
-    ("operaciones@" + DOMINIO, "Diego", "Mora", RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None),
-    ("agente@" + DOMINIO, "Karla", "Solís", RoleCode.OPS_AGENT, ScopeType.GLOBAL, None),
+    ("operaciones@" + DOMINIO, "Diego", "Mora", RoleCode.ADMIN, ScopeType.GLOBAL, None),
+    ("agente@" + DOMINIO, "Karla", "Solís", RoleCode.ADMIN, ScopeType.GLOBAL, None),
     (
         "cliente@" + DOMINIO,
         "Andrés",
         "Vargas",
-        RoleCode.CLIENT_ADMIN,
+        RoleCode.CLIENTE,
         ScopeType.ORGANIZATION,
         "alfa",
     ),
@@ -63,11 +66,11 @@ CUENTAS = [
         "cliente2@" + DOMINIO,
         "Marta",
         "Chaves",
-        RoleCode.CLIENT_USER,
+        RoleCode.CLIENTE,
         ScopeType.ORGANIZATION,
         "alfa",
     ),
-    ("beta@" + DOMINIO, "Luis", "Herrera", RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, "beta"),
+    ("beta@" + DOMINIO, "Luis", "Herrera", RoleCode.CLIENTE, ScopeType.ORGANIZATION, "beta"),
 ]
 
 EMPRESAS = {

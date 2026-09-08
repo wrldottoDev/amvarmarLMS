@@ -31,18 +31,20 @@ async def _entorno(session: AsyncSession) -> dict:
     await sembrar_rbac(session)
     await sembrar_estados(session)
 
-    empresa_a = await _empresa(session, f"Escritura A {uuid.uuid4().hex[:6]} S.A.")
-    empresa_b = await _empresa(session, f"Escritura B {uuid.uuid4().hex[:6]} S.A.")
-    cliente_a = await _usuario_con_rol(
-        session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa_a
-    )
-    operaciones = await _usuario_con_rol(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None)
+    nombre_a = f"Escritura A {uuid.uuid4().hex[:6]} S.A."
+    nombre_b = f"Escritura B {uuid.uuid4().hex[:6]} S.A."
+    empresa_a = await _empresa(session, nombre_a)
+    empresa_b = await _empresa(session, nombre_b)
+    cliente_a = await _usuario_con_rol(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa_a)
+    operaciones = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
     origen = await _ubicacion(session, "US", "MIA", "Miami")
     destino = await _ubicacion(session, "CR", "SJO", "San José")
 
     return {
         "empresa_a": empresa_a,
         "empresa_b": empresa_b,
+        "nombre_a": nombre_a,
+        "nombre_b": nombre_b,
         "cliente_a": cliente_a,
         "operaciones": operaciones,
         "origen": origen,
@@ -127,15 +129,24 @@ ARGUMENTOS_COMPLETOS = {
 }
 
 
+def _con_empresa(ctx: dict, argumentos: dict) -> dict:
+    """Los mismos argumentos, nombrando a la empresa dueña de la carga.
+
+    Desde ADR-0017 quien pide borradores es AMVARMAR, que no tiene empresa
+    propia: la nombra en la conversación y el ejecutor la resuelve.
+    """
+    return {**argumentos, "empresa": ctx["nombre_a"]}
+
+
 class TestPreview:
     async def test_persiste_una_propuesta_pending_con_los_datos_resueltos(
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         resultado = await executors_escritura.crear_prealerta_borrador(
-            session, permisos, ctx["cliente_a"], ctx["empresa_a"], ARGUMENTOS_COMPLETOS
+            session, permisos, ctx["operaciones"], None, _con_empresa(ctx, ARGUMENTOS_COMPLETOS)
         )
 
         assert resultado["advertencias"] == []
@@ -151,10 +162,10 @@ class TestPreview:
     ) -> None:
         """Forma de salida: la persona ve el NOMBRE del lugar, no el UUID."""
         ctx = await _entorno(session)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         resultado = await executors_escritura.crear_prealerta_borrador(
-            session, permisos, ctx["cliente_a"], ctx["empresa_a"], ARGUMENTOS_COMPLETOS
+            session, permisos, ctx["operaciones"], None, _con_empresa(ctx, ARGUMENTOS_COMPLETOS)
         )
 
         valores = {c["nombre"]: c["valor"] for c in resultado["campos"]}
@@ -165,11 +176,11 @@ class TestPreview:
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
         argumentos = {**ARGUMENTOS_COMPLETOS, "origen_location_code": "ZZ-NOPE"}
 
         resultado = await executors_escritura.crear_prealerta_borrador(
-            session, permisos, ctx["cliente_a"], ctx["empresa_a"], argumentos
+            session, permisos, ctx["operaciones"], None, _con_empresa(ctx, argumentos)
         )
 
         assert any("ZZ-NOPE" in a for a in resultado["advertencias"])
@@ -180,20 +191,22 @@ class TestPreview:
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
         argumentos = {**ARGUMENTOS_COMPLETOS, "bulto_tipo": None, "bulto_cantidad": None}
 
         resultado = await executors_escritura.crear_prealerta_borrador(
-            session, permisos, ctx["cliente_a"], ctx["empresa_a"], argumentos
+            session, permisos, ctx["operaciones"], None, _con_empresa(ctx, argumentos)
         )
 
         assert any("pieza" in a for a in resultado["advertencias"])
         fila = await _propuesta(session, uuid.UUID(resultado["id"]))
         assert fila.status == "PENDING"
 
-    async def test_personal_interno_sin_empresa_no_puede_pedir_el_borrador(
+    async def test_sin_nombrar_la_empresa_pide_el_dato_en_vez_de_adivinar(
         self, session: AsyncSession, redis
     ) -> None:
+        """AMVARMAR no tiene empresa propia: si no dice de quién es la carga,
+        no hay a quién atribuirla y el modelo no puede elegir por su cuenta."""
         ctx = await _entorno(session)
         permisos = await _permisos(session, redis, ctx["operaciones"])
 
@@ -207,16 +220,75 @@ class TestPreview:
         ).scalar_one()
         assert total == 0
 
+    async def test_un_nombre_que_no_existe_no_persiste_nada(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
-class TestConfirmacion:
-    async def _crear_borrador(self, session, redis, ctx, argumentos=None):
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
         resultado = await executors_escritura.crear_prealerta_borrador(
             session,
             permisos,
-            ctx["cliente_a"],
-            ctx["empresa_a"],
-            argumentos or ARGUMENTOS_COMPLETOS,
+            ctx["operaciones"],
+            None,
+            {**ARGUMENTOS_COMPLETOS, "empresa": "Empresa Que No Existe"},
+        )
+
+        assert "error" in resultado
+        total = (
+            await session.execute(text("SELECT count(*) FROM copilot_action_proposals"))
+        ).scalar_one()
+        assert total == 0
+
+    async def test_un_nombre_ambiguo_pide_desambiguar(self, session: AsyncSession, redis) -> None:
+        """Dos empresas que matchean: registrar en la equivocada mete la carga
+        en el expediente de otro cliente, así que pregunta en vez de elegir."""
+        ctx = await _entorno(session)
+        permisos = await _permisos(session, redis, ctx["operaciones"])
+
+        # "Escritura" aparece en el nombre de las dos empresas del entorno.
+        resultado = await executors_escritura.crear_prealerta_borrador(
+            session,
+            permisos,
+            ctx["operaciones"],
+            None,
+            {**ARGUMENTOS_COMPLETOS, "empresa": "Escritura"},
+        )
+
+        assert "error" in resultado
+        assert "varias empresas" in resultado["error"]
+        total = (
+            await session.execute(text("SELECT count(*) FROM copilot_action_proposals"))
+        ).scalar_one()
+        assert total == 0
+
+    async def test_un_cliente_ya_no_pide_borradores(self, session: AsyncSession, redis) -> None:
+        """ADR-0017: el cliente no registra cargas, así que tampoco le pide a
+        AMVI que le prepare una. La revalidación lo corta con la empresa ya
+        resuelta, no al confirmar."""
+        ctx = await _entorno(session)
+        permisos = await _permisos(session, redis, ctx["cliente_a"])
+
+        resultado = await executors_escritura.crear_prealerta_borrador(
+            session, permisos, ctx["cliente_a"], ctx["empresa_a"], ARGUMENTOS_COMPLETOS
+        )
+
+        assert "error" in resultado
+        total = (
+            await session.execute(text("SELECT count(*) FROM copilot_action_proposals"))
+        ).scalar_one()
+        assert total == 0
+
+
+class TestConfirmacion:
+    async def _crear_borrador(self, session, redis, ctx, argumentos=None):
+        permisos = await _permisos(session, redis, ctx["operaciones"])
+        resultado = await executors_escritura.crear_prealerta_borrador(
+            session,
+            permisos,
+            ctx["operaciones"],
+            None,
+            _con_empresa(ctx, argumentos or ARGUMENTOS_COMPLETOS),
         )
         return uuid.UUID(resultado["id"])
 
@@ -225,7 +297,7 @@ class TestConfirmacion:
     ) -> None:
         ctx = await _entorno(session)
         propuesta_id = await self._crear_borrador(session, redis, ctx)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         resultado = await confirmaciones.confirmar_crear_prealerta_borrador(
             session, permisos, propuesta_id, {}
@@ -249,7 +321,7 @@ class TestConfirmacion:
     ) -> None:
         ctx = await _entorno(session)
         propuesta_id = await self._crear_borrador(session, redis, ctx)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         resultado = await confirmaciones.confirmar_crear_prealerta_borrador(
             session, permisos, propuesta_id, {"descripcion": "Corregido por la persona"}
@@ -271,7 +343,7 @@ class TestConfirmacion:
         la persona mande en `campos`."""
         ctx = await _entorno(session)
         propuesta_id = await self._crear_borrador(session, redis, ctx)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         resultado = await confirmaciones.confirmar_crear_prealerta_borrador(
             session, permisos, propuesta_id, {"company_id": str(ctx["empresa_b"])}
@@ -295,7 +367,7 @@ class TestConfirmacion:
             ctx,
             {**ARGUMENTOS_COMPLETOS, "bulto_tipo": None, "bulto_cantidad": None},
         )
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         with pytest.raises(DatosInvalidos):
             await confirmaciones.confirmar_crear_prealerta_borrador(
@@ -316,7 +388,7 @@ class TestConfirmacion:
         propuesta_id = await self._crear_borrador(
             session, redis, ctx, {**ARGUMENTOS_COMPLETOS, "origen_location_code": "ZZ-NOPE"}
         )
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         resultado = await confirmaciones.confirmar_crear_prealerta_borrador(
             session, permisos, propuesta_id, {"origen_location_code": "US-MIA"}
@@ -335,7 +407,7 @@ class TestConfirmacion:
     ) -> None:
         ctx = await _entorno(session)
         propuesta_id = await self._crear_borrador(session, redis, ctx)
-        permisos = await _permisos(session, redis, ctx["cliente_a"])
+        permisos = await _permisos(session, redis, ctx["operaciones"])
 
         with pytest.raises(DatosInvalidos):
             await confirmaciones.confirmar_crear_prealerta_borrador(
@@ -355,7 +427,7 @@ class TestConfirmacion:
 
         # Permisos vacíos: simula que el rol cambió entre proponer y confirmar.
         permisos_sin_nada = PermisosEfectivos(
-            user_id=ctx["cliente_a"], authz_version=1, permisos=()
+            user_id=ctx["operaciones"], authz_version=1, permisos=()
         )
 
         with pytest.raises(SinPermisoParaTransicion):

@@ -71,7 +71,7 @@ class ShipmentStatusRow(Base):
 class ShipmentStatusTransition(Base):
     """Qué transiciones existen y qué permiso exige cada una.
 
-    El permiso viaja en la fila, no en el código: por eso `OPS_AGENT` puede
+    El permiso viaja en la fila, no en el código: por eso un `ADMIN` puede
     cancelar desde `PRE_ALERT` pero no desde `IN_TRANSIT` (ADR-0004) sin que el
     motor de transiciones tenga que consultar nombres de rol.
     """
@@ -175,7 +175,7 @@ class Shipment(Base, TimestampMixin):
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id", ondelete="RESTRICT"))
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
 
-    # Alcance ASSIGNED de ADR-0004: qué OPS_AGENT atiende esta carga.
+    # Alcance ASSIGNED de ADR-0004: qué ADMIN atiende esta carga.
     assigned_to: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
     current_status_code: Mapped[str] = mapped_column(

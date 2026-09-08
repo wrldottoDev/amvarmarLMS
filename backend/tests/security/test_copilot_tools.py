@@ -41,27 +41,26 @@ def _permisos_de_rol(rol: str) -> PermisosEfectivos:
 class TestFiltradoPorPermiso:
     def test_un_cliente_no_ve_la_herramienta_de_ocr(self) -> None:
         disponibles = {
-            h.nombre for h in herramientas_disponibles(_permisos_de_rol(RoleCode.CLIENT_USER))
+            h.nombre for h in herramientas_disponibles(_permisos_de_rol(RoleCode.CLIENTE))
         }
 
         assert "procesar_factura_ocr" not in disponibles
         assert "consultar_estado_carga" in disponibles
 
-    def test_el_cliente_si_ve_las_herramientas_de_propuesta_que_le_tocan(self) -> None:
-        """ADR-0012, enmienda 2026-09 (resolución de B1): el cliente recibe
-        `copilot.tools.draft`, así que ve `crear_prealerta_borrador` — no
-        amplía lo que ya podía hacer, porque esa herramienta igual exige
-        `shipments.create`, que el cliente ya tiene."""
+    def test_el_cliente_no_ve_ninguna_herramienta_de_escritura(self) -> None:
+        """ADR-0017: para el cliente AMVI es una guía, no algo que le prepare
+        acciones. Perdió `copilot.tools.draft`, así que ninguna herramienta de
+        propuesta se le ofrece — y las de lectura siguen ahí."""
         disponibles = {
-            h.nombre for h in herramientas_disponibles(_permisos_de_rol(RoleCode.CLIENT_USER))
+            h.nombre for h in herramientas_disponibles(_permisos_de_rol(RoleCode.CLIENTE))
         }
 
-        assert "crear_prealerta_borrador" in disponibles
+        assert "crear_prealerta_borrador" not in disponibles
+        assert "procesar_factura_ocr" not in disponibles
+        assert "consultar_estado_carga" in disponibles
 
     def test_operaciones_ve_todas(self) -> None:
-        disponibles = {
-            h.nombre for h in herramientas_disponibles(_permisos_de_rol(RoleCode.OPS_ADMIN))
-        }
+        disponibles = {h.nombre for h in herramientas_disponibles(_permisos_de_rol(RoleCode.ADMIN))}
 
         assert disponibles == set(HERRAMIENTAS)
 
@@ -77,7 +76,7 @@ class TestVerificacionAlEjecutar:
     """
 
     def test_una_herramienta_no_ofrecida_no_se_ejecuta(self) -> None:
-        cliente = _permisos_de_rol(RoleCode.CLIENT_USER)
+        cliente = _permisos_de_rol(RoleCode.CLIENTE)
 
         # El modelo "alucina" una llamada que nunca estuvo en su lista.
         assert puede_ejecutar("procesar_factura_ocr", cliente) is False

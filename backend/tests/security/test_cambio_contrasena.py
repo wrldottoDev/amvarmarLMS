@@ -39,7 +39,7 @@ async def cuenta(db_directa: AsyncSession):
     await db_directa.execute(
         text("""
             INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-            SELECT :u, r.id, 'GLOBAL', NULL FROM roles r WHERE r.code = 'OPS_ADMIN'
+            SELECT :u, r.id, 'GLOBAL', NULL FROM roles r WHERE r.code = 'ADMIN'
         """),
         {"u": user_id},
     )
@@ -250,7 +250,7 @@ class TestContrasenaTemporal:
             email=f"nuevo-{marca}@pruebas.amvarmar.com",
             first_name="Nuevo",
             last_name="Usuario",
-            role_code=RoleCode.CLIENT_USER.value,
+            role_code=RoleCode.CLIENTE.value,
             company_id=empresa,
             phone=None,
             permisos=permisos,

@@ -43,44 +43,20 @@ test("operaciones busca cargas y revisa un despacho completo", async ({ page }, 
   await page.screenshot({ path: testInfo.outputPath("despacho-desktop.png"), fullPage: true });
 });
 
-test("CLIENT_USER puede preparar cargas y despachos desde móvil", async ({ page }, testInfo) => {
+test("un cliente ve su inventario y sus despachos desde móvil", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium");
 
+  // ADR-0017: el cliente no registra cargas. Lo que recorre acá es lo suyo —
+  // el inventario que AMVARMAR le dio de alta y los despachos que pide.
   await iniciarSesion(page, "cliente2@demo.amvarmar.com");
   await page.getByRole("button", { name: "Mostrar u ocultar el menú" }).click();
-  await page.locator('aside[aria-label="Navegación principal"]:visible a[href="/shipments"]').click();
-  await expect(page.getByRole("link", { name: "Nueva carga" })).toBeVisible();
-  await page.getByRole("link", { name: "Nueva carga" }).click();
+  const menu = page.locator('aside[aria-label="Navegación principal"]:visible');
+  await expect(menu.locator('a[href="/usuarios"]')).toHaveCount(0);
+  await menu.locator('a[href="/shipments"]').click();
 
-  await page.getByRole("button", { name: /De otro origen/ }).click();
-  await expect(page.getByText("Importaciones Alfa S.A.", { exact: true })).toBeVisible();
-  await expect(page.getByText(/La carga se registra como prealerta/)).toBeVisible();
-  await expect(page.getByLabel("Estado en que se registra")).toHaveCount(0);
-
-  const origen = page.getByLabel("Sale de");
-  const destino = page.getByLabel("Llega a");
-  const ubicaciones = await origen.locator('option:not([value=""])').evaluateAll((opciones) =>
-    opciones.map((opcion) => (opcion as HTMLOptionElement).value),
-  );
-  expect(ubicaciones.length).toBeGreaterThanOrEqual(2);
-  await origen.selectOption(ubicaciones[0]);
-  await destino.selectOption(ubicaciones[1]);
-  await page.getByLabel(/^Factura/).fill("E2E-VISUAL-001");
-
-  await page.getByLabel("Peso en kg").fill("100");
-  await page.getByLabel("Peso en kg").blur();
-  await expect(page.getByLabel("Peso en libras")).toHaveValue("220.462");
-  await page.getByLabel("Cantidad").fill("3");
-  await expect(page.getByText("3 unidades", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Quitar la pieza 1" })).toBeDisabled();
-  await page.getByLabel("Método de transporte").selectOption("LAND");
-  await expect(page.getByLabel("Método de transporte")).toHaveValue("LAND");
-  await expect(page.getByRole("button", { name: "Crear carga" })).toBeEnabled();
-
-  await page.getByText("Peso y volumen").scrollIntoViewIfNeeded();
+  await expect(page.getByRole("link", { name: "Nueva carga" })).toHaveCount(0);
   await esperarSinDesbordeHorizontal(page);
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: testInfo.outputPath("nueva-carga-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("inventario-mobile.png"), fullPage: true });
 
   await page.goto("/despachos");
   await expect(page.getByRole("link", { name: "Solicitar despacho" })).toBeVisible();
@@ -90,17 +66,18 @@ test("CLIENT_USER puede preparar cargas y despachos desde móvil", async ({ page
   await expect(page.getByRole("heading", { name: "Cargas incluidas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Registrar salida" })).toHaveCount(0);
   await esperarSinDesbordeHorizontal(page);
-  await page.screenshot({ path: testInfo.outputPath("despacho-client-user-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("despacho-cliente-mobile.png"), fullPage: true });
 });
 
-test("CLIENT_ADMIN crea una carga y la ve en el listado", async ({ page }, testInfo) => {
+test("AMVARMAR registra una carga y la ve en el listado", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium");
 
   // Referencia única por corrida: una factura fija colisionaría con
   // `uq_shipment_references_valor` en la segunda vuelta del test.
   const factura = `E2E-WRITE-${Date.now()}`;
 
-  await iniciarSesion(page, "cliente@demo.amvarmar.com");
+  // Quien registra es AMVARMAR (ADR-0017), no el cliente.
+  await iniciarSesion(page, "operaciones@demo.amvarmar.com");
   await page.goto("/cargas/nueva");
   await expect(page.getByRole("heading", { name: "Nueva carga" })).toBeVisible();
 

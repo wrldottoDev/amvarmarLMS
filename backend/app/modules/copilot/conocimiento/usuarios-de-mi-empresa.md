@@ -2,9 +2,9 @@
 
 <!-- palabras_clave: alta de usuario, nuevo usuario cliente, agregar usuario a mi empresa, invitar a alguien, gestionar usuarios de mi empresa -->
 
-Todavía no hay una pantalla para esto: la sección **Usuarios** del menú solo la ven Operaciones y
-Administración, ninguna cuenta de cliente la tiene disponible hoy.
+Las cuentas de tu empresa las administra AMVARMAR: no hay una pantalla para hacerlo vos mismo, y la
+sección **Usuarios** del menú solo la ve el personal de AMVARMAR.
 
-Por ahora, pedile a Operaciones que dé de alta a la persona — ellos usan la misma pantalla que usan para
-cualquier alta de usuario, eligiendo tu empresa y el rol (`CLIENT_ADMIN` o `CLIENT_USER`, que tienen
-exactamente los mismos permisos entre sí).
+Escribile a tu contacto en AMVARMAR con el nombre, el apellido y el correo de la persona, y ellos le
+crean la cuenta. Lo mismo para dar de baja a alguien que ya no trabaja con ustedes — conviene avisar
+apenas pasa, porque hasta que la cuenta se desactive esa persona sigue viendo las cargas de la empresa.

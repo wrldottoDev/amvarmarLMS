@@ -44,10 +44,10 @@ async def _entorno(session: AsyncSession) -> dict:
 
     ctx: dict = {"empresa": empresa, "ajena": ajena}
     for clave, rol, alcance, scope_company in (
-        ("admin", RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None),
-        ("agente", RoleCode.OPS_AGENT, ScopeType.GLOBAL, None),
-        ("cliente", RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa),
-        ("cliente_ajeno", RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, ajena),
+        ("admin", RoleCode.ADMIN, ScopeType.GLOBAL, None),
+        ("agente", RoleCode.ADMIN, ScopeType.GLOBAL, None),
+        ("cliente", RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa),
+        ("cliente_ajeno", RoleCode.CLIENTE, ScopeType.ORGANIZATION, ajena),
     ):
         ctx[clave] = await _usuario(session, rol, alcance, scope_company)
 
@@ -493,26 +493,8 @@ class TestExoneracion:
         ).scalar_one()
         assert "consolidada" in motivo
 
-    async def test_un_agente_no_puede_exonerar(self, session: AsyncSession, redis) -> None:
-        """Exonerar deja avanzar SIN el documento: es de OPS_ADMIN para arriba."""
-        ctx = await _entorno(session)
-        carga = await _carga(session, ctx)
-        await cargas.sincronizar_requisitos_del_catalogo(
-            session, shipment_id=carga, actor_user_id=ctx["admin"]
-        )
-
-        with pytest.raises(cargas.SinPermisoSobreRequisito):
-            await cargas.resolver_requisito(
-                session,
-                requirement_id=await _requisito_de(session, carga, "COMMERCIAL_INVOICE"),
-                nuevo_estado=RequirementStatus.WAIVED,
-                actor_user_id=ctx["agente"],
-                permisos=await _permisos(session, redis, ctx["agente"]),
-                motivo="Me parece que no hace falta.",
-            )
-
-    async def test_un_agente_si_puede_verificar(self, session: AsyncSession, redis) -> None:
-        """El corte es exonerar, no resolver: verificar sigue siendo su trabajo."""
+    async def test_un_admin_puede_verificar(self, session: AsyncSession, redis) -> None:
+        """Verificar un documento es trabajo cotidiano de AMVARMAR."""
         ctx = await _entorno(session)
         carga = await _carga(session, ctx)
         await cargas.sincronizar_requisitos_del_catalogo(

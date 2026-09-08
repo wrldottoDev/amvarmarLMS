@@ -3,19 +3,19 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { GestionUsuarios } from "@/components/admin/gestion-usuarios";
-import { CargandoPagina } from "@/components/ui/estados-pagina";
+import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 
 /**
- * Una sola ruta para los dos públicos: `(admin)` y `(client)` no cambian la
- * URL (son grupos de Next.js), así que no puede haber una segunda página en
- * `/usuarios` para clientes — esta misma decide el alcance según quién mira.
+ * Solo para AMVARMAR (ADR-0017).
  *
- * Operaciones (`usuario.empresa` nulo) ve el alcance completo de siempre.
- * Un `CLIENT_ADMIN`/`CLIENT_USER` (ADR-0004: comparten exactamente el mismo
- * permiso `users.manage`, con alcance a su empresa) ve solo su empresa, sin
- * selector y sin roles internos — el backend lo rechazaría igual, pero acá
- * ni tiene sentido ofrecerlo.
+ * Antes esta ruta servía a dos públicos y decidía el alcance según quién
+ * miraba: un cliente veía a la gente de su propia empresa. Ya no — a los
+ * usuarios de una empresa los da de alta AMVARMAR, así que el cliente perdió
+ * `users.manage` y esta pantalla dejó de tener un modo "mi empresa".
+ *
+ * El backend responde 403 igual; esto solo evita que quien llegó por la URL
+ * se encuentre una pantalla que falla en vez de una explicación.
  */
 export default function PaginaUsuarios() {
   return (
@@ -34,12 +34,9 @@ function Contenido() {
 
   if (usuario.empresa) {
     return (
-      <GestionUsuarios
-        modo={{
-          alcance: "propia",
-          empresaId: usuario.empresa.id,
-          nombreEmpresa: usuario.empresa.trade_name || usuario.empresa.legal_name,
-        }}
+      <EstadoVacio
+        titulo="Esta sección es de AMVARMAR"
+        descripcion="Las cuentas de tu empresa las administra AMVARMAR. Escribinos si necesitás dar de alta o quitar a alguien."
       />
     );
   }

@@ -36,7 +36,7 @@ class TestSeed:
         await sembrar(session)
 
         por_rol = {}
-        for codigo in (RoleCode.CLIENT_ADMIN, RoleCode.CLIENT_USER):
+        for codigo in (RoleCode.CLIENTE, RoleCode.CLIENTE):
             por_rol[codigo] = set(
                 (
                     await session.execute(
@@ -53,8 +53,8 @@ class TestSeed:
                 .all()
             )
 
-        assert por_rol[RoleCode.CLIENT_ADMIN] == por_rol[RoleCode.CLIENT_USER]
-        assert por_rol[RoleCode.CLIENT_USER], "un rol de cliente sin permisos no sirve"
+        assert por_rol[RoleCode.CLIENTE] == por_rol[RoleCode.CLIENTE]
+        assert por_rol[RoleCode.CLIENTE], "un rol de cliente sin permisos no sirve"
 
     async def test_ningun_rol_de_cliente_transiciona_cargas(self, session: AsyncSession) -> None:
         """Igualar los dos roles no puede colarles permisos de Operaciones.
@@ -70,7 +70,7 @@ class TestSeed:
             Perm.SHIPMENTS_TRANSITION_BACKWARD,
         }
 
-        for codigo in (RoleCode.CLIENT_ADMIN, RoleCode.CLIENT_USER):
+        for codigo in (RoleCode.CLIENTE, RoleCode.CLIENTE):
             otorgados = set(ROLES[codigo].permissions)
             assert not (otorgados & prohibidos), codigo
 
@@ -87,12 +87,12 @@ class TestSeed:
         """
         await sembrar(session)
 
-        # Otorgar a mano un permiso que el catálogo no le da a CLIENT_USER.
+        # Otorgar a mano un permiso que el catálogo no le da a CLIENTE.
         await session.execute(
             text("""
                 INSERT INTO role_permissions (role_id, permission_id)
                 SELECT r.id, p.id FROM roles r, permissions p
-                WHERE r.code = 'CLIENT_USER' AND p.code = :code
+                WHERE r.code = 'CLIENTE' AND p.code = :code
             """),
             {"code": Perm.RBAC_MANAGE},
         )
@@ -105,7 +105,7 @@ class TestSeed:
                     SELECT count(*) FROM role_permissions rp
                     JOIN roles r ON r.id = rp.role_id
                     JOIN permissions p ON p.id = rp.permission_id
-                    WHERE r.code = 'CLIENT_USER' AND p.code = :code
+                    WHERE r.code = 'CLIENTE' AND p.code = :code
                 """),
                 {"code": Perm.RBAC_MANAGE},
             )
@@ -181,7 +181,7 @@ class TestMatrizPermisos:
         assert set(roles) == {RoleCode.SUPER_ADMIN}
 
     async def test_agente_no_cancela_en_transito(self, session: AsyncSession) -> None:
-        """ADR-0004: OPS_AGENT cancela desde PRE_ALERT, no desde IN_TRANSIT."""
+        """ADR-0004: ADMIN cancela desde PRE_ALERT, no desde IN_TRANSIT."""
         await sembrar(session)
         roles = (
             (
@@ -198,7 +198,7 @@ class TestMatrizPermisos:
             .scalars()
             .all()
         )
-        assert set(roles) == {RoleCode.SUPER_ADMIN, RoleCode.OPS_ADMIN}
+        assert set(roles) == {RoleCode.SUPER_ADMIN, RoleCode.ADMIN}
 
     async def test_clientes_no_cambian_estados_operativos(self, session: AsyncSession) -> None:
         await sembrar(session)
@@ -217,8 +217,8 @@ class TestMatrizPermisos:
             .scalars()
             .all()
         )
-        assert RoleCode.CLIENT_ADMIN not in set(roles)
-        assert RoleCode.CLIENT_USER not in set(roles)
+        assert RoleCode.CLIENTE not in set(roles)
+        assert RoleCode.CLIENTE not in set(roles)
 
 
 class TestConstraintsAsignaciones:
@@ -230,7 +230,7 @@ class TestConstraintsAsignaciones:
             await session.execute(
                 text("""
                     INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-                    SELECT :user_id, r.id, 'ORGANIZATION', NULL FROM roles r WHERE r.code='CLIENT_USER'
+                    SELECT :user_id, r.id, 'ORGANIZATION', NULL FROM roles r WHERE r.code='CLIENTE'
                 """),
                 {"user_id": user_id},
             )
@@ -244,7 +244,7 @@ class TestConstraintsAsignaciones:
             await session.execute(
                 text("""
                     INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-                    SELECT :user_id, r.id, 'GLOBAL', :company_id FROM roles r WHERE r.code='OPS_ADMIN'
+                    SELECT :user_id, r.id, 'GLOBAL', :company_id FROM roles r WHERE r.code='ADMIN'
                 """),
                 {"user_id": user_id, "company_id": company_id},
             )
@@ -258,7 +258,7 @@ class TestConstraintsAsignaciones:
             await session.execute(
                 text("""
                     INSERT INTO user_role_assignments (user_id, role_id, scope_type)
-                    SELECT :user_id, r.id, 'GLOBAL' FROM roles r WHERE r.code='OPS_ADMIN'
+                    SELECT :user_id, r.id, 'GLOBAL' FROM roles r WHERE r.code='ADMIN'
                 """),
                 {"user_id": user_id},
             )
@@ -267,7 +267,7 @@ class TestConstraintsAsignaciones:
             await session.execute(
                 text("""
                     INSERT INTO user_role_assignments (user_id, role_id, scope_type)
-                    SELECT :user_id, r.id, 'GLOBAL' FROM roles r WHERE r.code='OPS_ADMIN'
+                    SELECT :user_id, r.id, 'GLOBAL' FROM roles r WHERE r.code='ADMIN'
                 """),
                 {"user_id": user_id},
             )
@@ -280,7 +280,7 @@ class TestConstraintsAsignaciones:
             await session.execute(
                 text("""
                     INSERT INTO user_role_assignments (user_id, role_id, scope_type)
-                    SELECT :user_id, r.id, 'TODOPODEROSO' FROM roles r WHERE r.code='OPS_ADMIN'
+                    SELECT :user_id, r.id, 'TODOPODEROSO' FROM roles r WHERE r.code='ADMIN'
                 """),
                 {"user_id": user_id},
             )
@@ -342,16 +342,14 @@ class TestPermisosEfectivos:
     ) -> None:
         """La regla de seguridad central: aislamiento por empresa.
 
-        Un CLIENT_USER de la empresa A no tiene permiso sobre un recurso de la
+        Un CLIENTE de la empresa A no tiene permiso sobre un recurso de la
         empresa B, aunque tenga el permiso `shipments.read`.
         """
         await sembrar(session)
         user_id = await _crear_usuario(session, "cliente.a@amvarmar.com")
         empresa_a = await _crear_empresa(session, "Empresa A S.A.")
         empresa_b = await _crear_empresa(session, "Empresa B S.A.")
-        await _asignar_rol(
-            session, user_id, RoleCode.CLIENT_USER, ScopeType.ORGANIZATION, empresa_a
-        )
+        await _asignar_rol(session, user_id, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa_a)
 
         permisos = await obtener_permisos_efectivos(session, redis, UUID(user_id))
 
@@ -364,7 +362,7 @@ class TestPermisosEfectivos:
         await sembrar(session)
         user_id = await _crear_usuario(session, "ops@amvarmar.com")
         empresa = await _crear_empresa(session, "Cualquiera S.A.")
-        await _asignar_rol(session, user_id, RoleCode.OPS_ADMIN, ScopeType.GLOBAL)
+        await _asignar_rol(session, user_id, RoleCode.ADMIN, ScopeType.GLOBAL)
 
         permisos = await obtener_permisos_efectivos(session, redis, UUID(user_id))
 
@@ -386,7 +384,7 @@ class TestPermisosEfectivos:
         await sembrar(session)
         user_id = await _crear_usuario(session, "cliente.limitado@amvarmar.com")
         empresa = await _crear_empresa(session, "Limitada S.A.")
-        await _asignar_rol(session, user_id, RoleCode.CLIENT_USER, ScopeType.ORGANIZATION, empresa)
+        await _asignar_rol(session, user_id, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa)
 
         permisos = await obtener_permisos_efectivos(session, redis, UUID(user_id))
 
@@ -402,7 +400,7 @@ class TestPermisosEfectivos:
             text("""
                 INSERT INTO user_role_assignments (user_id, role_id, scope_type, expires_at)
                 SELECT :user_id, r.id, 'GLOBAL', now() - interval '1 day'
-                FROM roles r WHERE r.code = 'OPS_ADMIN'
+                FROM roles r WHERE r.code = 'ADMIN'
             """),
             {"user_id": user_id},
         )
@@ -414,7 +412,7 @@ class TestPermisosEfectivos:
     async def test_usuario_borrado_no_tiene_permisos(self, session: AsyncSession, redis) -> None:
         await sembrar(session)
         user_id = await _crear_usuario(session, "borrado@amvarmar.com")
-        await _asignar_rol(session, user_id, RoleCode.OPS_ADMIN, ScopeType.GLOBAL)
+        await _asignar_rol(session, user_id, RoleCode.ADMIN, ScopeType.GLOBAL)
         await session.execute(
             text("UPDATE users SET deleted_at = now() WHERE id = :id"), {"id": user_id}
         )
@@ -428,7 +426,7 @@ class TestCache:
     async def test_segunda_consulta_viene_de_cache(self, session: AsyncSession, redis) -> None:
         await sembrar(session)
         user_id = await _crear_usuario(session, "cacheado@amvarmar.com")
-        await _asignar_rol(session, user_id, RoleCode.OPS_ADMIN, ScopeType.GLOBAL)
+        await _asignar_rol(session, user_id, RoleCode.ADMIN, ScopeType.GLOBAL)
 
         primera = await obtener_permisos_efectivos(session, redis, UUID(user_id))
         assert await redis.exists(f"authz:{user_id}:v{primera.authz_version}") == 1
@@ -445,16 +443,16 @@ class TestCache:
         await sembrar(session)
         user_id = await _crear_usuario(session, "invalidar@amvarmar.com")
         empresa = await _crear_empresa(session, "Invalida S.A.")
-        await _asignar_rol(session, user_id, RoleCode.CLIENT_USER, ScopeType.ORGANIZATION, empresa)
+        await _asignar_rol(session, user_id, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa)
 
         antes = await obtener_permisos_efectivos(session, redis, UUID(user_id))
         assert antes.permite(Perm.DOCUMENTS_VERIFY, company_id=UUID(empresa)) is False
 
-        # Ascenderlo: quitar CLIENT_USER, darle OPS_ADMIN global.
+        # Ascenderlo: quitar CLIENTE, darle ADMIN global.
         await session.execute(
             text("DELETE FROM user_role_assignments WHERE user_id = :id"), {"id": user_id}
         )
-        await _asignar_rol(session, user_id, RoleCode.OPS_ADMIN, ScopeType.GLOBAL)
+        await _asignar_rol(session, user_id, RoleCode.ADMIN, ScopeType.GLOBAL)
         await invalidar_permisos(session, UUID(user_id))
 
         despues = await obtener_permisos_efectivos(session, redis, UUID(user_id))

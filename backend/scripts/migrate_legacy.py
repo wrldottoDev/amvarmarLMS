@@ -406,7 +406,7 @@ class Migrador:
                     SELECT :u, r.id, :s, NULL FROM roles r WHERE r.code = :rol
                     ON CONFLICT DO NOTHING
                 """),
-                {"u": user_id, "rol": RoleCode.OPS_ADMIN.value, "s": ScopeType.GLOBAL.value},
+                {"u": user_id, "rol": RoleCode.ADMIN.value, "s": ScopeType.GLOBAL.value},
             )
             return
 
@@ -422,7 +422,7 @@ class Migrador:
             """),
             {
                 "u": user_id,
-                "rol": RoleCode.CLIENT_ADMIN.value,
+                "rol": RoleCode.CLIENTE.value,
                 "s": ScopeType.ORGANIZATION.value,
                 "c": empresa,
             },

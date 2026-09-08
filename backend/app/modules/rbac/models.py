@@ -19,11 +19,18 @@ class ScopeType(StrEnum):
 
 
 class RoleCode(StrEnum):
+    """Tres roles, no cinco (ADR-0017).
+
+    Antes eran cinco: `OPS_ADMIN`/`OPS_AGENT` para el personal de AMVARMAR y
+    `CLIENT_ADMIN`/`CLIENT_USER` para las empresas cliente. Cada par terminó
+    haciendo lo mismo —los dos de cliente ya compartían una matriz idéntica—
+    así que la distinción solo obligaba a elegir entre dos nombres sin
+    consecuencia práctica.
+    """
+
     SUPER_ADMIN = "SUPER_ADMIN"
-    OPS_ADMIN = "OPS_ADMIN"
-    OPS_AGENT = "OPS_AGENT"
-    CLIENT_ADMIN = "CLIENT_ADMIN"
-    CLIENT_USER = "CLIENT_USER"
+    ADMIN = "ADMIN"
+    CLIENTE = "CLIENTE"
 
 
 class Role(Base, TimestampMixin):
@@ -35,7 +42,7 @@ class Role(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
 
     # ADR-0004: el alcance concreto vive en la asignación, no en el rol. Aquí se
-    # declara qué alcances admite el rol, porque un OPS_AGENT puede ser GLOBAL o
+    # declara qué alcances admite el rol, porque un ADMIN puede ser GLOBAL o
     # ASSIGNED según el puesto de cada persona. Es validación, no el valor real.
     allowed_scopes: Mapped[list[str]] = mapped_column(ARRAY(String(16)))
 

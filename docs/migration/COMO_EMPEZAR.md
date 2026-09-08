@@ -28,15 +28,21 @@ Entrar en <http://localhost:3000>. Todas las cuentas usan la misma contraseña,
 
 | Cuenta | Rol | Qué ve |
 |---|---|---|
-| `admin@demo.amvarmar.com` | `SUPER_ADMIN` | Todo |
-| `operaciones@demo.amvarmar.com` | `OPS_ADMIN` | Todo lo operativo, incluidas correcciones |
-| `agente@demo.amvarmar.com` | `OPS_AGENT` | Operación diaria, sin retrocesos ni exoneraciones |
-| `cliente@demo.amvarmar.com` | `CLIENT_ADMIN` | Solo Importaciones Alfa |
-| `cliente2@demo.amvarmar.com` | `CLIENT_USER` | Solo Importaciones Alfa, sin gestión |
-| `beta@demo.amvarmar.com` | `CLIENT_ADMIN` | Solo Comercial Beta |
+| `admin@demo.amvarmar.com` | `SUPER_ADMIN` | Todo, incluidos roles y ajustes |
+| `operaciones@demo.amvarmar.com` | `ADMIN` | Toda la operación de AMVARMAR |
+| `agente@demo.amvarmar.com` | `ADMIN` | Lo mismo: son un solo equipo (ADR-0017) |
+| `cliente@demo.amvarmar.com` | `CLIENTE` | Solo Importaciones Alfa |
+| `cliente2@demo.amvarmar.com` | `CLIENTE` | Solo Importaciones Alfa |
+| `beta@demo.amvarmar.com` | `CLIENTE` | Solo Comercial Beta |
 
 Entrar con `cliente@` y con `beta@` es la forma rápida de comprobar el
-aislamiento entre empresas: cada uno ve solo lo suyo.
+aislamiento entre empresas: cada uno ve solo lo suyo. `cliente@` y `cliente2@`
+comparten empresa y rol: sirven para ver que dos personas de una misma empresa
+ven exactamente lo mismo.
+
+Desde ADR-0017 el cliente **no registra cargas**: las da de alta AMVARMAR y él
+las ve llegar a su **Inventario**. Lo suyo es pedir despachos eligiendo la vía,
+subir los documentos que le exijan y preguntarle a AMVI.
 
 **El script se niega a correr si `ENVIRONMENT` no es `local`.** Crea cuentas con
 una contraseña escrita en el propio archivo.

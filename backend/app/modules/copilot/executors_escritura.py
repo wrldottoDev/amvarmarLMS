@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -59,6 +60,28 @@ async def _resolver_ubicacion(session: AsyncSession, codigo: str | None) -> Any 
     return await shipments_queries.ubicacion_por_codigo(session, codigo)
 
 
+async def _empresas_por_nombre(session: AsyncSession, nombre: str) -> list[Any]:
+    """Empresas activas cuyo nombre legal o comercial contiene `nombre`.
+
+    Devuelve la lista y no una sola: si el nombre es ambiguo, quien decide es
+    la persona, no el modelo. Dos nombres parecidos ("Extreme Tech" y "Extreme
+    Tech CR") son justo el caso donde adivinar mal manda la carga al
+    expediente del cliente equivocado.
+    """
+    filas = await session.execute(
+        text("""
+            SELECT id, legal_name, trade_name
+            FROM companies
+            WHERE deleted_at IS NULL AND status = 'ACTIVE'
+              AND (legal_name ILIKE :patron OR trade_name ILIKE :patron)
+            ORDER BY legal_name
+            LIMIT 6
+        """),
+        {"patron": f"%{nombre.strip()}%"},
+    )
+    return list(filas.all())
+
+
 def _campo_ubicacion(
     nombre: str, etiqueta: str, codigo: str | None, fila: Any | None
 ) -> CampoPropuesto:
@@ -81,18 +104,38 @@ async def crear_prealerta_borrador(
     """Arma el borrador y lo persiste como propuesta `PENDING`. No crea la
     carga — eso lo hace `confirmaciones.confirmar_crear_prealerta_borrador`,
     después de que la persona revisa y confirma."""
+    # Quién es el dueño de la carga. Un cliente lo trae del JWT y no puede
+    # elegir otro; el personal de AMVARMAR —que es quien registra desde
+    # ADR-0017— no tiene empresa propia y lo dice en la conversación.
     if company_id is None:
-        # El alcance sale del JWT (ADR-0012): personal interno sin una única
-        # empresa propia no tiene un `company_id` que asignarle al borrador,
-        # y el modelo no puede elegir uno. Preparar prealertas para un
-        # cliente específico desde el chat de Operaciones queda pendiente de
-        # diseño, no es una limitación de esta herramienta puntual.
-        return {
-            "error": (
-                "Por ahora AMVI solo puede preparar prealertas para cuentas de "
-                "cliente, no para personal interno."
-            )
-        }
+        nombre_empresa = (argumentos.get("empresa") or "").strip()
+        if not nombre_empresa:
+            return {
+                "error": (
+                    "Falta de qué cliente es la carga. Decime el nombre de la "
+                    "empresa y preparo el borrador."
+                )
+            }
+
+        candidatas = await _empresas_por_nombre(session, nombre_empresa)
+        if not candidatas:
+            return {"error": f"No encontré ninguna empresa activa que se llame «{nombre_empresa}»."}
+        if len(candidatas) > 1:
+            nombres = ", ".join(f"«{c.trade_name or c.legal_name}»" for c in candidatas)
+            return {
+                "error": (
+                    f"«{nombre_empresa}» coincide con varias empresas: {nombres}. "
+                    "Decime cuál es para no registrar la carga en el expediente equivocado."
+                )
+            }
+        company_id = candidatas[0].id
+
+    # Revalidación con la empresa ya resuelta (ADR-0012): el filtro que decidió
+    # ofrecer esta herramienta miró los permisos del actor sin saber sobre qué
+    # empresa iba a operar. Un alcance ORGANIZATION que apunte a otra empresa
+    # tiene que caer acá, no al confirmar.
+    if not permisos.permite(Perm.SHIPMENTS_CREATE, company_id=company_id):
+        return {"error": "No tenés permiso para registrar cargas de esa empresa."}
 
     origen_codigo = argumentos.get("origen_location_code")
     destino_codigo = argumentos.get("destino_location_code")

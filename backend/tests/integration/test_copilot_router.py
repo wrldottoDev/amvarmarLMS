@@ -83,7 +83,7 @@ def _breaker_limpio():
 
 
 async def _usuario_interno(
-    session: AsyncSession, rol: str = RoleCode.OPS_ADMIN
+    session: AsyncSession, rol: str = RoleCode.ADMIN
 ) -> tuple[uuid.UUID, str]:
     email = f"copilot-int-{uuid.uuid4().hex[:8]}@amvarmar.com"
     user_id = (
@@ -127,7 +127,7 @@ async def _usuario_cliente(session: AsyncSession) -> tuple[uuid.UUID, str, uuid.
             INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
             SELECT :u, r.id, :scope, :c FROM roles r WHERE r.code = :rol
         """),
-        {"u": user_id, "rol": RoleCode.CLIENT_USER, "scope": ScopeType.ORGANIZATION, "c": empresa},
+        {"u": user_id, "rol": RoleCode.CLIENTE, "scope": ScopeType.ORGANIZATION, "c": empresa},
     )
     await session.execute(
         text(
@@ -716,7 +716,12 @@ class TestConfirmarEscrituraDePuntaAPunta:
     ) -> None:
         await sembrar_rbac(db_directa)
         await sembrar_estados(db_directa)
-        actor, email, empresa = await _usuario_cliente(db_directa)
+        nombre_empresa = f"Confirmar {uuid.uuid4().hex[:8]} S.A."
+        await db_directa.execute(
+            text("INSERT INTO companies (legal_name, status) VALUES (:n,'ACTIVE')"),
+            {"n": nombre_empresa},
+        )
+        actor, email = await _usuario_interno(db_directa)
         await _ubicacion(db_directa, "US", "MIA", "Miami")
         await _ubicacion(db_directa, "CR", "SJO", "San José")
         await db_directa.commit()
@@ -726,8 +731,9 @@ class TestConfirmarEscrituraDePuntaAPunta:
             db_directa,
             permisos,
             actor,
-            empresa,
+            None,
             {
+                "empresa": nombre_empresa,
                 "descripcion": "Repuestos varios",
                 "origen_location_code": "US-MIA",
                 "destino_location_code": "CR-SJO",
@@ -762,7 +768,12 @@ class TestConfirmarEscrituraDePuntaAPunta:
         self, cliente: AsyncClient, db_directa: AsyncSession, redis
     ) -> None:
         await sembrar_rbac(db_directa)
-        actor, email, empresa = await _usuario_cliente(db_directa)
+        nombre_empresa = f"Incompleto {uuid.uuid4().hex[:8]} S.A."
+        await db_directa.execute(
+            text("INSERT INTO companies (legal_name, status) VALUES (:n,'ACTIVE')"),
+            {"n": nombre_empresa},
+        )
+        actor, email = await _usuario_interno(db_directa)
         await db_directa.commit()
 
         permisos = await obtener_permisos_efectivos(db_directa, redis, actor)
@@ -770,8 +781,9 @@ class TestConfirmarEscrituraDePuntaAPunta:
             db_directa,
             permisos,
             actor,
-            empresa,
+            None,
             {
+                "empresa": nombre_empresa,
                 "descripcion": "Sin origen ni bultos",
                 "origen_location_code": None,
                 "destino_location_code": None,

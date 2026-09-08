@@ -60,16 +60,17 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
   const esCliente = Boolean(usuario.empresa);
   const inicio = esCliente ? "/dashboard" : "/operaciones";
 
+  // El cliente no ve "Usuarios" (ADR-0017): a la gente de una empresa la
+  // administra AMVARMAR, no la empresa. Su listado de cargas se llama
+  // "Inventario" porque eso es lo que es para él — lo que tiene en bodega,
+  // no cargas que él dio de alta.
   const navegacion: ElementoNavegacion[] = [
     { href: inicio, etiqueta: esCliente ? "Resumen" : "Operaciones", icono: Gauge },
-    { href: "/shipments", etiqueta: "Cargas", icono: Boxes },
+    { href: "/shipments", etiqueta: esCliente ? "Inventario" : "Cargas", icono: Boxes },
     { href: "/despachos", etiqueta: "Despachos", icono: Truck },
     { href: "/avisos", etiqueta: "Avisos", icono: Bell },
     ...(esCliente
-      ? [
-          { href: "/shipments/historial", etiqueta: "Historial", icono: Archive },
-          { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
-        ]
+      ? [{ href: "/shipments/historial", etiqueta: "Historial", icono: Archive }]
       : [
           { href: "/inventario", etiqueta: "Inventario", icono: Warehouse },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },

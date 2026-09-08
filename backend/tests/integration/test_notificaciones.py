@@ -558,7 +558,7 @@ class TestSeisCorreosDelSistemaAnterior:
         await sembrar_rbac(session)
         empresa = await _empresa(session)
         cliente, _ = await _usuario(session, empresa)
-        interno = await _staff(session, "OPS_ADMIN")
+        interno = await _staff(session, "ADMIN")
 
         dispatch_id, numero = await _solicitud(session, empresa, cliente)
 
@@ -607,16 +607,21 @@ class TestSeisCorreosDelSistemaAnterior:
         ).scalar_one()
         assert fila is None
 
-    async def test_un_ops_agent_no_recibe_el_pedido_de_aprobacion(
+    async def test_todo_el_personal_de_amvarmar_recibe_el_pedido_de_aprobacion(
         self, session: AsyncSession
     ) -> None:
-        """No puede aprobar: llenarle la bandeja termina en que nadie lee nada."""
+        """Con tres roles (ADR-0017) el aviso va a todo AMVARMAR.
+
+        Antes se excluía al agente de operaciones porque no podía aprobar, y
+        un aviso que no se puede accionar entrena a ignorar la bandeja. Hoy
+        cualquier `ADMIN` aprueba, así que todos son destinatarios legítimos.
+        """
         await sembrar_rbac(session)
-        agente = await _staff(session, "OPS_AGENT")
+        admin = await _staff(session, "ADMIN")
 
         destinatarios = await service.destinatarios_de_operaciones(session)
 
-        assert agente not in {d.user_id for d in destinatarios}
+        assert admin in {d.user_id for d in destinatarios}
 
     async def test_almacenar_una_carga_avisa_con_su_identificador(
         self, session: AsyncSession
@@ -897,7 +902,7 @@ class TestCorreoReal:
             email=f"alta-{uuid.uuid4().hex[:8]}@amvarmar.test",
             first_name="Nora",
             last_name="Salas",
-            role_code=RoleCode.CLIENT_USER,
+            role_code=RoleCode.CLIENTE,
             company_id=empresa,
             phone=None,
             permisos=await obtener_permisos_efectivos(session, redis, admin),
@@ -931,7 +936,7 @@ class TestCorreoReal:
             email=f"sinverificar-{uuid.uuid4().hex[:8]}@amvarmar.test",
             first_name="Beto",
             last_name="Cruz",
-            role_code=RoleCode.CLIENT_USER,
+            role_code=RoleCode.CLIENTE,
             company_id=empresa,
             phone=None,
             permisos=await obtener_permisos_efectivos(session, redis, admin),
@@ -970,7 +975,7 @@ class TestCorreoReal:
             email=f"sinrelay-{uuid.uuid4().hex[:8]}@amvarmar.test",
             first_name="Sara",
             last_name="Lima",
-            role_code=RoleCode.CLIENT_USER,
+            role_code=RoleCode.CLIENTE,
             company_id=empresa,
             phone=None,
             permisos=await obtener_permisos_efectivos(session, redis, admin),

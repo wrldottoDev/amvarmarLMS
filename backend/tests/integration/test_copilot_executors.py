@@ -38,9 +38,7 @@ async def _entorno(session: AsyncSession) -> dict[str, object]:
 
     empresa_a = await _empresa(session, f"A {uuid.uuid4().hex[:6]} S.A.")
     empresa_b = await _empresa(session, f"B {uuid.uuid4().hex[:6]} S.A.")
-    cliente_a = await _usuario_con_rol(
-        session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa_a
-    )
+    cliente_a = await _usuario_con_rol(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa_a)
     origen = await _ubicacion(session, "US", "MIA", "Miami")
     destino = await _ubicacion(session, "CR", "SJO", "San José")
 
@@ -181,7 +179,7 @@ class TestAislamiento:
     ) -> None:
         ctx = await _entorno(session)
         carga = await _crear_shipment(session, ctx, empresa=ctx["empresa_b"], estado="STORED")
-        operaciones = await _usuario_con_rol(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None)
+        operaciones = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
         permisos_ops = await obtener_permisos_efectivos(session, redis, operaciones)
         despacho = await dispatches_service.crear(
             session,

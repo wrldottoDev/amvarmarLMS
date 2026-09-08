@@ -2,7 +2,7 @@
 
 Resuelve el problema del primer administrador: en una base recién migrada no
 hay ningún `SUPER_ADMIN` —el migrador pone a todo el personal del legacy como
-`OPS_ADMIN`— y sin uno nadie puede gestionar roles ni ajustes del sistema. Es
+`ADMIN`— y sin uno nadie puede gestionar roles ni ajustes del sistema. Es
 el único punto donde hace falta salirse de la interfaz.
 
     # Cuenta nueva, con contraseña generada
@@ -35,8 +35,7 @@ from app.modules.rbac.models import RoleCode, ScopeType
 # pertenece a ninguna empresa (ADR-0011), su alcance es global.
 ROLES = {
     "SUPER_ADMIN": "Acceso completo, incluidos roles y ajustes del sistema.",
-    "OPS_ADMIN": "Toda la operación, correcciones y auditoría. Sin gestión de roles.",
-    "OPS_AGENT": "Operación diaria: cargas, estados y despachos.",
+    "ADMIN": "Toda la operación de AMVARMAR: cargas, despachos, documentos y auditoría.",
 }
 
 

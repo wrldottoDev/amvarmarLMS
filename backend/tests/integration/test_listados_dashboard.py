@@ -32,13 +32,9 @@ async def _entorno(session: AsyncSession) -> dict[str, object]:
     empresa_a = await _empresa(session, "Empresa A S.A.")
     empresa_b = await _empresa(session, "Empresa B S.A.")
 
-    cliente_a = await _usuario_con_rol(
-        session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa_a
-    )
-    cliente_b = await _usuario_con_rol(
-        session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa_b
-    )
-    operaciones = await _usuario_con_rol(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None)
+    cliente_a = await _usuario_con_rol(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa_a)
+    cliente_b = await _usuario_con_rol(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa_b)
+    operaciones = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
     sin_rol = await _usuario(session)
 
     origen = await _ubicacion(session, "US", "MIA", "Miami")

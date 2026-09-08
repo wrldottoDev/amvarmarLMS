@@ -633,7 +633,7 @@ async def resolver_requisito(
         )
 
     # Exonerar deja avanzar la carga SIN el documento obligatorio, así que pide
-    # su propio permiso: `manage` no alcanza (solo OPS_ADMIN y SUPER_ADMIN).
+    # su propio permiso: `manage` no alcanza (solo ADMIN y SUPER_ADMIN).
     requerido = (
         Perm.SHIPMENTS_REQUIREMENT_WAIVE
         if nuevo_estado == RequirementStatus.WAIVED

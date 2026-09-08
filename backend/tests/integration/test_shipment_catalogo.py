@@ -139,7 +139,7 @@ class TestGrafo:
     async def test_cancelar_usa_permisos_distintos_segun_el_estado(
         self, sembrado: AsyncSession
     ) -> None:
-        """ADR-0004: OPS_AGENT cancela desde PRE_ALERT, no desde IN_TRANSIT."""
+        """ADR-0004: ADMIN cancela desde PRE_ALERT, no desde IN_TRANSIT."""
         permisos = dict(
             (
                 await sembrado.execute(

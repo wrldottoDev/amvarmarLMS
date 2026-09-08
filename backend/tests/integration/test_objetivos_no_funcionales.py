@@ -68,7 +68,7 @@ async def usuario_con_cargas(db_directa: AsyncSession):
     await db_directa.execute(
         text("""
             INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENT_ADMIN'
+            SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENTE'
         """),
         {"u": user_id, "c": empresa},
     )

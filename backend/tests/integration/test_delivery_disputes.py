@@ -34,10 +34,8 @@ async def _entorno(session: AsyncSession) -> dict[str, object]:
 
     empresa_a = await _empresa(session, "Disputas A")
     empresa_b = await _empresa(session, "Disputas B")
-    cliente = await _usuario_con_rol(
-        session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa_a
-    )
-    ops_admin = await _usuario_con_rol(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None)
+    cliente = await _usuario_con_rol(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa_a)
+    ops_admin = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
     super_admin = await _usuario_con_rol(session, RoleCode.SUPER_ADMIN, ScopeType.GLOBAL, None)
     origen = await _ubicacion(session, "US", "MIA", "Miami")
     destino = await _ubicacion(session, "CR", "SJO", "San José")
@@ -194,7 +192,7 @@ class TestReportarInconformidad:
         shipment_id = await _carga(session, ctx)
         # Un usuario de OTRA empresa, sin alcance sobre esta carga.
         ajeno = await _usuario_con_rol(
-            session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, ctx["empresa_b"]
+            session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, ctx["empresa_b"]
         )
         permisos = await _permisos(session, redis, ajeno)
 

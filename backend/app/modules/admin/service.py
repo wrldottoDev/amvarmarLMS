@@ -33,13 +33,11 @@ from app.modules.rbac.catalog import Perm
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import PermisosEfectivos, invalidar_permisos
 
-# Roles que un administrador puede asignar a un usuario de empresa cliente.
-ROLES_DE_CLIENTE: frozenset[str] = frozenset({RoleCode.CLIENT_ADMIN, RoleCode.CLIENT_USER})
+# Rol que un administrador puede asignar a un usuario de empresa cliente.
+ROLES_DE_CLIENTE: frozenset[str] = frozenset({RoleCode.CLIENTE})
 
 # Roles internos. Exigen `users.create.internal`, que es un permiso distinto.
-ROLES_INTERNOS: frozenset[str] = frozenset(
-    {RoleCode.SUPER_ADMIN, RoleCode.OPS_ADMIN, RoleCode.OPS_AGENT}
-)
+ROLES_INTERNOS: frozenset[str] = frozenset({RoleCode.SUPER_ADMIN, RoleCode.ADMIN})
 
 
 class DatosInvalidos(ReglaDeNegocioViolada):
@@ -279,8 +277,8 @@ async def listar_usuarios(
 ) -> list[UsuarioResumen]:
     """Usuarios que el actor puede administrar.
 
-    Un `CLIENT_ADMIN` tiene `users.manage` con alcance de su empresa, así que ve
-    solo a los suyos. El filtro va en el WHERE y no después.
+    Un `ADMIN` tiene `users.manage` global, así que los ve a todos; acotado a
+    una empresa ve solo los de esa. El filtro va en el WHERE y no después.
     """
     if company_id is not None:
         _exigir(permisos, Perm.USERS_MANAGE, company_id)

@@ -26,7 +26,7 @@ from tests.piezas import sembrar_pieza
 pytestmark = pytest.mark.integration
 
 
-async def _entorno(session: AsyncSession, rol: str = RoleCode.OPS_ADMIN) -> dict[str, object]:
+async def _entorno(session: AsyncSession, rol: str = RoleCode.ADMIN) -> dict[str, object]:
     await sembrar_rbac(session)
     await sembrar_estados(session)
     await sembrar_documentos(session)
@@ -213,7 +213,7 @@ class TestPermisos:
     async def test_un_cliente_no_cambia_estados_operativos(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.CLIENT_USER)
+        ctx = await _entorno(session, RoleCode.CLIENTE)
         shipment_id = await _carga(session, ctx)
 
         with pytest.raises(service.SinPermisoParaTransicion):
@@ -221,7 +221,7 @@ class TestPermisos:
 
     async def test_un_agente_no_revierte_una_entrega(self, session: AsyncSession, redis) -> None:
         """Solo SUPER_ADMIN, y el motor lo sabe por el permiso de la fila."""
-        ctx = await _entorno(session, RoleCode.OPS_AGENT)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DELIVERED)
 
         with pytest.raises(service.SinPermisoParaTransicion):
@@ -229,17 +229,21 @@ class TestPermisos:
                 session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED, note="error"
             )
 
-    async def test_un_agente_no_cancela_en_transito(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_AGENT)
+    async def test_un_admin_cancela_en_transito(self, session: AsyncSession, redis) -> None:
+        """Cancelar una carga ya en tránsito era exclusivo del jefe de
+        operaciones. Con tres roles (ADR-0017) es de todo el personal de
+        AMVARMAR; lo que sigue exigiéndose es el motivo."""
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)
 
-        with pytest.raises(service.SinPermisoParaTransicion):
-            await _transicionar(
-                session, redis, ctx, shipment_id, ShipmentStatus.CANCELLED, note="motivo"
-            )
+        resultado = await _transicionar(
+            session, redis, ctx, shipment_id, ShipmentStatus.CANCELLED, note="Se perdió el vuelo"
+        )
+
+        assert resultado.hacia == ShipmentStatus.CANCELLED
 
     async def test_un_agente_si_cancela_una_prealerta(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_AGENT)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PRE_ALERT)
 
         resultado = await _transicionar(
@@ -250,7 +254,7 @@ class TestPermisos:
 
     async def test_un_cliente_de_otra_empresa_no_puede(self, session: AsyncSession, redis) -> None:
         """El permiso ORGANIZATION no alcanza a la carga de otra empresa."""
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         otra_empresa = (
             await session.execute(
                 text(
@@ -271,7 +275,7 @@ class TestPermisos:
         await session.execute(
             text("""
                 INSERT INTO user_role_assignments (user_id, role_id, scope_type, company_id)
-                SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENT_ADMIN'
+                SELECT :u, r.id, 'ORGANIZATION', :c FROM roles r WHERE r.code = 'CLIENTE'
             """),
             {"u": cliente, "c": otra_empresa},
         )
@@ -295,7 +299,7 @@ class TestTransicionesDisponibles:
     async def test_operaciones_recibe_solo_destinos_del_catalogo_y_su_permiso(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         opciones = await service.transiciones_disponibles(
@@ -309,10 +313,16 @@ class TestTransicionesDisponibles:
         assert cancelar.requires_reason is True
         assert cancelar.blocked is False
 
-    async def test_cliente_solo_recibe_cancelacion_de_su_prealerta(
+    async def test_el_cliente_no_recibe_ninguna_transicion(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.CLIENT_USER)
+        """ADR-0017: mover una carga por la cadena es trabajo de AMVARMAR.
+
+        Antes el cliente podía cancelar su propia prealerta, porque era él
+        quien la creaba. Ya no crea cargas, así que tampoco las cancela: lo
+        suyo es pedir despachos y subir documentos.
+        """
+        ctx = await _entorno(session, RoleCode.CLIENTE)
         shipment_id = await _carga(session, ctx)
 
         opciones = await service.transiciones_disponibles(
@@ -321,13 +331,12 @@ class TestTransicionesDisponibles:
             permisos=await _permisos(session, redis, ctx),
         )
 
-        assert [o.to_status for o in opciones] == ["CANCELLED"]
-        assert opciones[0].requires_reason is True
+        assert opciones == []
 
     async def test_muestra_el_wr_faltante_como_bloqueo_sin_ocultar_el_destino(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(
             session, ctx, estado=ShipmentStatus.RECEIVED, con_bodega_miami=True
         )
@@ -345,14 +354,14 @@ class TestTransicionesDisponibles:
 
 class TestMotivoYVersion:
     async def test_un_retroceso_exige_motivo(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)
 
         with pytest.raises(service.MotivoRequerido):
             await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.PRE_ALERT)
 
     async def test_un_motivo_en_blanco_no_cuenta(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)
 
         with pytest.raises(service.MotivoRequerido):
@@ -361,7 +370,7 @@ class TestMotivoYVersion:
             )
 
     async def test_avanzar_no_exige_motivo(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
@@ -369,7 +378,7 @@ class TestMotivoYVersion:
         assert resultado.hacia == ShipmentStatus.IN_TRANSIT
 
     async def test_version_desactualizada_da_conflicto(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         with pytest.raises(service.VersionDesactualizada) as error:
@@ -381,7 +390,7 @@ class TestMotivoYVersion:
         assert error.value.details[0]["row_version_actual"] == 1
 
     async def test_la_version_sube_con_cada_transicion(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         primera = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
@@ -400,7 +409,7 @@ class TestMotivoYVersion:
 
 class TestEfectosDeLaTransicion:
     async def test_deja_exactamente_un_evento(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
@@ -422,7 +431,7 @@ class TestEfectosDeLaTransicion:
 
     async def test_graba_la_fecha_del_hito(self, session: AsyncSession, redis) -> None:
         """El expediente y su cronología no pueden divergir."""
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)
 
         await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.RECEIVED)
@@ -437,7 +446,7 @@ class TestEfectosDeLaTransicion:
     async def test_una_transicion_atrasada_usa_su_fecha_real(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)
         anteayer = datetime.now(UTC) - timedelta(days=2)
 
@@ -472,7 +481,7 @@ class TestRetencion:
     async def test_entrar_a_delivered_calcula_seis_meses_de_retencion(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DISPATCHED)
 
         await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DELIVERED)
@@ -490,7 +499,7 @@ class TestRetencion:
     async def test_entrar_a_cancelled_tambien_calcula_retencion(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PRE_ALERT)
 
         await _transicionar(
@@ -525,7 +534,7 @@ class TestRetencion:
     async def test_una_transicion_normal_no_toca_la_retencion(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
@@ -557,7 +566,7 @@ class TestRetencion:
 class TestPoliticasDeDominio:
     async def test_miami_no_almacena_sin_wr(self, session: AsyncSession, redis) -> None:
         """ADR-0005, aplicado desde el motor de transiciones."""
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(
             session, ctx, estado=ShipmentStatus.RECEIVED, con_bodega_miami=True
         )
@@ -568,7 +577,7 @@ class TestPoliticasDeDominio:
         assert error.value.code == "SHIPMENT_MISSING_WR"
 
     async def test_con_wr_miami_si_almacena(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(
             session, ctx, estado=ShipmentStatus.RECEIVED, con_bodega_miami=True
         )
@@ -585,7 +594,7 @@ class TestPoliticasDeDominio:
         assert resultado.hacia == ShipmentStatus.STORED
 
     async def test_un_origen_sin_bodega_almacena_sin_wr(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.RECEIVED)
 
         resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.STORED)
@@ -602,7 +611,7 @@ class TestRequisitos:
         La carga avanza a IN_TRANSIT con un requisito abierto; solo el despacho
         se bloquea.
         """
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
         await _abrir_documental(session, ctx, shipment_id, redis)
 
@@ -623,7 +632,7 @@ class TestRequisitos:
     async def test_no_se_despacha_con_requisitos_bloqueantes(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         await _abrir_documental(session, ctx, shipment_id, redis)
 
@@ -636,7 +645,7 @@ class TestRequisitos:
     async def test_un_requisito_informativo_no_impide_despachar(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         await service.abrir_requisito(
             session,
@@ -656,7 +665,7 @@ class TestRequisitos:
     async def test_verificar_el_documento_desbloquea_el_despacho(
         self, session: AsyncSession, redis
     ) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
         document_id = await _documento_listo(session, ctx, shipment_id)
@@ -675,7 +684,7 @@ class TestRequisitos:
 
     async def test_subir_el_archivo_no_basta(self, session: AsyncSession, redis) -> None:
         """`UPLOADED` no satisface: Operaciones tiene que verificarlo (ADR-0003)."""
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
         await service.resolver_requisito(
@@ -690,7 +699,7 @@ class TestRequisitos:
             await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
 
     async def test_exonerar_sin_motivo_falla(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
 
@@ -704,7 +713,7 @@ class TestRequisitos:
             )
 
     async def test_exonerar_con_motivo_desbloquea(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
 
@@ -721,7 +730,7 @@ class TestRequisitos:
         assert resultado.hacia == ShipmentStatus.DISPATCHED
 
     async def test_rechazar_sin_motivo_falla(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
         document_id = await _documento_listo(session, ctx, shipment_id)
@@ -848,7 +857,7 @@ class TestRollbackTransaccional:
         cómo llegó ahí — precisamente lo que la línea de tiempo existe para
         impedir.
         """
-        ctx = await _entorno(session, RoleCode.OPS_ADMIN)
+        ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
 
         await session.execute(

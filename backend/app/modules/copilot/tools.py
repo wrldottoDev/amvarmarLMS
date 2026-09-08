@@ -181,6 +181,19 @@ class ProcesarFacturaOcrArgs(BaseModel):
 
 class CrearPrealertaBorradorArgs(BaseModel):
     descripcion: str = Field(max_length=2000)
+    # De qué cliente es la carga. Lo usa el personal de AMVARMAR, que es quien
+    # registra (ADR-0017): no tiene una empresa propia de la cual deducirlo,
+    # así que lo dice en la conversación ("una carga para Extreme Tech"). Se
+    # resuelve por nombre y la empresa resuelta se revalida contra los
+    # permisos del actor antes de persistir nada.
+    empresa: str | None = Field(
+        default=None,
+        max_length=180,
+        description=(
+            "Nombre de la empresa cliente dueña de la carga. Para personal de "
+            "AMVARMAR; si quien pregunta pertenece a una empresa, se usa la suya."
+        ),
+    )
     origen_location_code: str | None = Field(default=None, max_length=16)
     destino_location_code: str | None = Field(default=None, max_length=16)
     factura: str | None = Field(default=None, max_length=180)

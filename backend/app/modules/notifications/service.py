@@ -114,10 +114,10 @@ async def destinatarios_de_operaciones(session: AsyncSession) -> list[Destinatar
     """Staff interno que debe enterarse de lo que hace un cliente.
 
     El staff no tiene membresía de empresa (ADR-0011), así que se lo busca por
-    rol y no por `company_memberships`. Se excluye a `OPS_AGENT` a propósito:
-    el aviso de "hay una solicitud para aprobar" le sirve a quien puede
-    aprobarla, y llenarle la bandeja a todo el equipo con avisos que no puede
-    accionar termina en que nadie los lee.
+    rol y no por `company_memberships`. Con tres roles (ADR-0017) el aviso va a
+    todo el personal de AMVARMAR: cualquier `ADMIN` puede aprobar el despacho o
+    resolver el documento que lo originó, que era la razón por la que antes se
+    excluía al agente de operaciones.
 
     `company_id` queda en `None`: es un aviso interno, no pertenece a la
     empresa que lo originó, y ponerla ahí lo mostraría bajo el filtro de esa
@@ -130,7 +130,7 @@ async def destinatarios_de_operaciones(session: AsyncSession) -> list[Destinatar
                 FROM user_role_assignments ura
                 JOIN roles r ON r.id = ura.role_id
                 JOIN users u ON u.id = ura.user_id
-                WHERE r.code IN ('OPS_ADMIN', 'SUPER_ADMIN')
+                WHERE r.code IN ('ADMIN', 'SUPER_ADMIN')
                   AND (ura.expires_at IS NULL OR ura.expires_at > now())
                   AND u.status = 'ACTIVE'
                   AND u.deleted_at IS NULL

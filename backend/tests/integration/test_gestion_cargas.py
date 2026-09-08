@@ -78,8 +78,8 @@ async def entorno(session: AsyncSession):
 
     return {
         "empresa": empresa,
-        "ops": await usuario(RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None),
-        "cliente": await usuario(RoleCode.CLIENT_USER, ScopeType.ORGANIZATION, empresa),
+        "ops": await usuario(RoleCode.ADMIN, ScopeType.GLOBAL, None),
+        "cliente": await usuario(RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa),
         "origen": await ubicacion("US", "MIA"),
         "destino": await ubicacion("CR", "SJO"),
     }

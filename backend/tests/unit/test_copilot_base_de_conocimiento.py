@@ -24,7 +24,10 @@ class TestBuscar:
         # Palabra clave real: "nueva carga". La pregunta la trae al revés.
         entrada = bc.buscar("¿cómo hago una carga nueva?")
         assert entrada is not None
-        assert "crear" in entrada.titulo.lower() or "creo" in entrada.titulo.lower()
+        # Se compara contra la palabra clave y no contra el título: el título
+        # de una guía se reescribe cuando cambia la operación (pasó con
+        # ADR-0017), y lo que este test prueba es el buscador, no la redacción.
+        assert "nueva carga" in entrada.palabras_clave
 
     def test_ignora_signos_de_puntuacion_pegados_a_la_palabra(self) -> None:
         entrada = bc.buscar("¿cómo cancelo un despacho?")

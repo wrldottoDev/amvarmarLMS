@@ -18,25 +18,17 @@ import { etiquetaEstadoCuenta, etiquetaRol, rolesDeCliente, rolesInternos } from
 import { clases, tiempoRelativo } from "@/lib/utilidades";
 
 /**
- * Alta gestión (Operaciones/Administración, `users.create_internal` +
- * `users.manage` global): elige cualquier empresa y puede dar de alta
- * personal interno. `empresaFiltro` es opcional — llega por `?empresa=`
- * cuando se entra desde la ficha de una empresa puntual.
+ * Solo AMVARMAR llega acá (`users.create_internal` + `users.manage` global):
+ * elige cualquier empresa y puede dar de alta personal interno.
+ * `empresaFiltro` es opcional — llega por `?empresa=` cuando se entra desde
+ * la ficha de una empresa puntual.
  *
- * Alcance propio (un `CLIENT_ADMIN`/`CLIENT_USER`, `users.manage` con
- * alcance a SU empresa — ADR-0004, los dos roles de cliente comparten
- * exactamente el mismo permiso): la empresa es siempre la propia, nunca un
- * selector, y el rol ofrecido nunca es personal interno — el backend lo
- * rechazaría igual (`USERS_CREATE_INTERNAL`), pero no tiene sentido
- * ofrecerlo.
+ * Había un segundo modo, "alcance propio", para que un cliente administrara a
+ * su propia gente. ADR-0017 se lo quitó: esas cuentas las lleva AMVARMAR.
  */
-type Modo =
-  | { alcance: "completo"; empresaFiltro?: string }
-  | { alcance: "propia"; empresaId: string; nombreEmpresa: string };
+type Modo = { alcance: "completo"; empresaFiltro?: string };
 
 export function GestionUsuarios({ modo }: { modo: Modo }) {
-  const esCompleto = modo.alcance === "completo";
-
   const [creando, setCreando] = useState(false);
   const [aDesactivar, setADesactivar] = useState<{ id: string; nombre: string } | null>(null);
   const [credenciales, setCredenciales] = useState<{
@@ -45,10 +37,8 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
     invitacion: EstadoInvitacion;
   } | null>(null);
 
-  const { data, isPending, error } = useUsuarios(
-    esCompleto ? modo.empresaFiltro : modo.empresaId,
-  );
-  const empresas = useEmpresas(false, esCompleto);
+  const { data, isPending, error } = useUsuarios(modo.empresaFiltro);
+  const empresas = useEmpresas(false, true);
   const crear = useCrearUsuario();
   const restablecer = useRestablecerContrasena();
   const desactivar = useDesactivarUsuario();
@@ -57,10 +47,10 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
   const [nombre, setNombre] = useState("");
   const [apellido, setApellido] = useState("");
   const [telefono, setTelefono] = useState("");
-  const [rol, setRol] = useState<string>("CLIENT_USER");
-  const [empresa, setEmpresa] = useState<string>(esCompleto ? (modo.empresaFiltro ?? "") : "");
+  const [rol, setRol] = useState<string>("CLIENTE");
+  const [empresa, setEmpresa] = useState<string>(modo.empresaFiltro ?? "");
 
-  const esInterno = esCompleto && rolesInternos.some((r) => r.codigo === rol);
+  const esInterno = rolesInternos.some((r) => r.codigo === rol);
 
   async function guardar() {
     const creado = await crear.mutateAsync({
@@ -69,7 +59,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
       last_name: apellido.trim(),
       role_code: rol,
       // El personal interno no lleva empresa: su alcance es global (ADR-0011).
-      company_id: esInterno ? null : esCompleto ? empresa || null : modo.empresaId,
+      company_id: esInterno ? null : empresa || null,
       phone: telefono.trim() || null,
     });
     setCredenciales({
@@ -82,20 +72,14 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
     setNombre("");
     setApellido("");
     setTelefono("");
-    setRol("CLIENT_USER");
+    setRol("CLIENTE");
   }
 
-  const nombreEmpresaFiltro = esCompleto
-    ? empresas.data?.find((e) => e.id === modo.empresaFiltro)
-    : undefined;
-  const titulo = esCompleto
-    ? nombreEmpresaFiltro
-      ? `Usuarios de ${nombreEmpresaFiltro.trade_name || nombreEmpresaFiltro.legal_name}`
-      : "Usuarios"
-    : `Usuarios de ${modo.nombreEmpresa}`;
-  const descripcionTitulo = esCompleto
-    ? "Quiénes pueden entrar al sistema y con qué permisos."
-    : "Quiénes de tu empresa pueden entrar al sistema.";
+  const nombreEmpresaFiltro = empresas.data?.find((e) => e.id === modo.empresaFiltro);
+  const titulo = nombreEmpresaFiltro
+    ? `Usuarios de ${nombreEmpresaFiltro.trade_name || nombreEmpresaFiltro.legal_name}`
+    : "Usuarios";
+  const descripcionTitulo = "Quiénes pueden entrar al sistema y con qué permisos.";
 
   return (
     <section className="space-y-5">
@@ -106,7 +90,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
         </div>
         <Boton
           onClick={() => {
-            if (esCompleto) setEmpresa(modo.empresaFiltro ?? "");
+            setEmpresa(modo.empresaFiltro ?? "");
             setCreando(true);
           }}
         >
@@ -146,11 +130,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
                 </strong>
                 <span className="block truncate text-xs text-[var(--texto-secundario)]">
                   {usuario.email}
-                  {esCompleto
-                    ? usuario.company_name
-                      ? ` · ${usuario.company_name}`
-                      : " · Personal interno"
-                    : ""}
+                  {usuario.company_name ? ` · ${usuario.company_name}` : " · Personal interno"}
                 </span>
               </span>
 
@@ -266,7 +246,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
           <fieldset>
             <legend className="mb-1.5 text-sm font-medium">¿Qué va a poder hacer?</legend>
             <div className="space-y-1.5">
-              {(esCompleto ? [...rolesDeCliente, ...rolesInternos] : rolesDeCliente).map(
+              {[...rolesDeCliente, ...rolesInternos].map(
                 (opcion) => (
                   <label
                     key={opcion.codigo}
@@ -296,29 +276,27 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
             </div>
           </fieldset>
 
-          {esCompleto ? (
-            esInterno ? (
-              <p className="rounded-md border border-[var(--marca)] bg-[var(--marca-tenue)] px-3 py-2.5 text-sm text-[var(--mar)]">
-                El personal interno no pertenece a ninguna empresa: ve todas.
-              </p>
-            ) : (
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium">¿De qué empresa?</span>
-                <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={empresa}
-                  onChange={(evento) => setEmpresa(evento.target.value)}
-                >
-                  <option value="">Elegí una empresa…</option>
-                  {empresas.data?.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.trade_name || e.legal_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )
-          ) : null}
+          {esInterno ? (
+            <p className="rounded-md border border-[var(--marca)] bg-[var(--marca-tenue)] px-3 py-2.5 text-sm text-[var(--mar)]">
+              El personal interno no pertenece a ninguna empresa: ve todas.
+            </p>
+          ) : (
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">¿De qué empresa?</span>
+              <select
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                value={empresa}
+                onChange={(evento) => setEmpresa(evento.target.value)}
+              >
+                <option value="">Elegí una empresa…</option>
+                {empresas.data?.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.trade_name || e.legal_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {crear.error ? <AvisoError error={crear.error} /> : null}
 
@@ -337,7 +315,7 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
                 !correo.trim() ||
                 !nombre.trim() ||
                 !apellido.trim() ||
-                (esCompleto && !esInterno && !empresa)
+                (!esInterno && !empresa)
               }
             >
               Crear usuario

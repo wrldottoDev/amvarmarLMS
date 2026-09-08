@@ -16,7 +16,7 @@ from app.modules.dispatches import service
 from app.modules.dispatches.models import DispatchMethod, DispatchStatus
 from app.modules.dispatches.router import _detalle
 from app.modules.rbac.models import RoleCode, ScopeType
-from app.modules.rbac.service import obtener_permisos_efectivos
+from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
 from app.modules.shipments.models import ShipmentStatus
 from tests.piezas import sembrar_pieza
 
@@ -31,11 +31,9 @@ async def _entorno(session: AsyncSession) -> dict[str, object]:
     empresa = await _empresa(session, f"Desp {uuid.uuid4().hex[:6]} S.A.")
     otra = await _empresa(session, f"Otra {uuid.uuid4().hex[:6]} S.A.")
 
-    operaciones = await _usuario_con_rol(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None)
-    agente = await _usuario_con_rol(session, RoleCode.OPS_AGENT, ScopeType.GLOBAL, None)
-    cliente = await _usuario_con_rol(
-        session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, empresa
-    )
+    operaciones = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
+    agente = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
+    cliente = await _usuario_con_rol(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, empresa)
 
     origen = await _ubicacion(session, "US", "MIA", "Miami")
     destino = await _ubicacion(session, "CR", "SJO", "San José")
@@ -485,21 +483,33 @@ class TestRechazo:
 
         assert await _estado_carga(session, carga) == ShipmentStatus.STORED
 
-    async def test_un_agente_puede_rechazar_pese_a_no_retroceder_estados(
+    async def test_rechazar_devuelve_las_cargas_sin_exigir_retroceso_de_estado(
         self, session: AsyncSession, redis
     ) -> None:
         """El caso que motivó ADR-0013.
 
-        `OPS_AGENT` no tiene `shipments.transition.backward`, pero rechazar un
-        despacho autoriza devolver sus cargas.
+        Rechazar un despacho autoriza devolver sus cargas por sí mismo: no se
+        apoya en `shipments.transition.backward`. Los permisos se arman a mano
+        y sin ese código a propósito — con tres roles (ADR-0017) ya no hay uno
+        que carezca de él, y el invariante que se prueba es del comando, no de
+        la matriz de un rol.
         """
         ctx = await _entorno(session)
         carga = await _carga_almacenada(session, ctx)
         solicitud = await _crear(session, redis, ctx, [carga])
-        permisos_agente = await _permisos(session, redis, ctx["agente"])
 
         from app.modules.rbac.catalog import Perm
+        from app.modules.rbac.service import PermisoEfectivo
 
+        completos = await _permisos(session, redis, ctx["agente"])
+        permisos_agente = PermisosEfectivos(
+            user_id=completos.user_id,
+            authz_version=completos.authz_version,
+            permisos=tuple(
+                p for p in completos.permisos if p.code != Perm.SHIPMENTS_TRANSITION_BACKWARD
+            ),
+        )
+        assert isinstance(permisos_agente.permisos[0], PermisoEfectivo)
         assert Perm.SHIPMENTS_TRANSITION_BACKWARD not in permisos_agente.codigos()
 
         await service.rechazar(

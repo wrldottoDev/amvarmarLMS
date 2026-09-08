@@ -2,7 +2,7 @@
 
 Es lo que el sistema viejo hacía desde el admin de Django. La diferencia que
 estas pruebas vigilan: acá cada acción pasa por el control de permisos y
-alcance, así que un `CLIENT_ADMIN` administra su empresa y nada más.
+alcance, así que un `CLIENTE` administra su empresa y nada más.
 """
 
 import uuid
@@ -76,10 +76,8 @@ async def entorno(session: AsyncSession, redis):
         "alfa": alfa,
         "beta": beta,
         "super": await _usuario(session, RoleCode.SUPER_ADMIN, ScopeType.GLOBAL, None),
-        "ops": await _usuario(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None),
-        "cliente_alfa": await _usuario(
-            session, RoleCode.CLIENT_ADMIN, ScopeType.ORGANIZATION, alfa
-        ),
+        "ops": await _usuario(session, RoleCode.ADMIN, ScopeType.GLOBAL, None),
+        "cliente_alfa": await _usuario(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, alfa),
     }
 
 
@@ -174,7 +172,7 @@ class TestUsuarios:
             email="nuevo@alfa.example.com",
             first_name="Ana",
             last_name="Pérez",
-            role_code=RoleCode.CLIENT_USER,
+            role_code=RoleCode.CLIENTE,
             company_id=entorno["alfa"],
             phone=None,
             permisos=permisos,
@@ -205,7 +203,7 @@ class TestUsuarios:
             email="invitado@alfa.example.com",
             first_name="Rosa",
             last_name="Díaz",
-            role_code=RoleCode.CLIENT_USER,
+            role_code=RoleCode.CLIENTE,
             company_id=entorno["alfa"],
             phone=None,
             permisos=permisos,
@@ -240,7 +238,7 @@ class TestUsuarios:
                 email="interno@amvarmar.example.com",
                 first_name="Luis",
                 last_name="Mora",
-                role_code=RoleCode.OPS_AGENT,
+                role_code=RoleCode.ADMIN,
                 company_id=entorno["alfa"],
                 phone=None,
                 permisos=permisos,
@@ -258,57 +256,46 @@ class TestUsuarios:
                 email="colado@alfa.example.com",
                 first_name="X",
                 last_name="Y",
-                role_code=RoleCode.OPS_ADMIN,
+                role_code=RoleCode.ADMIN,
                 company_id=None,
                 phone=None,
                 permisos=permisos,
             )
 
-    async def test_un_cliente_no_crea_usuarios_en_otra_empresa(
+    async def test_un_cliente_no_crea_usuarios_ni_en_su_propia_empresa(
         self, session: AsyncSession, redis, entorno
     ) -> None:
+        """ADR-0017: las cuentas de una empresa las da de alta AMVARMAR.
+
+        Antes el cliente administraba a su propia gente y el corte estaba en
+        la empresa ajena. Ahora perdió `users.manage`, así que el corte es
+        antes: ni siquiera en la suya.
+        """
+        permisos = await _permisos(session, redis, entorno["cliente_alfa"])
+
+        for empresa in (entorno["alfa"], entorno["beta"]):
+            with pytest.raises(SinPermiso):
+                await service.crear_usuario(
+                    session,
+                    email=f"colado-{empresa}@alfa.example.com",
+                    first_name="X",
+                    last_name="Y",
+                    role_code=RoleCode.CLIENTE,
+                    company_id=empresa,
+                    phone=None,
+                    permisos=permisos,
+                )
+
+    async def test_un_cliente_no_lista_usuarios(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Sin `users.manage` no hay listado que acotar: el panel del cliente
+        dejó de mostrar a la gente de su empresa (ADR-0017)."""
+        await _usuario(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, entorno["beta"])
         permisos = await _permisos(session, redis, entorno["cliente_alfa"])
 
         with pytest.raises(SinPermiso):
-            await service.crear_usuario(
-                session,
-                email="colado@beta.example.com",
-                first_name="X",
-                last_name="Y",
-                role_code=RoleCode.CLIENT_USER,
-                company_id=entorno["beta"],
-                phone=None,
-                permisos=permisos,
-            )
-
-    async def test_un_cliente_si_crea_usuarios_en_la_suya(
-        self, session: AsyncSession, redis, entorno
-    ) -> None:
-        permisos = await _permisos(session, redis, entorno["cliente_alfa"])
-
-        creado = await service.crear_usuario(
-            session,
-            email="companero@alfa.example.com",
-            first_name="Marta",
-            last_name="Solís",
-            role_code=RoleCode.CLIENT_USER,
-            company_id=entorno["alfa"],
-            phone=None,
-            permisos=permisos,
-        )
-
-        assert creado.id
-
-    async def test_un_cliente_solo_ve_los_usuarios_de_su_empresa(
-        self, session: AsyncSession, redis, entorno
-    ) -> None:
-        await _usuario(session, RoleCode.CLIENT_USER, ScopeType.ORGANIZATION, entorno["beta"])
-        permisos = await _permisos(session, redis, entorno["cliente_alfa"])
-
-        usuarios = await service.listar_usuarios(session, permisos=permisos)
-
-        assert usuarios
-        assert {u.company_id for u in usuarios} == {entorno["alfa"]}
+            await service.listar_usuarios(session, permisos=permisos)
 
     async def test_dos_cuentas_no_comparten_correo(
         self, session: AsyncSession, redis, entorno
@@ -318,7 +305,7 @@ class TestUsuarios:
             "email": "repetido@alfa.example.com",
             "first_name": "A",
             "last_name": "B",
-            "role_code": RoleCode.CLIENT_USER,
+            "role_code": RoleCode.CLIENTE,
             "company_id": entorno["alfa"],
             "phone": None,
             "permisos": permisos,
@@ -393,7 +380,7 @@ class TestUsuarios:
         await service.actualizar_usuario(
             session,
             user_id=entorno["cliente_alfa"],
-            cambios={"role_code": RoleCode.CLIENT_USER},
+            cambios={"role_code": RoleCode.CLIENTE},
             permisos=permisos,
         )
 

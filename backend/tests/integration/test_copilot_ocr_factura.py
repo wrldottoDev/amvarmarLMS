@@ -108,7 +108,7 @@ async def _entorno(session: AsyncSession) -> dict[str, Any]:
     await documents_service.sembrar_limites(session)
 
     empresa = await _empresa(session)
-    operaciones = await _usuario_con_rol(session, RoleCode.OPS_ADMIN, ScopeType.GLOBAL, None)
+    operaciones = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
     origen = await _ubicacion(session, "US", "MIA", "Miami")
     destino = await _ubicacion(session, "CR", "SJO", "San José")
 
