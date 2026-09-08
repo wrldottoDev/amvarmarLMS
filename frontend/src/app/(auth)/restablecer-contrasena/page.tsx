@@ -53,7 +53,7 @@ function FormularioReset() {
 
   return (
     <>
-      <Link className="mb-7 inline-flex items-center gap-2 text-sm font-semibold text-[var(--mar)] hover:underline" href="/login">
+      <Link className="mb-7 inline-flex items-center gap-2 text-sm font-semibold text-[var(--enlace)] hover:underline" href="/login">
         <ArrowLeft className="size-4" aria-hidden="true" />
         Volver
       </Link>

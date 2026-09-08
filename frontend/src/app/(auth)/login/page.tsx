@@ -88,7 +88,7 @@ function FormularioLogin() {
         </div>
 
         <div className="flex justify-end">
-          <Link className="text-sm font-semibold text-[var(--mar)] hover:underline" href="/recuperar-contrasena">
+          <Link className="text-sm font-semibold text-[var(--enlace)] hover:underline" href="/recuperar-contrasena">
             ¿Olvidaste tu contraseña?
           </Link>
         </div>

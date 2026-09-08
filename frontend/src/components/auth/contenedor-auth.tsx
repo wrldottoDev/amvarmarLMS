@@ -1,47 +1,81 @@
 import Image from "next/image";
 
+/**
+ * Marco de las pantallas de autenticación: una tarjeta de vidrio sobre un
+ * fondo propio, oscuro y quieto.
+ *
+ * El fondo NO sigue el tema del sistema. Es la única parte de la aplicación
+ * donde eso tiene sentido: es la portada, se ve antes de saber quién entra, y
+ * el efecto de vidrio necesita algo con color debajo para leerse como vidrio y
+ * no como un rectángulo gris.
+ *
+ * Las variables se redefinen para todo el subárbol en vez de tocar `Campo` y
+ * `Boton`: esos componentes se usan en cien pantallas más y no tienen por qué
+ * enterarse de que acá el fondo es oscuro. Heredan y quedan translúcidos solos.
+ */
 export function ContenedorAuth({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <main className="grid min-h-screen bg-[var(--superficie)] lg:grid-cols-[minmax(340px,0.85fr)_1.15fr]">
-      <section className="flex min-h-screen items-center justify-center px-6 py-10 sm:px-10 lg:min-h-0">
-        <div className="w-full max-w-sm">
-          <div className="mb-10 flex items-center gap-3">
-            <span className="grid size-11 place-items-center rounded-md bg-[var(--marca-tenue)]">
-              <Image className="h-9 w-auto" src="/brand/amvarmar-isotipo.png" alt="" width={24} height={36} priority />
-            </span>
-            <div>
-              <p className="text-lg font-bold text-[var(--mar-oscuro)]">AMVARMAR</p>
-              <p className="text-xs font-medium text-[var(--texto-secundario)]">Gestión logística</p>
-            </div>
-          </div>
-          {children}
-        </div>
-      </section>
+    <main
+      // `text-[var(--texto)]` explícito y no solo la variable: `body` ya
+      // computó su `color` con el `--texto` de `:root`, y los descendientes
+      // heredan ese color resuelto, no la variable. Sin esto, cualquier título
+      // sin clase de color se queda con el gris del tema claro y desaparece
+      // contra el vidrio.
+      className="relative grid min-h-screen place-items-center overflow-hidden px-5 py-10 text-[var(--texto)]"
+      style={
+        {
+          background: "linear-gradient(160deg, #04222c 0%, #06304a 55%, #041d2a 100%)",
+          "--superficie": "rgba(255, 255, 255, 0.07)",
+          "--texto": "#eef2f7",
+          "--texto-secundario": "rgba(226, 232, 240, 0.72)",
+          "--borde": "rgba(255, 255, 255, 0.16)",
+          "--hover": "rgba(255, 255, 255, 0.10)",
+          // Fondo del botón primario: lleva texto blanco encima, así que el
+          // celeste claro del tema oscuro no alcanza (quedaría en 2:1).
+          "--mar": "#2b5fd0",
+          "--mar-oscuro": "#23509c",
+          // Para enlaces sobre el vidrio, donde el azul del botón sí se pierde.
+          "--enlace": "#b9d1ff",
+        } as React.CSSProperties
+      }
+    >
+      {/* Luces difusas colocadas para pasar POR DETRÁS de la tarjeta, no por
+          las esquinas: `backdrop-blur` solo se nota si hay color que desenfocar
+          justo detrás del vidrio. Con las luces en los bordes, la tarjeta se
+          lee como un rectángulo gris. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-1/2 size-[42rem] -translate-x-[70%] -translate-y-[65%] rounded-full opacity-60 blur-3xl"
+        style={{ background: "radial-gradient(circle, #3f6fe0 0%, transparent 70%)" }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-1/2 size-[34rem] -translate-x-[15%] -translate-y-[20%] rounded-full opacity-45 blur-3xl"
+        style={{ background: "radial-gradient(circle, #0ea5b7 0%, transparent 70%)" }}
+      />
 
-      <aside className="relative hidden overflow-hidden bg-[var(--mar-oscuro)] lg:block" aria-hidden="true">
-        <div className="absolute inset-x-0 top-0 h-2 bg-[var(--marca)]" />
-        <div className="absolute inset-0 grid place-items-center p-16">
-          <div className="relative h-[420px] w-full max-w-xl border-y border-white/15">
-            <div className="absolute left-0 top-20 h-px w-full bg-white/10" />
-            <div className="absolute left-0 top-1/2 h-px w-full bg-white/10" />
-            <div className="absolute bottom-20 left-0 h-px w-full bg-white/10" />
-            <div className="absolute left-[16%] top-14 size-3 rounded-full bg-[var(--marca)]" />
-            <div className="absolute left-[16%] top-[62px] h-[120px] w-px bg-[var(--marca)]" />
-            <div className="absolute left-[16%] top-[174px] h-px w-[46%] bg-[var(--marca)]" />
-            <div className="absolute left-[62%] top-[169px] size-3 rounded-full bg-[var(--marca)]" />
-            <div className="absolute left-[62%] top-[181px] h-[142px] w-px bg-[var(--marca)]" />
-            <div className="absolute bottom-[91px] left-[62%] h-px w-[25%] bg-[var(--marca)]" />
-            <div className="absolute bottom-[86px] right-[12%] size-3 rounded-full bg-[var(--marca)]" />
+      <div className="relative w-full max-w-md">
+        <div className="mb-7 flex items-center justify-center gap-3">
+          <span className="grid size-10 place-items-center rounded-lg border border-white/15 bg-white/10">
             <Image
-              className="absolute bottom-8 right-0 h-auto w-32 opacity-90"
+              className="h-7 w-auto"
               src="/brand/amvarmar-isotipo.png"
               alt=""
-              width={102}
-              height={150}
+              width={24}
+              height={36}
+              priority
             />
+          </span>
+          <div>
+            <p className="text-base font-bold tracking-tight text-white">AMVARMAR</p>
+            <p className="text-xs font-medium text-[var(--texto-secundario)]">Gestión logística</p>
           </div>
         </div>
-      </aside>
+
+        <div className="rounded-2xl border border-white/15 bg-white/[0.07] p-7 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)] backdrop-blur-xl sm:p-9">
+          {children}
+        </div>
+      </div>
     </main>
   );
 }

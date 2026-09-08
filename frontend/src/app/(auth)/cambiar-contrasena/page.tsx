@@ -2,7 +2,6 @@
 
 import { ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ContenedorAuth } from "@/components/auth/contenedor-auth";
 import { FormularioContrasena } from "@/components/auth/formulario-contrasena";
 
 /**
@@ -15,8 +14,10 @@ import { FormularioContrasena } from "@/components/auth/formulario-contrasena";
 export default function PaginaCambiarContrasena() {
   const router = useRouter();
 
+  // Sin `ContenedorAuth`: lo pone el layout de `(auth)`. Envolverlo otra vez
+  // acá anidaba dos marcos, con su logo y su tarjeta repetidos.
   return (
-    <ContenedorAuth>
+    <>
       <h1 className="text-2xl font-bold">Cambiá tu contraseña</h1>
       <p className="mb-4 mt-1 text-sm text-[var(--texto-secundario)]">
         Es el único paso que falta para empezar.
@@ -31,6 +32,6 @@ export default function PaginaCambiarContrasena() {
       </div>
 
       <FormularioContrasena alTerminar={() => router.replace("/dashboard")} />
-    </ContenedorAuth>
+    </>
   );
 }

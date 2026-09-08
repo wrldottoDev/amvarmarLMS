@@ -81,7 +81,7 @@ export default function PaginaInvitacion({
           Los enlaces de invitación vencen a las 48 horas y se pueden usar una sola vez. Pídale
           uno nuevo a quien le creó la cuenta.
         </p>
-        <Link className="mt-6 inline-block text-sm font-semibold text-[var(--mar)] hover:underline" href="/login">
+        <Link className="mt-6 inline-block text-sm font-semibold text-[var(--enlace)] hover:underline" href="/login">
           Ir a iniciar sesión
         </Link>
       </>
