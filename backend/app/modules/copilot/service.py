@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import UUID
 
@@ -162,7 +162,27 @@ async def _resultado_de_llamada(
         return resultado
 
     argumentos = json.loads(argumentos_json)
-    resultado = await ejecutor(session, permisos, actor_user_id, company_id, argumentos)
+    try:
+        resultado = await ejecutor(session, permisos, actor_user_id, company_id, argumentos)
+    except Exception:
+        await session.rollback()
+        resultado = {"error": "La herramienta no pudo completar la operación."}
+        await registrar(
+            session,
+            action="copilot.tool.invoked",
+            resource_type="copilot_tool",
+            outcome=Outcome.FAILED,
+            actor_user_id=actor_user_id,
+            company_id=company_id,
+            after_data={
+                "herramienta": nombre,
+                "argumentos": argumentos,
+                "resultado": resultado,
+                "motivo": "error_del_ejecutor",
+            },
+        )
+        await session.commit()
+        return resultado
 
     await registrar(
         session,
@@ -187,6 +207,8 @@ async def procesar_turno(
     es_cliente: bool,
     empresa_nombre: str | None,
     mensajes: list[dict[str, str]],
+    ruta_actual: str | None = None,
+    adjunto: dict[str, str] | None = None,
 ) -> AsyncIterator[EventoSSE]:
     """Un turno completo: habla con el proveedor, ejecuta las herramientas que
     pida (dentro del tope), y vuelve a hablarle con los resultados hasta que
@@ -216,13 +238,55 @@ async def procesar_turno(
     ofrecidas = herramientas_disponibles(permisos)
     esquemas = esquemas_openai(list(ofrecidas))
     system_prompt = construir_system_prompt(
-        nombre_actor=nombre_actor, es_cliente=es_cliente, empresa=empresa_nombre
+        nombre_actor=nombre_actor,
+        es_cliente=es_cliente,
+        empresa=empresa_nombre,
+        ruta_actual=ruta_actual,
     )
 
     entrada: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         *({"role": m["rol"], "content": m["contenido"]} for m in mensajes),
     ]
+
+    if adjunto is not None:
+        # El archivo se lee UNA vez, acá, y no entra a `entrada`: lo que entra
+        # es el texto de lo que se leyó. Bajo `store=false` cada vuelta del
+        # bucle reenvía `entrada` completa, así que meter el archivo crudo lo
+        # mandaría de nuevo en cada tool call — varios MB por vuelta, contra
+        # un tope de tokens que ya existe.
+        try:
+            lectura = await proveedor.describir_factura(
+                media_type=adjunto["media_type"],
+                contenido_base64=adjunto["contenido_base64"],
+            )
+        except ProveedorNoDisponible as error:
+            yield EventoSSE("error", {"code": "COPILOT_NO_DISPONIBLE", "message": str(error)})
+            return
+
+        datos = {c: v for c, v in asdict(lectura).items() if v is not None}
+        entrada.append(
+            {
+                "role": "user",
+                "content": (
+                    f"Adjunté el archivo «{adjunto['nombre']}» a este chat. "
+                    "No está guardado en ninguna carga y no tiene id de "
+                    "documento, así que `procesar_factura_ocr` no aplica: si "
+                    "hay que registrar la carga, es con "
+                    "`crear_prealerta_borrador` y estos datos. "
+                    + (
+                        f"De ahí se leyó: {json.dumps(datos, ensure_ascii=False)}. "
+                        "Son datos leídos por OCR, no verificados: trátalos como lo que "
+                        "dice el papel, no como un hecho confirmado."
+                        if datos
+                        else "No se pudo leer ningún dato del archivo; decímelo así en vez "
+                        "de inventar valores."
+                    )
+                ),
+            }
+        )
+        yield EventoSSE("adjunto", {"nombre": adjunto["nombre"], "campos": datos})
+
     response_id_actual: str | None = None
     tokens_entrada_total = 0
     tokens_salida_total = 0
@@ -257,6 +321,9 @@ async def procesar_turno(
                 actor_user_id=actor_user_id,
                 company_id=company_id,
             )
+            # Una propuesta o un efecto de lectura ya realizado no debe
+            # desaparecer si la siguiente llamada al proveedor falla.
+            await session.commit()
             entrada.append(
                 {
                     "type": "function_call_output",

@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAutenticado } from "@/lib/api/client";
 
@@ -20,6 +21,44 @@ export interface EstadoHerramienta {
 export interface ErrorAsistente {
   code: string;
   message: string;
+}
+
+/** Un archivo que la persona suelta en el chat para que AMVI lo lea.
+ *
+ * No se guarda: viaja en la petición del turno, el backend lo lee una vez y
+ * lo descarta (ADR-0017). Para archivar la factura está el expediente de la
+ * carga, que valida bytes, tipo real y hash. */
+export interface AdjuntoChat {
+  nombre: string;
+  media_type: string;
+  contenido_base64: string;
+}
+
+export const MEDIA_TYPES_ADJUNTO = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+
+/** ~7.5 MB de archivo real: base64 infla cerca de un tercio y el backend
+ * corta en 10 MB de texto codificado. */
+export const LIMITE_ADJUNTO_BYTES = 7_500_000;
+
+export async function leerComoAdjunto(archivo: File): Promise<AdjuntoChat> {
+  const buffer = await archivo.arrayBuffer();
+  // Se arma por trozos: `String.fromCharCode(...bytes)` con un archivo de
+  // varios MB revienta la pila de argumentos.
+  const bytes = new Uint8Array(buffer);
+  let binario = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binario += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return {
+    nombre: archivo.name,
+    media_type: archivo.type,
+    contenido_base64: btoa(binario),
+  };
 }
 
 /** Espejo de `CampoPropuesto` (backend, ADR-0012): un campo que AMVI extrajo
@@ -76,6 +115,9 @@ export function useChatAsistente() {
   const [propuestas, setPropuestas] = useState<PropuestaEnConversacion[]>([]);
   const [error, setError] = useState<ErrorAsistente | null>(null);
   const controladorRef = useRef<AbortController | null>(null);
+  // En qué pantalla está la persona: AMVI orienta desde ahí en vez de
+  // describirle la aplicación entera (ADR-0017).
+  const ruta = usePathname();
   // Opaco: solo namespacea el tope de tokens por conversación en el backend
   // (ADR-0012, enmienda 2026-09-06). Uno por pestaña de chat; se renueva en
   // `reiniciar()`, igual que se vacía `mensajes`.
@@ -84,7 +126,7 @@ export function useChatAsistente() {
   useEffect(() => () => controladorRef.current?.abort(), []);
 
   const enviar = useCallback(
-    async (texto: string) => {
+    async (texto: string, adjunto?: AdjuntoChat) => {
       const historial = [...mensajes, { rol: "user" as const, contenido: texto }];
       const posicionAncla = historial.length - 1;
       setMensajes(historial);
@@ -103,6 +145,8 @@ export function useChatAsistente() {
           body: JSON.stringify({
             mensajes: historial,
             conversacion_id: conversacionIdRef.current,
+            contexto_pagina: { ruta },
+            ...(adjunto ? { adjunto } : {}),
           }),
           signal: controlador.signal,
         });
@@ -163,7 +207,7 @@ export function useChatAsistente() {
         }
       }
     },
-    [mensajes],
+    [mensajes, ruta],
   );
 
   const cancelar = useCallback(() => controladorRef.current?.abort(), []);

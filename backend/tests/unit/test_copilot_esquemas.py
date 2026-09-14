@@ -8,9 +8,10 @@ disponible para correr la suite normal.
 """
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.modules.copilot.esquemas_openai import EsquemaNoSoportado, esquema_openai, esquemas_openai
+from app.modules.copilot.schemas import AdjuntoChat
 from app.modules.copilot.tools import (
     HERRAMIENTAS,
     ClaseHerramienta,
@@ -114,3 +115,13 @@ class TestEsquemasOpenaiPlural:
         esquemas = esquemas_openai(definiciones)
         assert len(esquemas) == len(definiciones)
         assert {e["name"] for e in esquemas} == set(HERRAMIENTAS)
+
+
+class TestAdjuntoChat:
+    def test_rechaza_base64_invalido(self) -> None:
+        with pytest.raises(ValidationError, match="base64 válido"):
+            AdjuntoChat(
+                nombre="factura.pdf",
+                media_type="application/pdf",
+                contenido_base64="no-es-base64!!",
+            )

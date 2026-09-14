@@ -28,6 +28,30 @@ describe("fragmentarConEnlaces", () => {
     ]);
   });
 
+  it("enlaza una ruta conocida y le saca los backticks", () => {
+    const fragmentos = fragmentarConEnlaces("Andá a `/despachos/nuevo` y elegí la carga.");
+
+    expect(fragmentos).toEqual([
+      { texto: "Andá a " },
+      { texto: "/despachos/nuevo", href: "/despachos/nuevo" },
+      { texto: " y elegí la carga." },
+    ]);
+  });
+
+  it("deja como texto una ruta que no existe", () => {
+    // El prompt le pide al modelo rutas reales, pero puede equivocarse: un
+    // enlace a una pantalla inexistente promete algo y lleva a un 404.
+    const fragmentos = fragmentarConEnlaces("Entrá a `/inventado/cosas`.");
+
+    expect(fragmentos).toEqual([{ texto: "Entrá a `/inventado/cosas`." }]);
+  });
+
+  it("no enlaza una barra suelta fuera de backticks", () => {
+    expect(fragmentarConEnlaces("Son 3/4 de la carga.")).toEqual([
+      { texto: "Son 3/4 de la carga." },
+    ]);
+  });
+
   it("enlaza varios códigos en el mismo mensaje", () => {
     const fragmentos = fragmentarConEnlaces("SHP-2026-000001 y SHP-2026-000002 llegan mañana.");
 

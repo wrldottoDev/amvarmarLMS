@@ -97,8 +97,8 @@ class Settings(BaseSettings):
     # el texto de la conversación, solo un contador que vence solo.
     copilot_max_tokens_conversacion: int = 50_000
     copilot_conversacion_ttl_horas: int = 4
-    # ADR-0012: clientes tienen tope mensual; personal interno no.
-    copilot_limite_mensajes_cliente_por_mes: int = 100
+    # ADR-0012: clientes tienen tope en una ventana móvil de 30 días; personal interno no.
+    copilot_limite_mensajes_cliente_ventana_30_dias: int = 100
     # Fase 4: cuánto dura una propuesta de escritura (`PropuestaAccion`)
     # pendiente de confirmación antes de vencer. Ni tan corto que la persona
     # no llegue a revisarla, ni tan largo que confirme algo desactualizado.

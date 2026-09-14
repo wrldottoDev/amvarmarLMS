@@ -1,10 +1,16 @@
 "use client";
 
-import { Bot, Loader2, Send, X } from "lucide-react";
+import { Bot, Loader2, Paperclip, Send, X } from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { fragmentarConEnlaces } from "@/features/copilot/enlaces";
-import { useChatAsistente } from "@/features/copilot/usar-chat";
+import {
+  type AdjuntoChat,
+  LIMITE_ADJUNTO_BYTES,
+  MEDIA_TYPES_ADJUNTO,
+  leerComoAdjunto,
+  useChatAsistente,
+} from "@/features/copilot/usar-chat";
 import { useCapacidadesAsistente } from "@/features/copilot/consultas";
 import { clases } from "@/lib/utilidades";
 import { PropuestaCard } from "./propuesta-card";
@@ -46,12 +52,23 @@ function TextoConEnlaces({ texto }: { texto: string }) {
   );
 }
 
-function PanelChat({ nombre, onCerrar }: { nombre: string; onCerrar: () => void }) {
+function PanelChat({
+  nombre,
+  puedeAdjuntar,
+  onCerrar,
+}: {
+  nombre: string;
+  puedeAdjuntar: boolean;
+  onCerrar: () => void;
+}) {
   const { mensajes, enviando, herramientasActivas, propuestas, error, enviar, reiniciar } =
     useChatAsistente();
   const [borrador, setBorrador] = useState("");
+  const [adjunto, setAdjunto] = useState<AdjuntoChat | null>(null);
+  const [errorAdjunto, setErrorAdjunto] = useState<string | null>(null);
   const listaRef = useRef<HTMLDivElement>(null);
   const campoRef = useRef<HTMLTextAreaElement>(null);
+  const archivoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     listaRef.current?.scrollTo({ top: listaRef.current.scrollHeight });
@@ -73,8 +90,24 @@ function PanelChat({ nombre, onCerrar }: { nombre: string; onCerrar: () => void 
     evento.preventDefault();
     const texto = borrador.trim();
     if (!texto || enviando) return;
+    const archivo = adjunto ?? undefined;
     setBorrador("");
-    void enviar(texto);
+    setAdjunto(null);
+    void enviar(texto, archivo);
+  }
+
+  async function alElegirArchivo(archivo: File | undefined) {
+    setErrorAdjunto(null);
+    if (!archivo) return;
+    if (!(MEDIA_TYPES_ADJUNTO as readonly string[]).includes(archivo.type)) {
+      setErrorAdjunto("Solo puedo leer PDF o imágenes (JPG, PNG, WEBP).");
+      return;
+    }
+    if (archivo.size > LIMITE_ADJUNTO_BYTES) {
+      setErrorAdjunto("El archivo es muy grande: el máximo son 7 MB.");
+      return;
+    }
+    setAdjunto(await leerComoAdjunto(archivo));
   }
 
   return (
@@ -166,7 +199,54 @@ function PanelChat({ nombre, onCerrar }: { nombre: string; onCerrar: () => void 
         ) : null}
       </div>
 
-      <form onSubmit={alEnviar} className="flex shrink-0 items-end gap-2 border-t p-3">
+      <form onSubmit={alEnviar} className="shrink-0 border-t p-3">
+        {errorAdjunto ? (
+          <p className="mb-2 rounded-md bg-[var(--peligro-tenue)] px-2.5 py-1.5 text-xs text-[var(--peligro)]">
+            {errorAdjunto}
+          </p>
+        ) : null}
+
+        {adjunto ? (
+          <div className="mb-2 flex items-center gap-2 rounded-md border bg-[var(--hover)] px-2.5 py-1.5 text-xs">
+            <Paperclip className="size-3.5 shrink-0 text-[var(--texto-secundario)]" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{adjunto.nombre}</span>
+            <button
+              type="button"
+              onClick={() => setAdjunto(null)}
+              className="grid size-5 shrink-0 place-items-center rounded hover:bg-[var(--superficie)]"
+              aria-label={`Quitar ${adjunto.nombre}`}
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+
+        <div className="flex items-end gap-2">
+        {puedeAdjuntar ? (
+          <>
+            <input
+              ref={archivoRef}
+              type="file"
+              className="hidden"
+              accept={MEDIA_TYPES_ADJUNTO.join(",")}
+              onChange={(evento) => {
+                const archivo = evento.target.files?.[0];
+                evento.target.value = "";
+                void alElegirArchivo(archivo);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => archivoRef.current?.click()}
+              disabled={enviando}
+              aria-label="Adjuntar una factura o una foto"
+              title="Adjuntar una factura o una foto"
+              className="grid size-10 shrink-0 place-items-center rounded-md border text-[var(--texto-secundario)] hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Paperclip className="size-4" aria-hidden="true" />
+            </button>
+          </>
+        ) : null}
         <textarea
           ref={campoRef}
           value={borrador}
@@ -192,6 +272,7 @@ function PanelChat({ nombre, onCerrar }: { nombre: string; onCerrar: () => void 
         >
           <Send className="size-4" aria-hidden="true" />
         </button>
+        </div>
       </form>
     </div>
   );
@@ -222,7 +303,11 @@ export function AmviChat() {
             onMouseDown={() => setAbierto(false)}
           />
           <div className="absolute inset-y-0 right-0" onMouseDown={(evento) => evento.stopPropagation()}>
-            <PanelChat nombre={data.nombre} onCerrar={() => setAbierto(false)} />
+            <PanelChat
+              nombre={data.nombre}
+              puedeAdjuntar={data.puede_adjuntar}
+              onCerrar={() => setAbierto(false)}
+            />
           </div>
         </div>
       ) : null}

@@ -7,6 +7,8 @@ ninguna prueba de este archivo toca la red.
 """
 
 import asyncio
+import base64
+import json
 import os
 import uuid
 from contextlib import contextmanager
@@ -26,11 +28,12 @@ from app.main import app
 from app.modules.copilot import executors_escritura
 from app.modules.copilot import provider as copilot_provider
 from app.modules.copilot.acciones import REGISTRO_DE_CONFIRMACION, AccionCopilot
-from app.modules.copilot.provider import RespuestaProveedor
+from app.modules.copilot.provider import DescripcionFactura, RespuestaProveedor
 from app.modules.copilot.provider_falso import ProveedorFalsoDeterministico
 from app.modules.copilot.router import _fabrica_proveedor
+from app.modules.rbac.catalog import Perm
 from app.modules.rbac.models import RoleCode, ScopeType
-from app.modules.rbac.service import obtener_permisos_efectivos
+from app.modules.rbac.service import PermisoEfectivo, PermisosEfectivos, obtener_permisos_efectivos
 from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
@@ -39,15 +42,29 @@ PASSWORD = "una passphrase de prueba suficientemente larga"
 
 
 class _ProveedorFalso:
-    def __init__(self, guion: list[RespuestaProveedor]):
+    def __init__(self, guion: list[RespuestaProveedor], lectura: DescripcionFactura | None = None):
         self._guion = guion
+        self._lectura = lectura
         self.llamadas = 0
+        # Lo que recibió: sirve para comprobar que el archivo se leyó una sola
+        # vez y que la entrada del modelo no lo arrastra.
+        self.entradas: list[list[dict[str, Any]]] = []
+        self.archivos_leidos: list[str] = []
 
     async def responder(
         self, *, entrada: list[dict[str, Any]], herramientas: list[dict[str, Any]]
     ) -> RespuestaProveedor:
         self.llamadas += 1
+        self.entradas.append(entrada)
         return self._guion[self.llamadas - 1]
+
+    async def describir_factura(
+        self, *, media_type: str, contenido_base64: str
+    ) -> DescripcionFactura:
+        self.archivos_leidos.append(media_type)
+        return self._lectura or DescripcionFactura(
+            numero_guia=None, proveedor=None, monto=None, moneda=None, cliente=None
+        )
 
 
 def _texto(texto: str) -> RespuestaProveedor:
@@ -287,7 +304,8 @@ class TestCapabilities:
             resp = await cliente.get("/api/v1/copilot/capabilities", headers=headers)
 
         assert (
-            resp.json()["cuota_restante"] == get_settings().copilot_limite_mensajes_cliente_por_mes
+            resp.json()["cuota_restante"]
+            == get_settings().copilot_limite_mensajes_cliente_ventana_30_dias
         )
 
 
@@ -349,7 +367,8 @@ class TestRespond:
         # Agota la cuota directamente en Redis: más rápido y más claro que
         # mandar cien requests.
         await redis.set(
-            f"rl:copilot:mensual:{actor}", get_settings().copilot_limite_mensajes_cliente_por_mes
+            f"rl:copilot:mensual:{actor}",
+            get_settings().copilot_limite_mensajes_cliente_ventana_30_dias,
         )
         with _clave_openai("sk-test-no-se-usa"):
             resp = await cliente.post(
@@ -362,6 +381,179 @@ class TestRespond:
             )
 
         assert resp.status_code == 429
+
+    async def test_un_adjunto_se_lee_una_vez_y_no_viaja_en_la_conversacion(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usar_proveedor
+    ) -> None:
+        """El archivo se lee fuera del bucle de tool calling y lo que entra a
+        la conversación es el texto de lo leído, no el archivo.
+
+        Importa porque bajo `store=false` cada vuelta reenvía la entrada
+        completa: el archivo crudo ahí dentro serían varios MB por vuelta.
+        """
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        proveedor = _ProveedorFalso(
+            guion=[_texto("Leí la factura.")],
+            lectura=DescripcionFactura(
+                numero_guia="GUIA-123",
+                proveedor="Acme",
+                monto=42.5,
+                moneda="USD",
+                cliente=None,
+            ),
+        )
+        usar_proveedor(proveedor)
+        contenido = base64.b64encode(b"%PDF-1.4 falso").decode()
+
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "¿qué dice esta factura?"}],
+                    "conversacion_id": "conv-adjunto",
+                    "adjunto": {
+                        "nombre": "factura.pdf",
+                        "media_type": "application/pdf",
+                        "contenido_base64": contenido,
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        assert proveedor.archivos_leidos == ["application/pdf"]
+
+        # Los datos leídos llegan al modelo; el base64 del archivo no.
+        entrada = json.dumps(proveedor.entradas[0], ensure_ascii=False)
+        assert "GUIA-123" in entrada
+        assert contenido not in entrada
+
+        # Y se le avisa a la interfaz qué se extrajo, para poder mostrarlo.
+        assert "event: adjunto" in resp.text
+        assert "GUIA-123" in resp.text
+
+    async def test_un_adjunto_ilegible_lo_dice_en_vez_de_inventar(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usar_proveedor
+    ) -> None:
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        # Todos los campos en `None`: el proveedor no pudo leer nada.
+        proveedor = _ProveedorFalso(guion=[_texto("No pude leer el archivo.")])
+        usar_proveedor(proveedor)
+
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "leé esto"}],
+                    "conversacion_id": "conv-ilegible",
+                    "adjunto": {
+                        "nombre": "borroso.png",
+                        "media_type": "image/png",
+                        "contenido_base64": base64.b64encode(b"no-es-una-imagen").decode(),
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        entrada = json.dumps(proveedor.entradas[0], ensure_ascii=False)
+        assert "inventar" in entrada
+
+    async def test_un_cliente_no_puede_adjuntar(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usar_proveedor
+    ) -> None:
+        """ADR-0017: leer un archivo es preparar una acción, y para el cliente
+        AMVI es solo una guía. El corte ocurre antes de gastar la llamada."""
+        await sembrar_rbac(db_directa)
+        _actor, email, _empresa = await _usuario_cliente(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        proveedor = _ProveedorFalso(guion=[_texto("no debería llegar acá")])
+        usar_proveedor(proveedor)
+
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "mirá esta factura"}],
+                    "conversacion_id": "conv-cliente-adjunto",
+                    "adjunto": {
+                        "nombre": "factura.pdf",
+                        "media_type": "application/pdf",
+                        "contenido_base64": base64.b64encode(b"%PDF-1.4").decode(),
+                    },
+                },
+            )
+
+        assert resp.status_code == 200  # SSE: el error viaja como evento
+        assert "SIN_PERMISO" in resp.text
+        assert proveedor.archivos_leidos == []
+        assert proveedor.llamadas == 0
+
+    async def test_un_tipo_de_archivo_no_soportado_se_rechaza_en_el_contrato(
+        self, cliente: AsyncClient, db_directa: AsyncSession
+    ) -> None:
+        """Un `.exe` renombrado no llega ni al permiso: lo corta el schema."""
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "corré esto"}],
+                    "conversacion_id": "conv-tipo-malo",
+                    "adjunto": {
+                        "nombre": "cosa.exe",
+                        "media_type": "application/x-msdownload",
+                        "contenido_base64": base64.b64encode(b"MZ").decode(),
+                    },
+                },
+            )
+
+        assert resp.status_code == 422
+
+    async def test_la_pantalla_actual_llega_al_prompt(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usar_proveedor
+    ) -> None:
+        """`contexto_pagina` existía en el contrato pero nadie lo leía. Ahora
+        entra al system prompt para poder orientar desde donde está la
+        persona en vez de describirle la aplicación entera (ADR-0017)."""
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        proveedor = _ProveedorFalso(guion=[_texto("Desde donde estás…")])
+        usar_proveedor(proveedor)
+
+        with _clave_openai("sk-test-no-se-usa"):
+            await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "¿cómo pido un despacho?"}],
+                    "conversacion_id": "conv-ruta",
+                    "contexto_pagina": {"ruta": "/despachos"},
+                },
+            )
+
+        system = proveedor.entradas[0][0]
+        assert system["role"] == "system"
+        assert "/despachos" in system["content"]
 
     async def test_conversacion_en_su_limite_de_tokens_no_llama_al_proveedor(
         self, cliente: AsyncClient, db_directa: AsyncSession, redis, usar_proveedor
@@ -473,12 +665,19 @@ class TestPropuestas:
 
         resp = await cliente.post(
             f"/api/v1/copilot/proposals/{propuesta_id}/confirm",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "propuesta-vencida"},
+            json={"campos": {}},
+        )
+        reintento = await cliente.post(
+            f"/api/v1/copilot/proposals/{propuesta_id}/confirm",
+            headers={**headers, "Idempotency-Key": "propuesta-vencida"},
             json={"campos": {}},
         )
 
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "COPILOT_PROPUESTA_VENCIDA"
+        assert reintento.status_code == 409
+        assert reintento.json()["error"]["code"] == "COPILOT_PROPUESTA_VENCIDA"
 
         estado = (
             await db_directa.execute(
@@ -487,6 +686,63 @@ class TestPropuestas:
             )
         ).scalar_one()
         assert estado == "EXPIRED"
+
+    async def test_rechazar_una_propuesta_vencida_la_deja_expired(
+        self, cliente: AsyncClient, db_directa: AsyncSession
+    ) -> None:
+        await sembrar_rbac(db_directa)
+        actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        propuesta_id = await self._crear_propuesta(db_directa, creador=actor, vencida=True)
+        headers = await _autenticar(cliente, email)
+
+        resp = await cliente.post(
+            f"/api/v1/copilot/proposals/{propuesta_id}/reject", headers=headers
+        )
+
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "COPILOT_PROPUESTA_VENCIDA"
+        estado = (
+            await db_directa.execute(
+                text("SELECT status FROM copilot_action_proposals WHERE id = :id"),
+                {"id": propuesta_id},
+            )
+        ).scalar_one()
+        assert estado == "EXPIRED"
+
+    async def test_confirmar_revalida_la_regla_de_la_herramienta(
+        self,
+        cliente: AsyncClient,
+        db_directa: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await sembrar_rbac(db_directa)
+        actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        propuesta_id = await self._crear_propuesta(db_directa, creador=actor)
+        headers = await _autenticar(cliente, email)
+        permisos_sin_draft = PermisosEfectivos(
+            user_id=actor,
+            authz_version=1,
+            permisos=(PermisoEfectivo(Perm.SHIPMENTS_CREATE, ScopeType.GLOBAL, None),),
+        )
+
+        async def _permisos_sin_draft(*args):
+            return permisos_sin_draft
+
+        monkeypatch.setattr(
+            "app.modules.copilot.router.obtener_permisos_efectivos",
+            _permisos_sin_draft,
+        )
+
+        resp = await cliente.post(
+            f"/api/v1/copilot/proposals/{propuesta_id}/confirm",
+            headers=headers,
+            json={"campos": {}},
+        )
+
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "SIN_PERMISO"
 
     async def test_confirmar_sin_ejecutor_conectado_da_409_controlado(
         self, cliente: AsyncClient, db_directa: AsyncSession, monkeypatch: pytest.MonkeyPatch

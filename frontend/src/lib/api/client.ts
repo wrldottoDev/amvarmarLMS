@@ -48,7 +48,10 @@ function avisarSiDebeCambiarContrasena(respuesta: Response, cuerpo: unknown) {
   window.dispatchEvent(new CustomEvent(EVENTO_CAMBIO_OBLIGATORIO));
 }
 
-const fetchAutenticado: typeof fetch = async (input, init) => {
+// Exportado para el SSE del asistente (ADR-0012): `openapi-fetch` no
+// transmite un cuerpo en streaming, así que ese hook usa `fetch` directo, pero
+// necesita el mismo bearer + reintento tras 401 que el resto de la API.
+export const fetchAutenticado: typeof fetch = async (input, init) => {
   const ruta = rutaDe(input);
   const tokenInicial = obtenerAccessToken();
   const versionInicial = obtenerVersionCompartida();

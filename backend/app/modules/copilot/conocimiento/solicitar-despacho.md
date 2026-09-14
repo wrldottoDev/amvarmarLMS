@@ -1,6 +1,6 @@
 # Cómo solicito un despacho
 
-<!-- palabras_clave: solicitar despacho, pedir despacho, nuevo despacho, despachar cargas, sacar cargas de bodega -->
+<!-- palabras_clave: solicitar despacho, pedir despacho, pido, pedir, solicito, quiero despachar, nuevo despacho, despachar cargas, sacar cargas de bodega, retirar mercaderia, maritimo, aereo, terrestre -->
 
 Andá a **Despachos → Solicitar despacho** y elegí una o más cargas de la misma empresa.
 

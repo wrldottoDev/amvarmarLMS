@@ -1,6 +1,6 @@
 # Cómo subo un documento que falta
 
-<!-- palabras_clave: subir documento, documento pendiente, falta un documento, adjuntar archivo, requisito documental -->
+<!-- palabras_clave: subir documento, subo, subir, documento pendiente, falta un documento, adjuntar archivo, adjunto, requisito documental, factura, packing list, sli, permiso, papeles, expediente -->
 
 En el detalle de la carga hay un panel de documentos con la lista de requisitos: cada uno indica qué
 documento hace falta y trae su propio botón para subirlo. Si necesitás adjuntar algo que no está en la

@@ -1,6 +1,6 @@
 # Cómo busco o filtro cargas
 
-<!-- palabras_clave: buscar carga, filtrar cargas, buscar por wr, buscar por factura, encontrar una carga -->
+<!-- palabras_clave: buscar carga, filtrar cargas, buscar por wr, encontrar una carga, busco, filtro, columnas -->
 
 En **Cargas** hay un campo de búsqueda general (`q`) que busca al mismo tiempo por número SHP, WR,
 shipper, carrier, factura, PO, tracking, contenedor y BL — no hace falta saber en cuál de esos campos

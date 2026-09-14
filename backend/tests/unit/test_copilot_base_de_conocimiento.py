@@ -54,6 +54,25 @@ class TestBuscar:
         assert entrada is not None
         assert "usuario" in entrada.titulo.lower()
 
+    def test_encuentra_aunque_la_conjugacion_no_coincida(self) -> None:
+        # Ninguna palabra de la pregunta aparece tal cual en las palabras
+        # clave: la guía dice "aprobar despacho" y acá se pregunta por
+        # "despacho aprobado". Sin comparar por raíz la única coincidencia era
+        # "significa", y ganaba la guía de estados de *carga*.
+        entrada = bc.buscar("¿qué significa despacho aprobado?")
+        assert entrada is not None
+        assert "despacho" in entrada.titulo.lower()
+
+    def test_el_plural_de_la_pregunta_alcanza_al_singular_de_la_guia(self) -> None:
+        entrada = bc.buscar("¿qué documentos me faltan?")
+        assert entrada is not None
+        assert "documento" in entrada.titulo.lower()
+
+    def test_no_recorta_una_palabra_corta_hasta_dejar_un_munon(self) -> None:
+        # Una raíz de una o dos letras matchearía casi cualquier guía.
+        assert bc._raiz("ver") == "ver"
+        assert bc._raiz("sli") == "sli"
+
     def test_es_determinista_ante_la_misma_pregunta(self) -> None:
         primera = bc.buscar("¿cómo veo mis avisos?")
         segunda = bc.buscar("¿cómo veo mis avisos?")

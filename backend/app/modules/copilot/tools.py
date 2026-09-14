@@ -349,7 +349,9 @@ HERRAMIENTAS: dict[str, DefinicionHerramienta] = {
         nombre="procesar_factura_ocr",
         descripcion=(
             "Extrae número de guía, proveedor, monto y cliente de una factura ya "
-            "cargada. Devuelve una propuesta para revisión humana; no registra nada."
+            "archivada en el expediente de una carga, por su id de documento. Un "
+            "archivo adjuntado al chat NO se procesa acá: ese ya viene leído en la "
+            "conversación. Devuelve una propuesta para revisión humana; no registra nada."
         ),
         argumentos=ProcesarFacturaOcrArgs,
         # RequiereTodos, no solo el permiso de dominio (mismo criterio que

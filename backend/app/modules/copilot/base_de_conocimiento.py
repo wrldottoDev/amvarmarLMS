@@ -65,10 +65,36 @@ def _entradas() -> tuple[EntradaConocimiento, ...]:
     return tuple(_parsear(p) for p in archivos)
 
 
+# Terminaciones que se recortan para comparar por raíz, de la más larga a la
+# más corta. No es un stemmer de verdad (no conjuga, no sabe de excepciones):
+# es lo mínimo para que "documentos" alcance a "documento", "faltan" a
+# "falta", "crea" a "crear" y "aprobado" a "aprobar". Sin esto, la búsqueda
+# era un juego de anotar cada conjugación a mano en las palabras clave.
+_TERMINACIONES = (
+    "aciones", "acion", "amos", "ando", "aron", "ados", "adas",
+    "ado", "ada", "ar", "er", "ir", "es", "os", "as", "an", "en", "a", "o", "s",
+)  # fmt: skip
+
+# Debajo de esto recortar deja un muñón que matchea cualquier cosa ("ver" no
+# debe volverse "v").
+_LARGO_MINIMO_RAIZ = 3
+
+
+def _raiz(palabra: str) -> str:
+    for terminacion in _TERMINACIONES:
+        if palabra.endswith(terminacion) and len(palabra) - len(terminacion) >= _LARGO_MINIMO_RAIZ:
+            return palabra[: -len(terminacion)]
+    return palabra
+
+
 def _palabras(texto: str) -> frozenset[str]:
     # `findall` en vez de `.split()`: sin esto, "despacho?" o "carga," nunca
     # matchean la palabra clave "despacho"/"carga" por el signo pegado.
-    return frozenset(re.findall(r"[a-z0-9]+", _normalizar(texto))) - _PALABRAS_VACIAS
+    # Las vacías se descartan por la palabra entera, antes de recortar: la
+    # raíz de "esta" y la de "este" son la misma y no queremos que dependa de
+    # cuál escribió la persona.
+    sueltas = frozenset(re.findall(r"[a-z0-9]+", _normalizar(texto))) - _PALABRAS_VACIAS
+    return frozenset(_raiz(palabra) for palabra in sueltas)
 
 
 @lru_cache
@@ -84,8 +110,8 @@ def _palabras_clave_de(entrada: EntradaConocimiento) -> frozenset[str]:
 
 
 def buscar(tema: str) -> EntradaConocimiento | None:
-    """La entrada que más palabras comparte con `tema` (bolsa de palabras,
-    no frase exacta). `None` si ninguna comparte al menos una — un empate se
+    """La entrada que más raíces comparte con `tema` (bolsa de palabras, no
+    frase exacta). `None` si ninguna comparte al menos una — un empate se
     resuelve por orden alfabético de archivo, para que el resultado sea el
     mismo en cada corrida."""
     palabras_tema = _palabras(tema)

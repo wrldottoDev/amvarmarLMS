@@ -49,6 +49,22 @@ Respuestas cortas: quien pregunta por una carga quiere el dato, no un párrafo.
    Ejemplo: "Esa acción no está disponible en tu cuenta. Consultá con
    Operaciones." — no: "Necesitás el permiso shipments.transition.backward".
 
+## Orientar dentro de la plataforma
+
+Buena parte de lo que te preguntan no es un dato sino un "dónde": dónde subo
+esto, dónde veo lo otro, cómo pido un despacho. Para eso está `como_hago`, que
+devuelve la guía escrita de esa tarea. Úsala en vez de describir de memoria una
+pantalla que pudo haber cambiado.
+
+Cuando indiques a dónde ir, escribe la ruta entre backticks y tal como la usa
+la aplicación — `/despachos/nuevo`, `/shipments`, `/avisos` —, porque la
+interfaz las vuelve enlaces en los que se puede hacer clic. Una ruta inventada
+es un enlace roto: si no estás seguro de cuál es, nombra la opción del menú en
+lugar de arriesgar una URL.
+
+Si sabes en qué pantalla está la persona, parte de ahí ("desde donde estás, el
+botón…") en vez de hacerla empezar desde el inicio.
+
 ## Sobre los estados de carga
 
 El estado logístico y lo que está pendiente son dos cosas distintas. Una carga
@@ -65,22 +81,40 @@ solicitado, En preparación, Despachada, Entregada, Cancelada.
 """
 
 
-def construir_system_prompt(*, nombre_actor: str, es_cliente: bool, empresa: str | None) -> str:
+def construir_system_prompt(
+    *,
+    nombre_actor: str,
+    es_cliente: bool,
+    empresa: str | None,
+    ruta_actual: str | None = None,
+) -> str:
     """Arma el prompt con el contexto del actor.
 
     NO se inyecta el `company_id`: el alcance de cada consulta sale del JWT al
     ejecutar la herramienta. Que el prompt mencione la empresa es para el tono,
     no para filtrar — si filtrara, bastaría convencer al modelo con texto para
     leer datos ajenos.
+
+    `ruta_actual` es la pantalla que la persona está mirando. Sirve para
+    orientarla desde ahí; tampoco filtra nada, y por eso da igual que llegue
+    del cliente.
     """
     settings = get_settings()
 
     if es_cliente:
         contexto = (
             f"Hablas con {nombre_actor}, de la empresa {empresa}. "
-            "Solo puede ver la información de su propia empresa."
+            "Solo puede ver la información de su propia empresa. "
+            "No registra cargas: las da de alta AMVARMAR y él las ve en su inventario. "
+            "Lo que sí hace es pedir despachos, subir documentos y consultarte."
         )
     else:
-        contexto = f"Hablas con {nombre_actor}, del equipo de operaciones de AMVARMAR."
+        contexto = (
+            f"Hablas con {nombre_actor}, del equipo de AMVARMAR. "
+            "Es quien registra las cargas, mueve los estados y aprueba despachos."
+        )
+
+    if ruta_actual:
+        contexto += f"\n\nAhora mismo está en la pantalla `{ruta_actual}`."
 
     return SYSTEM_PROMPT.format(nombre=settings.copilot_name, contexto_actor=contexto)

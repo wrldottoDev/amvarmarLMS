@@ -366,6 +366,33 @@ export interface paths {
         patch: operations["actualizar_carga_api_v1_shipments__shipment_id__patch"];
         trace?: never;
     };
+    "/api/v1/shipments/{shipment_id}/packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reemplazar Bultos
+         * @description Reemplaza el desglose completo de la carga.
+         *
+         *     `PUT` y no `PATCH` por fila: el formulario muestra la lista entera y quien
+         *     la guarda cree estar guardando eso. Parchear pieza por pieza dejaría al que
+         *     quitó una en la pantalla con la pieza todavía en la base.
+         *
+         *     La lista vacía la rechaza Pydantic con `422`, y la base tiene el mismo
+         *     invariante con un constraint diferible por si alguien llega por otra vía.
+         */
+        put: operations["reemplazar_bultos_api_v1_shipments__shipment_id__packages_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments/revision-legacy": {
         parameters: {
             query?: never;
@@ -491,6 +518,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shipments/{shipment_id}/transitions/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Obtener Transiciones Disponibles */
+        get: operations["obtener_transiciones_disponibles_api_v1_shipments__shipment_id__transitions_available_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/requirements": {
         parameters: {
             query?: never;
@@ -525,6 +569,40 @@ export interface paths {
         patch: operations["resolver_requisito_api_v1_shipments__shipment_id__requirements__requirement_id__patch"];
         trace?: never;
     };
+    "/api/v1/shipments/{shipment_id}/requirements/{requirement_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verificar Requisito Documental */
+        post: operations["verificar_requisito_documental_api_v1_shipments__shipment_id__requirements__requirement_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/requirements/{requirement_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rechazar Requisito Documental */
+        post: operations["rechazar_requisito_documental_api_v1_shipments__shipment_id__requirements__requirement_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/timeline": {
         parameters: {
             query?: never;
@@ -540,6 +618,46 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/delivery-disputes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reportar Inconformidad
+         * @description Cliente reporta que no reconoce una entrega ya marcada (ADR-0006).
+         *
+         *     No cambia el estado por sí sola — bloquea el archivado hasta que
+         *     Operaciones la resuelva.
+         */
+        post: operations["reportar_inconformidad_api_v1_shipments__shipment_id__delivery_disputes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shipments/{shipment_id}/delivery-disputes/{dispute_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Resolver Inconformidad */
+        patch: operations["resolver_inconformidad_api_v1_shipments__shipment_id__delivery_disputes__dispute_id__patch"];
         trace?: never;
     };
     "/api/v1/dashboard/client": {
@@ -619,7 +737,7 @@ export interface paths {
         put?: never;
         /**
          * Completar Subida
-         * @description Segundo tiempo: verifica lo que realmente se subió.
+         * @description Valida metadata y cabecera; el worker calcula el hash por bloques.
          *
          *     Si algo falla, el documento queda en `FAILED`, el objeto se borra y el
          *     intento queda auditado: una subida rechazada suele ser un error del cliente,
@@ -673,6 +791,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/document-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalogo De Tipos Documentales */
+        get: operations["catalogo_de_tipos_documentales_api_v1_document_types_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{document_id}": {
         parameters: {
             query?: never;
@@ -711,27 +846,49 @@ export interface paths {
         patch: operations["renombrar_documento_api_v1_documents__document_id__patch"];
         trace?: never;
     };
-    "/api/v1/shipments/{shipment_id}/documents/download-all": {
+    "/api/v1/shipments/{shipment_id}/documents/exports": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Descargar Todos
-         * @description Todos los documentos de una carga en un ZIP.
-         *
-         *     Existía en el sistema viejo y se usa para mandarle el expediente completo a
-         *     un agente aduanal. Bajar ocho archivos uno por uno es trabajo que la máquina
-         *     puede hacer.
-         *
-         *     A diferencia de la descarga individual, el archivo pasa por la aplicación:
-         *     hay que leer cada objeto para comprimirlo, y no se puede firmar una URL de
-         *     algo que todavía no existe. Por eso se audita: es la única vía por la que
-         *     salen varios documentos de una sola vez.
-         */
-        get: operations["descargar_todos_api_v1_shipments__shipment_id__documents_download_all_get"];
+        get?: never;
+        put?: never;
+        /** Exportar Documentos De Carga */
+        post: operations["exportar_documentos_de_carga_api_v1_shipments__shipment_id__documents_exports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/document-export-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Estado De Exportacion */
+        get: operations["estado_de_exportacion_api_v1_document_export_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/document-export-jobs/{job_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Descargar Exportacion */
+        get: operations["descargar_exportacion_api_v1_document_export_jobs__job_id__download_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -783,23 +940,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/dispatch-requests/{dispatch_id}/documents/bls": {
+    "/api/v1/dispatch-requests/{dispatch_id}/documents/complete": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Descargar Bls
-         * @description Todos los Bills of Lading del despacho en un ZIP.
-         *
-         *     Un despacho puede llevar varios y el cliente los necesita juntos para su
-         *     agente aduanal.
-         */
-        get: operations["descargar_bls_api_v1_dispatch_requests__dispatch_id__documents_bls_get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Completar Documento De Despacho */
+        post: operations["completar_documento_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/documents/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exportar Documentos De Despacho */
+        post: operations["exportar_documentos_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_exports_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -909,6 +1077,23 @@ export interface paths {
         put?: never;
         /** Completar */
         post: operations["completar_api_v1_dispatch_requests__dispatch_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dispatch-requests/{dispatch_id}/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Despachar */
+        post: operations["despachar_api_v1_dispatch_requests__dispatch_id__dispatch_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1092,6 +1277,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/copilot/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Capabilities
+         * @description Nunca falla con 500: la caída del proveedor no puede parecer una caída
+         *     del LMS. Si algo impide conversar, esto lo dice, no un error genérico.
+         */
+        get: operations["capabilities_api_v1_copilot_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Respond */
+        post: operations["respond_api_v1_copilot_respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/proposals/{proposal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Obtener Propuesta */
+        get: operations["obtener_propuesta_api_v1_copilot_proposals__proposal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/proposals/{proposal_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirmar Propuesta
+         * @description Confirma con el bloqueo de fila y las garantías del ADR: solo del
+         *     dueño, solo PENDING y sin vencer, permiso revalidado AHORA, y ejecutada a
+         *     través del registro cerrado de acciones — nunca de una ruta que el
+         *     frontend haya elegido.
+         */
+        post: operations["confirmar_propuesta_api_v1_copilot_proposals__proposal_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/proposals/{proposal_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rechazar Propuesta */
+        post: operations["rechazar_propuesta_api_v1_copilot_proposals__proposal_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1141,10 +1421,7 @@ export interface components {
             transport_mode?: string | null;
             /** Estimated Arrival At */
             estimated_arrival_at?: string | null;
-            /** Weight Kg */
-            weight_kg?: number | string | null;
-            /** Weight Lb */
-            weight_lb?: number | string | null;
+            weight?: components["schemas"]["PesoInput"] | null;
             /** Volumetric Weight Kg */
             volumetric_weight_kg?: number | string | null;
             /** Volume M3 */
@@ -1210,6 +1487,37 @@ export interface components {
             /** Role Code */
             role_code?: string | null;
         };
+        /**
+         * AdjuntoChat
+         * @description Un archivo que la persona suelta en el chat para que AMVI lo lea.
+         *
+         *     NO se guarda en ningún lado (ADR-0017): vive lo que dura el turno, se lee
+         *     una vez y se descarta. Lo que queda de él es la propuesta que el modelo
+         *     arma con los datos extraídos, que la persona revisa antes de confirmar.
+         *     Para archivar la factura está el expediente de la carga, que valida bytes,
+         *     tipo real y hash — cosas que este camino no hace porque no guarda nada.
+         */
+        AdjuntoChat: {
+            /** Nombre */
+            nombre: string;
+            /** Media Type */
+            media_type: string;
+            /** Contenido Base64 */
+            contenido_base64: string;
+        };
+        /** AvailableTransitionResponse */
+        AvailableTransitionResponse: {
+            /** To Status */
+            to_status: string;
+            /** Label */
+            label: string;
+            /** Requires Reason */
+            requires_reason: boolean;
+            /** Blocked */
+            blocked: boolean;
+            /** Blockers */
+            blockers: components["schemas"]["TransitionBlockerResponse"][];
+        };
         /** BodegaResponse */
         BodegaResponse: {
             /**
@@ -1237,6 +1545,12 @@ export interface components {
             description?: string | null;
             /** Weight Kg */
             weight_kg?: number | string | null;
+            /** Length Cm */
+            length_cm?: number | string | null;
+            /** Width Cm */
+            width_cm?: number | string | null;
+            /** Height Cm */
+            height_cm?: number | string | null;
         };
         /** BultoResponse */
         BultoResponse: {
@@ -1253,6 +1567,12 @@ export interface components {
             description: string | null;
             /** Weight Kg */
             weight_kg: string | null;
+            /** Length Cm */
+            length_cm: string | null;
+            /** Width Cm */
+            width_cm: string | null;
+            /** Height Cm */
+            height_cm: string | null;
         };
         /** CambiarContrasenaRequest */
         CambiarContrasenaRequest: {
@@ -1260,6 +1580,19 @@ export interface components {
             actual: string;
             /** Nueva */
             nueva: string;
+        };
+        /** CapabilitiesResponse */
+        CapabilitiesResponse: {
+            /** Disponible */
+            disponible: boolean;
+            /** Nombre */
+            nombre: string;
+            /** Puede Adjuntar */
+            puede_adjuntar: boolean;
+            /** Cuota Restante */
+            cuota_restante: number | null;
+            /** Herramientas */
+            herramientas: string[];
         };
         /** CargaActualizadaResponse */
         CargaActualizadaResponse: {
@@ -1308,6 +1641,26 @@ export interface components {
              */
             created_at: string;
         };
+        /** CargaIncluidaResponse */
+        CargaIncluidaResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Shipment Number */
+            shipment_number: string;
+            /** Wr */
+            wr: string | null;
+            /** Invoice */
+            invoice: string | null;
+            /** Status */
+            status: string;
+            /** Package Count */
+            package_count: number;
+            /** Weight Kg */
+            weight_kg: string | null;
+        };
         /**
          * ClientType
          * @enum {string}
@@ -1337,14 +1690,27 @@ export interface components {
              * Format: uuid
              */
             document_id: string;
-            /** Media Type */
-            media_type: string;
-            /** Size Bytes */
-            size_bytes: number;
-            /** Sha256 */
-            sha256: string;
             /** Upload Status */
             upload_status: string;
+        };
+        /** ConfirmarPropuestaRequest */
+        ConfirmarPropuestaRequest: {
+            /** Campos */
+            campos?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * ContextoPagina
+         * @description Opcional: qué pantalla mira el usuario, para que AMVI entienda "esta
+         *     carga" sin que el modelo tenga que inferirlo del texto libre, y para
+         *     orientarlo desde donde está en vez de describirle la aplicación entera.
+         */
+        ContextoPagina: {
+            /** Ruta */
+            ruta?: string | null;
+            /** Recurso Id */
+            recurso_id?: string | null;
         };
         /** ContrasenaTemporalResponse */
         ContrasenaTemporalResponse: {
@@ -1393,10 +1759,7 @@ export interface components {
             transport_mode?: string | null;
             /** Estimated Arrival At */
             estimated_arrival_at?: string | null;
-            /** Weight Kg */
-            weight_kg?: number | string | null;
-            /** Weight Lb */
-            weight_lb?: number | string | null;
+            weight: components["schemas"]["PesoInput"];
             /** Volumetric Weight Kg */
             volumetric_weight_kg?: number | string | null;
             /** Volume M3 */
@@ -1425,7 +1788,7 @@ export interface components {
             /** Wr */
             wr?: string | null;
             /** Packages */
-            packages?: components["schemas"]["BultoRequest"][];
+            packages: components["schemas"]["BultoRequest"][];
             /** Initial Status */
             initial_status?: string | null;
         };
@@ -1437,6 +1800,11 @@ export interface components {
             trade_name?: string | null;
             /** Tax Id */
             tax_id?: string | null;
+        };
+        /** CrearExportacionDespachoRequest */
+        CrearExportacionDespachoRequest: {
+            /** @default BLS */
+            kind: components["schemas"]["ExportKind"];
         };
         /** CrearSolicitudRequest */
         CrearSolicitudRequest: {
@@ -1516,27 +1884,61 @@ export interface components {
             rejected_reason: string | null;
             /** Approved At */
             approved_at: string | null;
+            /** Dispatched At */
+            dispatched_at: string | null;
             /** Completed At */
             completed_at: string | null;
             /** Shipment Ids */
             shipment_ids: string[];
+            /** Shipments */
+            shipments: components["schemas"]["CargaIncluidaResponse"][];
         };
         /**
          * DispatchMethod
          * @enum {string}
          */
-        DispatchMethod: "SEA" | "AIR" | "LAND" | "PICKUP";
+        DispatchMethod: "SEA" | "AIR" | "LAND";
         /**
          * DispatchStatus
          * @description Estados de una solicitud de despacho.
-         *
-         *     `DISPATCHED` existe en el esquema aprobado pero hoy no lo alcanza ningún
-         *     endpoint: `complete` va directo de `PREPARING` a `COMPLETED` y mueve las
-         *     cargas a `DISPATCHED`. Se conserva para poder separar "salió de bodega" de
-         *     "expediente cerrado" sin migración.
          * @enum {string}
          */
         DispatchStatus: "PENDING" | "APPROVED" | "PREPARING" | "DISPATCHED" | "COMPLETED" | "REJECTED" | "CANCELLED";
+        /** DisputeRequest */
+        DisputeRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /** DisputeResolveRequest */
+        DisputeResolveRequest: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "RESOLVED_CONFIRMED" | "RESOLVED_REVERTED";
+            /** Reason */
+            reason?: string | null;
+        };
+        /** DisputeResponse */
+        DisputeResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Shipment Id
+             * Format: uuid
+             */
+            shipment_id: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * DocumentContext
+         * @enum {string}
+         */
+        DocumentContext: "SHIPMENT" | "DISPATCH";
         /** DocumentoDespachoResponse */
         DocumentoDespachoResponse: {
             /**
@@ -1687,6 +2089,48 @@ export interface components {
             /** Tipos */
             tipos: components["schemas"]["TipoDocumentoResponse"][];
         };
+        /** ExportJobResponse */
+        ExportJobResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Resource Type */
+            resource_type: string;
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+            /** Kind */
+            kind: string;
+            /** Status */
+            status: string;
+            /** Size Bytes */
+            size_bytes: number | null;
+            /** Sha256 */
+            sha256: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Download Ready */
+            download_ready: boolean;
+        };
+        /**
+         * ExportKind
+         * @enum {string}
+         */
+        ExportKind: "ALL_DOCUMENTS" | "BLS";
         /** GuardarColumnasRequest */
         GuardarColumnasRequest: {
             /** Visibles */
@@ -1709,6 +2153,11 @@ export interface components {
             /** Last Name */
             last_name: string;
         };
+        /**
+         * IssuedBy
+         * @enum {string}
+         */
+        IssuedBy: "PROVIDER" | "CLIENT" | "AMVARMAR" | "CARRIER" | "AUTHORITY" | "OTHER";
         /** LoginRequest */
         LoginRequest: {
             /**
@@ -1753,6 +2202,13 @@ export interface components {
             /** Permisos */
             permisos: string[];
         };
+        /** MensajeChat */
+        MensajeChat: {
+            /** Rol */
+            rol: string;
+            /** Contenido */
+            contenido: string;
+        };
         /** MensajeResponse */
         MensajeResponse: {
             /** Mensaje */
@@ -1789,6 +2245,15 @@ export interface components {
         OcultarRequest: {
             /** Motivo */
             motivo: string;
+        };
+        /** PaginaEmpresas */
+        PaginaEmpresas: {
+            /** Items */
+            items: components["schemas"]["EmpresaAdminResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Has More */
+            has_more: boolean;
         };
         /** PaginaNotifications */
         PaginaNotifications: {
@@ -1843,6 +2308,12 @@ export interface components {
             /** Nueva Password */
             nueva_password: string;
         };
+        /** PesoInput */
+        PesoInput: {
+            /** Value */
+            value: number | string;
+            unit: components["schemas"]["UnidadPeso"];
+        };
         /** PreferenciaColumnasResponse */
         PreferenciaColumnasResponse: {
             /** Disponibles */
@@ -1857,6 +2328,7 @@ export interface components {
              * Format: uuid
              */
             document_type_id: string;
+            issued_by: components["schemas"]["IssuedBy"];
             /** Original Name */
             original_name: string;
         };
@@ -1873,11 +2345,6 @@ export interface components {
              * Format: uuid
              */
             document_id: string;
-            /**
-             * Shipment Id
-             * Format: uuid
-             */
-            shipment_id: string;
             /** Upload Url */
             upload_url: string;
             /** Expires In Seconds */
@@ -1885,12 +2352,55 @@ export interface components {
             /** Max Bytes */
             max_bytes: number;
         };
+        /** PropuestaConfirmadaResponse */
+        PropuestaConfirmadaResponse: {
+            /** Id */
+            id: string;
+            /** Action Code */
+            action_code: string;
+            /** Resultado */
+            resultado: {
+                [key: string]: unknown;
+            };
+        };
         /** RechazoRequest */
         RechazoRequest: {
             /** Reason */
             reason: string;
             /** Row Version */
             row_version?: number | null;
+        };
+        /**
+         * ReemplazarBultosRequest
+         * @description Reemplazo completo del desglose.
+         *
+         *     `row_version` es obligatorio por el mismo motivo que en el PATCH: sin él dos
+         *     personas editando piezas a la vez se pisan y la segunda gana en silencio.
+         */
+        ReemplazarBultosRequest: {
+            /** Row Version */
+            row_version: number;
+            /** Packages */
+            packages: components["schemas"]["BultoRequest"][];
+        };
+        /**
+         * ReferenceType
+         * @description Cómo se identifica comercialmente una carga.
+         *
+         *     `INVOICE` es la referencia general; `WR` es opcional y solo aplica a cargas
+         *     con bodega que lo use (ADR-0005).
+         * @enum {string}
+         */
+        ReferenceType: "INVOICE" | "WR" | "PO" | "TRACKING" | "CONTAINER" | "BL" | "OTHER";
+        /** RejectRequirementRequest */
+        RejectRequirementRequest: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Reason */
+            reason: string;
         };
         /** RenombrarDocumentoRequest */
         RenombrarDocumentoRequest: {
@@ -1986,6 +2496,15 @@ export interface components {
             /** Nota */
             nota: string;
         };
+        /** RespondRequest */
+        RespondRequest: {
+            /** Mensajes */
+            mensajes: components["schemas"]["MensajeChat"][];
+            contexto_pagina?: components["schemas"]["ContextoPagina"] | null;
+            /** Conversacion Id */
+            conversacion_id: string;
+            adjunto?: components["schemas"]["AdjuntoChat"] | null;
+        };
         /** SessionResponse */
         SessionResponse: {
             /**
@@ -2021,6 +2540,15 @@ export interface components {
             id: string;
             /** Shipment Number */
             shipment_number: string;
+            /**
+             * Company Id
+             * Format: uuid
+             */
+            company_id: string;
+            /** Company Name */
+            company_name: string;
+            /** Row Version */
+            row_version: number;
             /** Status */
             status: string;
             /** Open Requirements Count */
@@ -2045,8 +2573,11 @@ export interface components {
             weight_kg?: string | null;
             /** Weight Lb */
             weight_lb?: string | null;
+            weight_source_unit?: components["schemas"]["UnidadPeso"] | null;
             /** Hidden At */
             hidden_at?: string | null;
+            /** Archived At */
+            archived_at?: string | null;
             /** Invoice */
             invoice: string | null;
             origin: components["schemas"]["UbicacionResponse"];
@@ -2071,12 +2602,14 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-            /** Row Version */
-            row_version: number;
             /** Description */
             description: string | null;
             /** Destination Address */
             destination_address: string | null;
+            /** Volumetric Weight Kg */
+            volumetric_weight_kg: string | null;
+            /** Volume M3 */
+            volume_m3: string | null;
             /** Received At */
             received_at: string | null;
             /** Stored At */
@@ -2104,6 +2637,15 @@ export interface components {
             id: string;
             /** Shipment Number */
             shipment_number: string;
+            /**
+             * Company Id
+             * Format: uuid
+             */
+            company_id: string;
+            /** Company Name */
+            company_name: string;
+            /** Row Version */
+            row_version: number;
             /** Status */
             status: string;
             /** Open Requirements Count */
@@ -2128,8 +2670,11 @@ export interface components {
             weight_kg?: string | null;
             /** Weight Lb */
             weight_lb?: string | null;
+            weight_source_unit?: components["schemas"]["UnidadPeso"] | null;
             /** Hidden At */
             hidden_at?: string | null;
+            /** Archived At */
+            archived_at?: string | null;
             /** Invoice */
             invoice: string | null;
             origin: components["schemas"]["UbicacionResponse"];
@@ -2218,6 +2763,10 @@ export interface components {
             description: string | null;
             /** Provided By */
             provided_by: string;
+            /** Context */
+            context: string;
+            /** Issued By Options */
+            issued_by_options: string[];
             /** Allowed Formats */
             allowed_formats: string[];
         };
@@ -2241,6 +2790,17 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+        };
+        /** TransitionBlockerResponse */
+        TransitionBlockerResponse: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            }[];
         };
         /** TransitionRequest */
         TransitionRequest: {
@@ -2301,6 +2861,11 @@ export interface components {
             /** Country Code */
             country_code: string;
         };
+        /**
+         * UnidadPeso
+         * @enum {string}
+         */
+        UnidadPeso: "KG" | "LB";
         /** UsuarioAdminResponse */
         UsuarioAdminResponse: {
             /**
@@ -2358,6 +2923,16 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VerifyRequirementRequest */
+        VerifyRequirementRequest: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Note */
+            note?: string | null;
         };
     };
     responses: never;
@@ -2823,7 +3398,14 @@ export interface operations {
                 eta_from?: string | null;
                 eta_to?: string | null;
                 q?: string | null;
+                shipment_number?: string | null;
+                wr?: string | null;
+                shipper?: string | null;
+                carrier?: string | null;
+                reference?: string | null;
+                reference_type?: components["schemas"]["ReferenceType"] | null;
                 archived?: boolean;
+                only_archived?: boolean;
             };
             header?: never;
             path?: never;
@@ -2927,6 +3509,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ActualizarCargaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CargaActualizadaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reemplazar_bultos_api_v1_shipments__shipment_id__packages_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReemplazarBultosRequest"];
             };
         };
         responses: {
@@ -3164,6 +3781,37 @@ export interface operations {
             };
         };
     };
+    obtener_transiciones_disponibles_api_v1_shipments__shipment_id__transitions_available_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailableTransitionResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     abrir_requisito_api_v1_shipments__shipment_id__requirements_post: {
         parameters: {
             query?: never;
@@ -3235,6 +3883,78 @@ export interface operations {
             };
         };
     };
+    verificar_requisito_documental_api_v1_shipments__shipment_id__requirements__requirement_id__verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+                requirement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyRequirementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequirementResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rechazar_requisito_documental_api_v1_shipments__shipment_id__requirements__requirement_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+                requirement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectRequirementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequirementResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     obtener_timeline_api_v1_shipments__shipment_id__timeline_get: {
         parameters: {
             query?: {
@@ -3256,6 +3976,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginaTimeline"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reportar_inconformidad_api_v1_shipments__shipment_id__delivery_disputes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisputeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisputeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolver_inconformidad_api_v1_shipments__shipment_id__delivery_disputes__dispute_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+                dispute_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisputeResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisputeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3360,7 +4151,7 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3441,9 +4232,42 @@ export interface operations {
             };
         };
     };
+    catalogo_de_tipos_documentales_api_v1_document_types_get: {
+        parameters: {
+            query: {
+                context: components["schemas"]["DocumentContext"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TipoDocumentoResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     invalidar_documento_api_v1_documents__document_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                motivo: string;
+            };
             header?: never;
             path: {
                 document_id: string;
@@ -3505,7 +4329,7 @@ export interface operations {
             };
         };
     };
-    descargar_todos_api_v1_shipments__shipment_id__documents_download_all_get: {
+    exportar_documentos_de_carga_api_v1_shipments__shipment_id__documents_exports_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3517,12 +4341,74 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    estado_de_exportacion_api_v1_document_export_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ExportJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    descargar_exportacion_api_v1_document_export_jobs__job_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3602,7 +4488,7 @@ export interface operations {
             };
         };
     };
-    descargar_bls_api_v1_dispatch_requests__dispatch_id__documents_bls_get: {
+    completar_documento_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_complete_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3611,15 +4497,54 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CompleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    exportar_documentos_de_despacho_api_v1_dispatch_requests__dispatch_id__documents_exports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrearExportacionDespachoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3874,6 +4799,41 @@ export interface operations {
             };
         };
     };
+    despachar_api_v1_dispatch_requests__dispatch_id__dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dispatch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancelar_api_v1_dispatch_requests__dispatch_id__cancel_post: {
         parameters: {
             query?: never;
@@ -3997,6 +4957,8 @@ export interface operations {
         parameters: {
             query?: {
                 incluir_inactivas?: boolean;
+                limit?: number | null;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -4010,7 +4972,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EmpresaAdminResponse"][];
+                    "application/json": components["schemas"]["PaginaEmpresas"];
                 };
             };
             /** @description Validation Error */
@@ -4266,6 +5228,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContrasenaTemporalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capabilities_api_v1_copilot_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    respond_api_v1_copilot_respond_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RespondRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    obtener_propuesta_api_v1_copilot_proposals__proposal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirmar_propuesta_api_v1_copilot_proposals__proposal_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmarPropuestaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropuestaConfirmadaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rechazar_propuesta_api_v1_copilot_proposals__proposal_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */

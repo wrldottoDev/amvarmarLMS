@@ -13,14 +13,14 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_session
-from app.core.errors import Conflicto, ErrorDeAplicacion, RecursoNoEncontrado
+from app.core.errors import Conflicto, ErrorDeAplicacion, RecursoNoEncontrado, SinPermiso
 from app.core.idempotency import (
     buscar_respuesta_previa,
     guardar_respuesta,
@@ -97,10 +97,10 @@ async def _contexto_actor(
     return nombre, es_cliente, empresa_nombre, fila.company_id
 
 
-def _limite_mensual_cliente() -> Limite:
+def _limite_30_dias_cliente() -> Limite:
     settings = get_settings()
     return Limite(
-        intentos=settings.copilot_limite_mensajes_cliente_por_mes,
+        intentos=settings.copilot_limite_mensajes_cliente_ventana_30_dias,
         ventana_segundos=30 * 24 * 3600,
     )
 
@@ -129,7 +129,7 @@ async def capabilities(actor: ActorDep, db: SesionDb, redis: RedisDep) -> Capabi
     _nombre, es_cliente, _empresa, _company_id = await _contexto_actor(db, actor.user_id)
     cuota_restante = (
         await restantes(
-            redis, clave=f"copilot:mensual:{actor.user_id}", limite=_limite_mensual_cliente()
+            redis, clave=f"copilot:mensual:{actor.user_id}", limite=_limite_30_dias_cliente()
         )
         if es_cliente
         else None
@@ -140,6 +140,7 @@ async def capabilities(actor: ActorDep, db: SesionDb, redis: RedisDep) -> Capabi
     return CapabilitiesResponse(
         disponible=disponible,
         nombre=settings.copilot_name,
+        puede_adjuntar=Perm.COPILOT_TOOLS_DRAFT in permisos.codigos(),
         cuota_restante=cuota_restante,
         herramientas=herramientas,
     )
@@ -208,14 +209,6 @@ async def respond(
 
     nombre_actor, es_cliente, empresa_nombre, company_id = await _contexto_actor(db, actor.user_id)
 
-    if es_cliente:
-        # ADR-0012: 100 mensajes por mes para clientes. `consumir` lanza
-        # `DemasiadasSolicitudes` (429) si se pasó — el manejador global la
-        # traduce, no hace falta capturarla acá.
-        await consumir(
-            redis, clave=f"copilot:mensual:{actor.user_id}", limite=_limite_mensual_cliente()
-        )
-
     # Tope de tokens ACUMULADOS por conversación (ADR-0012, enmienda
     # 2026-09-06): se chequea ANTES de llamar al proveedor — igual que
     # "demasiados mensajes" en `procesar_turno` — para no pagar un turno que
@@ -237,6 +230,33 @@ async def respond(
             media_type="text/event-stream",
         )
 
+    # Leer un archivo adjunto es preparar una acción, no consultar: se paga
+    # una llamada extra al proveedor y lo que sale de ahí alimenta una
+    # propuesta. Por eso exige `copilot.tools.draft`, el mismo permiso que las
+    # herramientas de escritura — que el cliente no tiene (ADR-0017).
+    if datos.adjunto is not None and Perm.COPILOT_TOOLS_DRAFT not in permisos.codigos():
+        return StreamingResponse(
+            iter(
+                [
+                    _formatear_sse(
+                        "error",
+                        {
+                            "code": "SIN_PERMISO",
+                            "message": "Tu cuenta no puede adjuntar archivos al asistente.",
+                        },
+                    )
+                ]
+            ),
+            media_type="text/event-stream",
+        )
+
+    if es_cliente:
+        # ADR-0012: solo se cobra cuando el turno ya pasó las validaciones que
+        # pueden rechazarlo sin llamar al proveedor.
+        await consumir(
+            redis, clave=f"copilot:mensual:{actor.user_id}", limite=_limite_30_dias_cliente()
+        )
+
     proveedor = fabrica_proveedor()
 
     async def flujo() -> AsyncIterator[str]:
@@ -251,6 +271,8 @@ async def respond(
                 es_cliente=es_cliente,
                 empresa_nombre=empresa_nombre,
                 mensajes=[m.model_dump() for m in datos.mensajes],
+                ruta_actual=datos.contexto_pagina.ruta if datos.contexto_pagina else None,
+                adjunto=datos.adjunto.model_dump() if datos.adjunto else None,
             ):
                 yield _formatear_sse(evento.evento, evento.datos)
                 if evento.evento == "fin":
@@ -331,14 +353,31 @@ async def confirmar_propuesta(
             db, user_id=actor.user_id, key=idempotency_key, request_hash=huella
         )
         if previa is not None:
-            return previa.body
+            return JSONResponse(status_code=previa.status_code, content=previa.body)
         await reservar(db, user_id=actor.user_id, key=idempotency_key, request_hash=huella)
 
     propuesta = await _propuesta_del_actor(db, proposal_id, actor.user_id, bloquear=True)
 
     if propuesta.status != EstadoPropuesta.PENDING:
+        cuerpo_error = {
+            "error": {
+                "code": "COPILOT_PROPUESTA_NO_PENDIENTE",
+                "message": f"La propuesta ya no está pendiente (estado: {propuesta.status}).",
+                "details": [],
+                "request_id": None,
+            }
+        }
+        if idempotency_key:
+            await guardar_respuesta(
+                db,
+                user_id=actor.user_id,
+                key=idempotency_key,
+                status_code=status.HTTP_409_CONFLICT,
+                body=cuerpo_error,
+            )
+            await db.commit()
         raise Conflicto(
-            f"La propuesta ya no está pendiente (estado: {propuesta.status}).",
+            cuerpo_error["error"]["message"],
             code="COPILOT_PROPUESTA_NO_PENDIENTE",
         )
 
@@ -350,18 +389,36 @@ async def confirmar_propuesta(
             ),
             {"id": propuesta.id},
         )
+        cuerpo_error = {
+            "error": {
+                "code": "COPILOT_PROPUESTA_VENCIDA",
+                "message": "La propuesta venció. Pedile a AMVI que la prepare de nuevo.",
+                "details": [],
+                "request_id": None,
+            }
+        }
+        if idempotency_key:
+            await guardar_respuesta(
+                db,
+                user_id=actor.user_id,
+                key=idempotency_key,
+                status_code=status.HTTP_409_CONFLICT,
+                body=cuerpo_error,
+            )
         await db.commit()
         raise Conflicto(
-            "La propuesta venció. Pedile a AMVI que la prepare de nuevo.",
+            cuerpo_error["error"]["message"],
             code="COPILOT_PROPUESTA_VENCIDA",
         )
-
-    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
 
     try:
         codigo = AccionCopilot(propuesta.action_code)
     except ValueError as error:
         raise Conflicto("Acción no reconocida.", code="COPILOT_ACCION_DESCONOCIDA") from error
+
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    if not any(h.action_code == codigo for h in herramientas_disponibles(permisos)):
+        raise SinPermiso("Ya no tenés permiso para confirmar esta acción.")
 
     ejecutor = REGISTRO_DE_CONFIRMACION.get(codigo)
     if ejecutor is None:
@@ -455,6 +512,20 @@ async def rechazar_propuesta(
         raise Conflicto(
             f"La propuesta ya no está pendiente (estado: {propuesta.status}).",
             code="COPILOT_PROPUESTA_NO_PENDIENTE",
+        )
+
+    if propuesta.expires_at < datetime.now(UTC):
+        await db.execute(
+            text(
+                "UPDATE copilot_action_proposals "
+                "SET status = 'EXPIRED', resolved_at = now() WHERE id = :id"
+            ),
+            {"id": propuesta.id},
+        )
+        await db.commit()
+        raise Conflicto(
+            "La propuesta venció. Pedile a AMVI que la prepare de nuevo.",
+            code="COPILOT_PROPUESTA_VENCIDA",
         )
 
     await db.execute(

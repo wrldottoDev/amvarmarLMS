@@ -239,8 +239,22 @@ async def procesar_factura_ocr(
     # otra empresa existe, un oráculo de existencia cross-empresa.
     sin_acceso = {"error": "No encontré ese documento, o no pertenece a ninguna carga."}
 
+    alcance_empresas = tuple(
+        permiso.company_id
+        for permiso in permisos.permisos
+        if permiso.code == Perm.DOCUMENTS_UPLOAD_INTERNAL
+        and permiso.scope_type == "ORGANIZATION"
+        and permiso.company_id is not None
+    )
+    alcance_global = any(
+        permiso.code == Perm.DOCUMENTS_UPLOAD_INTERNAL and permiso.scope_type == "GLOBAL"
+        for permiso in permisos.permisos
+    )
+
     documento = await documents_queries.factura_de_carga(
-        session, UUID(str(argumentos["document_id"]))
+        session,
+        UUID(str(argumentos["document_id"])),
+        company_ids=None if alcance_global else alcance_empresas,
     )
     if documento is None:
         return sin_acceso
