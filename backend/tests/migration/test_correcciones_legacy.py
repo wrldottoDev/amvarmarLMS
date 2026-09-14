@@ -114,17 +114,18 @@ def legacy(postgres_container):
 def _con_decisiones(decisiones: str) -> Path:
     """Copia de 001_emails.sql con las decisiones cargadas.
 
-    Es como lo va a usar una persona: el script trae el bloque vacío y las
-    decisiones se escriben dentro, para que queden versionadas en git.
+    El script real trae las decisiones aprobadas. La prueba reemplaza ese
+    bloque completo para que cada escenario parta de una tabla vacía y no
+    herede decisiones de producción.
     """
     original = (_CORRECCIONES / "001_emails.sql").read_text()
-    marcador = "-- ###########################################################################\n\n-- Nada que hacer"
-    assert marcador in original, "cambió la estructura de 001_emails.sql"
-
-    contenido = original.replace(
-        marcador,
-        f"-- ###########################################################################\n{decisiones}\n\n-- Nada que hacer",
-    ).replace(
+    inicio = original.index(
+        "-- ###########################################################################",
+        original.index("CREATE TEMP TABLE decisiones"),
+    )
+    fin = original.index("-- Nada que hacer", inicio)
+    bloque = f"-- ###########################################################################\n{decisiones}\n"
+    contenido = (original[:inicio] + bloque + original[fin:]).replace(
         "\\set decidido_por 'PENDIENTE — poner el nombre de quien decide'",
         "\\set decidido_por 'prueba automatizada'",
     )
@@ -263,7 +264,9 @@ INSERT INTO decisiones VALUES (8, NULL, true, 'Duplicado de operaciones; ya inac
 
     def test_sin_decisiones_aborta(self, legacy) -> None:
         """Correrlo vacío no debe dar la impresión de que corrigió algo."""
-        resultado = legacy["correr"]("/tmp/001_emails.sql")
+        script = _con_decisiones("")
+        legacy["copiar"](script, "/tmp/001_vacio.sql")
+        resultado = legacy["correr"]("/tmp/001_vacio.sql")
 
         assert resultado.returncode != 0
         assert "No hay decisiones cargadas" in resultado.stderr
