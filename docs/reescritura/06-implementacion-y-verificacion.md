@@ -120,16 +120,11 @@ con el contrato actual del backend.
 
 Documentados también en `docs/GUIA_CODIGO.md` sección 12:
 
-- **Política de contraseñas de administración.** `admin/service.py` sigue devolviendo una
-  contraseña temporal en la respuesta de alta de usuario, y `password_forgot` no publica
-  todavía el evento que dispara el correo de recuperación. Ambos son parte de la
-  autenticación/política de contraseñas, explícitamente fuera de alcance de esta reescritura.
-- **`rbac/dependencies.py` obsoleto.** `_user_id_actual()` siempre responde 401; no lo usan los
-  routers activos (usan `auth.dependencies.actor_actual`), pero no debe reutilizarse sin
-  actualizarlo primero. Es código de autenticación, no se tocó.
-- **Los hooks de acciones de despacho no envían `row_version`.** El backend lo acepta opcional
-  y sigue siendo la fuente de verdad, pero el frontend no aprovecha el bloqueo optimista en
-  esas acciones. Mejora de UX pendiente, no una corrección de datos.
+- **Política de contraseñas de administración.** Si el correo de alta no llega, `admin/service.py`
+  devuelve una contraseña temporal real para que la cuenta no quede con un hueco de acceso; la
+  persona debe cambiarla por la política vigente. `password_forgot` publica el enlace mediante
+  envío directo en `auth/router.py:310`, a propósito fuera del outbox para no guardar el token
+  en claro. No queda una deuda de implementación en estos dos puntos.
 - **Observabilidad asume topología externa** (`backend:8000` y exporters no definidos en este
   compose). Pendiente de completarse en el despliegue real, fuera del alcance de este cutover.
 - **Paso 5.1 del runbook de migración** (`docs/migration/COMO_EMPEZAR.md`) — limpieza de datos

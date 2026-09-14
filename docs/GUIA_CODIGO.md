@@ -579,20 +579,16 @@ Resuelto desde la lectura anterior (25 de agosto de 2026):
 Siguen abiertos, y quedan fuera de esta corrección porque tocan la política de contraseñas o
 exceden el alcance de un defecto puntual:
 
-6. **La administración contradice la política de invitaciones.** `admin/service.py` genera y
-   devuelve contraseñas temporales en `UsuarioCreadoResponse.password_temporal`, aunque la
-   arquitectura pide enlaces de invitación de un solo uso. Es parte de la política administrativa de
-   contraseñas, fuera de alcance de la reescritura operativa.
-7. **Recuperación todavía no entrega el enlace.** `password_forgot` crea el token, pero no publica
-   un evento de outbox ni manda el correo. Mismo motivo: es flujo de autenticación, fuera de alcance.
-8. **`rbac/dependencies.py` quedó obsoleto.** Su `_user_id_actual()` siempre responde 401. No rompe
-   los routers actuales porque estos usan `auth.dependencies.actor_actual`, pero no debe reutilizarse
-   sin actualizarlo. Es código de autenticación; no se toca en esta corrección.
-9. ~~Los hooks de acciones de despacho no envían `row_version`.~~ **Resuelto (2026-09-06).** Todas las
+6. **Contraseña temporal de administración — decisión tomada.** `admin/service.py` genera y devuelve
+   una contraseña temporal real cuando el correo de alta no llega, para que la cuenta no quede sin
+   credencial; la persona debe cambiarla según la política vigente.
+7. **Recuperación — resuelta.** `password_forgot` manda el enlace mediante envío directo en
+   `auth/router.py:310`, fuera del outbox para no guardar el token en claro.
+8. ~~Los hooks de acciones de despacho no envían `row_version`.~~ **Resuelto (2026-09-06).** Todas las
    mutaciones de `features/despachos/consultas.ts` (`useAprobar`, `useRechazar`, `usePreparar`,
    `useCompletar`, `useDespachar`, `useCancelar`) ahora lo requieren y manejan el conflicto
    `DISPATCH_VERSION_CONFLICT`.
-10. **Observabilidad — parcialmente resuelto (2026-09-07).** `postgres-exporter` y `redis-exporter` ya
+9. **Observabilidad — parcialmente resuelto (2026-09-07).** `postgres-exporter` y `redis-exporter` ya
     están definidos en `infra/docker/docker-compose.yml` (perfil `observabilidad`), así que esos dos
     jobs de Prometheus resuelven dentro de la red del compose. El target `backend:8000` sigue sin
     definirse a propósito: en local el backend corre por `uvicorn` en el host (no en un contenedor de
@@ -609,4 +605,3 @@ exceden el alcance de un defecto puntual:
 - Nuevo estado de carga: ADR-0001 + `shipments/catalog.py` + seed + pruebas.
 - Efecto externo: outbox + handler idempotente; nunca correo directo desde el modelo.
 - Archivo: acceso privado S3, validación del tipo real por los bytes y URLs firmadas que vencen.
-

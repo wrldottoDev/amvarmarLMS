@@ -68,7 +68,7 @@ Las herramientas se dividen en dos clases:
 
 **Lectura** — se ejecutan directo y el resultado vuelve al modelo:
 - `consultar_estado_carga(shipment_number)` — permiso `shipments.read`
-- `cotizar_envio(peso_kg, valor_declarado_usd)` — cálculo, no toca la base
+- `buscar_cargas(q)`, `explicar_que_falta(shipment_number)`, `mis_pendientes()`, `obtener_preferencias()`, `consultar_despacho(dispatch_number)`, `listar_despachos(estado)` y `como_hago(tema)` — consultas acotadas por el alcance del actor
 
 **Escritura** — **nunca** impactan la base desde el turno del modelo. Devuelven una *propuesta* que el
 frontend muestra para confirmación, y la confirmación es una llamada normal a la API existente, con su
@@ -160,9 +160,10 @@ secreto se sostenga.
 
 ## Límite de uso y memoria — decidido
 
-**Clientes: 100 mensajes por mes.** Las consultas esperadas son simples (dónde está mi carga, qué me falta),
-así que el tope es holgado para uso normal y acota el gasto si alguien abusa. Se implementa con el mecanismo
-de `rate_limit.py`, con ventana mensual en vez de la de minutos que usa el login.
+**Clientes: 100 mensajes en una ventana móvil de 30 días.** Las consultas esperadas son simples (dónde está
+mi carga, qué me falta), así que el tope es holgado para uso normal y acota el gasto si alguien abusa. Se
+implementa con el mecanismo de `rate_limit.py`, con ventana móvil de 30 días en vez de la de minutos que usa
+el login.
 
 **Personal interno: sin límite.** Operaciones usa el asistente como herramienta de trabajo y un tope
 convertiría el ahorro de tiempo en una molestia.
@@ -187,8 +188,8 @@ así que haría falta resolver identidad y confirmación humana de otra forma. N
 ## Pendiente antes de implementar
 
 1. ~~Confirmar que `gpt-5.6-luna` es el identificador exacto del proveedor.~~ **Resuelto — ver Enmienda 2026-09.**
-2. Decidir si el asistente puede leer el contenido de documentos (Fase 3) o solo su metadata.
-3. Escribir el contenido de la base de conocimiento para las herramientas de guía (ver abajo).
+2. ~~Decidir si el asistente puede leer el contenido de documentos (Fase 3) o solo su metadata.~~ **Resuelto — ver Enmienda 2026-09.**
+3. ~~Escribir el contenido de la base de conocimiento para las herramientas de guía (ver abajo).~~ **Resuelto — ver Enmienda 2026-09.**
 
 ## Enmienda 2026-09 — auditoría previa a la implementación
 
@@ -320,22 +321,37 @@ reenvía completo en cada `POST /respond`. Dentro de un mismo turno, `service.py
 array `input` a medida que van llegando resultados de herramientas — eso sí vive solo en memoria del
 request, nunca en una tabla.
 
-### Sigue pendiente
+## Herramientas de guía — implementadas
 
-Pendiente #3 original del ADR (base de conocimiento de `como_hago`): decisión de contenido, no técnica.
-Fase 3 la trata como opcional — si no está escrita, la herramienta responde que no tiene esa guía en vez
-de inventar cómo funciona la interfaz.
-
-## Herramientas de guía — pendientes de agregar
-
-Las 4 herramientas del catálogo actual responden preguntas sobre datos. Falta el caso de "que el cliente no
-se pierda en la plataforma", que es probablemente el de más valor porque baja llamadas a Operaciones:
+Además de las que responden preguntas sobre datos, estas tres cubren el caso de "que el cliente no se
+pierda en la plataforma", el de más valor porque baja llamadas a Operaciones:
 
 | Herramienta | Qué haría | De dónde salen los datos |
 |---|---|---|
 | `explicar_que_falta(shipment_number)` | Traduce los requisitos abiertos a lenguaje llano, con la ruta en la interfaz | `shipment_requirements` (ya existe) |
 | `mis_pendientes()` | Todo lo que le toca al cliente en todas sus cargas, priorizado | Consulta del dashboard (ya existe) |
-| `como_hago(tema)` | Guía sobre la plataforma misma | Base de conocimiento a escribir |
+| `como_hago(tema)` | Guía sobre la plataforma misma | Base de conocimiento en `copilot/conocimiento/` |
 
-Las dos primeras se apoyan en tablas de Fase 2 y salen casi gratis. La tercera necesita contenido escrito por
-una persona: el modelo no puede inventar cómo funciona la interfaz sin mentir.
+Las dos primeras se apoyan en tablas de Fase 2 y la tercera consulta la base de conocimiento versionada.
+Si no existe una guía para el tema, la herramienta lo dice en vez de inventar cómo funciona la interfaz.
+
+## Enmienda 2026-09-14 — adjuntos, catálogo y auditoría
+
+La implementación de las Fases 1 a 4 y la auditoría de seguridad actualizaron el estado efectivo de este ADR:
+
+- El catálogo real contiene las herramientas de lectura `consultar_estado_carga`, `buscar_cargas`,
+  `explicar_que_falta`, `mis_pendientes`, `obtener_preferencias`, `consultar_despacho`, `listar_despachos` y
+  `como_hago`, además de las de propuesta `procesar_factura_ocr` y `crear_prealerta_borrador`. `cotizar_envio`
+  no forma parte del catálogo porque no existe un tarifario determinista. Las tres herramientas de guía ya
+  están registradas en `executors.py:REGISTRO_EJECUTORES`.
+- El chat acepta un adjunto PDF o imagen. Se decodifica y se lee una sola vez durante el turno; no se guarda
+  ni en el backend ni en el proveedor, y lo que sigue en la conversación es el resultado textual de la
+  lectura. Adjuntar exige `copilot.tools.draft`, aunque la persona todavía debe revisar y confirmar cualquier
+  propuesta.
+- La auditoría corrigió siete garantías: rechazar una propuesta vencida la deja `EXPIRED`; confirmar vuelve a
+  evaluar la regla de autorización de la herramienta; un 409 se guarda en la clave de idempotencia durante
+  24 horas; la cuota del cliente se consume después de validar conversación y adjunto; el adjunto valida
+  base64; los errores del ejecutor se auditan y cada herramienta ejecutada se confirma en su propia transacción;
+  y `factura_de_carga` filtra por las empresas permitidas.
+- La cuota de clientes conserva deliberadamente una ventana móvil de 30 días, no un mes calendario. El setting
+  y su comentario reflejan ahora ese mecanismo sin cambiar el comportamiento.
