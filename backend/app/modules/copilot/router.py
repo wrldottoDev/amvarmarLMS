@@ -359,10 +359,11 @@ async def confirmar_propuesta(
     propuesta = await _propuesta_del_actor(db, proposal_id, actor.user_id, bloquear=True)
 
     if propuesta.status != EstadoPropuesta.PENDING:
-        cuerpo_error = {
+        mensaje = f"La propuesta ya no está pendiente (estado: {propuesta.status})."
+        cuerpo_error: dict[str, Any] = {
             "error": {
                 "code": "COPILOT_PROPUESTA_NO_PENDIENTE",
-                "message": f"La propuesta ya no está pendiente (estado: {propuesta.status}).",
+                "message": mensaje,
                 "details": [],
                 "request_id": None,
             }
@@ -377,7 +378,7 @@ async def confirmar_propuesta(
             )
             await db.commit()
         raise Conflicto(
-            cuerpo_error["error"]["message"],
+            mensaje,
             code="COPILOT_PROPUESTA_NO_PENDIENTE",
         )
 
@@ -389,10 +390,11 @@ async def confirmar_propuesta(
             ),
             {"id": propuesta.id},
         )
+        mensaje = "La propuesta venció. Pedile a AMVI que la prepare de nuevo."
         cuerpo_error = {
             "error": {
                 "code": "COPILOT_PROPUESTA_VENCIDA",
-                "message": "La propuesta venció. Pedile a AMVI que la prepare de nuevo.",
+                "message": mensaje,
                 "details": [],
                 "request_id": None,
             }
@@ -407,7 +409,7 @@ async def confirmar_propuesta(
             )
         await db.commit()
         raise Conflicto(
-            cuerpo_error["error"]["message"],
+            mensaje,
             code="COPILOT_PROPUESTA_VENCIDA",
         )
 
