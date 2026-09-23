@@ -61,7 +61,7 @@ async def listar(
         GROUP BY d.id
         ORDER BY d.requested_at DESC, d.id DESC
         LIMIT :limite
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     filas = list((await session.execute(text(consulta), parametros)).all())
     return armar_pagina(
@@ -144,6 +144,6 @@ async def _detalle_por_condicion(
         LEFT JOIN shipments sh ON sh.id = s.shipment_id
         WHERE {" AND ".join(condiciones)}
         GROUP BY d.id
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     return (await session.execute(text(consulta), parametros)).one_or_none()

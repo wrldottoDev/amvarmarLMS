@@ -117,7 +117,7 @@ async def _recurso_exportable(
                 text(f"""
                     SELECT s.company_id, s.shipment_number AS referencia
                     FROM shipments s WHERE {" AND ".join(condiciones)}
-                """),  # noqa: S608
+                """),  # noqa: S608  # nosec B608
                 {"id": resource_id, "empresas": company_ids},
             )
         ).one_or_none()
@@ -150,7 +150,7 @@ async def _recurso_exportable(
                 text(f"""
                     SELECT dr.company_id, dr.dispatch_number AS referencia
                     FROM dispatch_requests dr WHERE {" AND ".join(condiciones)}
-                """),  # noqa: S608
+                """),  # noqa: S608  # nosec B608
                 {"id": resource_id, "empresas": company_ids},
             )
         ).one_or_none()
@@ -169,7 +169,7 @@ async def _recurso_exportable(
                         WHERE dd.dispatch_request_id = :id AND d.deleted_at IS NULL
                         {filtro}
                         ORDER BY dt.code, d.created_at, d.id
-                    """),  # noqa: S608
+                    """),  # noqa: S608  # nosec B608
                     {"id": resource_id},
                 )
             ).all()
@@ -329,7 +329,7 @@ async def obtener(
                        size_bytes, sha256, error_code, expires_at, created_at
                 FROM document_export_jobs
                 WHERE {" AND ".join(condiciones)}
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).one_or_none()
@@ -355,7 +355,7 @@ async def preparar_descarga(
                 SELECT status, storage_key, result_name, expires_at
                 FROM document_export_jobs
                 WHERE {" AND ".join(condiciones)}
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).one_or_none()

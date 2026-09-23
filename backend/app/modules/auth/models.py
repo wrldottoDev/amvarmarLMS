@@ -20,7 +20,7 @@ class RevokeReason(StrEnum):
     LOGOUT_ALL = "LOGOUT_ALL"
     REUSE_DETECTED = "REUSE_DETECTED"
     # S105 lo marca por el nombre; es un motivo de revocación, no una contraseña.
-    PASSWORD_CHANGED = "PASSWORD_CHANGED"  # noqa: S105
+    PASSWORD_CHANGED = "PASSWORD_CHANGED"  # noqa: S105  # nosec B105
     ADMIN_REVOKED = "ADMIN_REVOKED"
 
 
@@ -96,7 +96,7 @@ class RefreshToken(Base):
 class OneTimeTokenPurpose(StrEnum):
     INVITATION = "INVITATION"
     EMAIL_VERIFY = "EMAIL_VERIFY"
-    PASSWORD_RESET = "PASSWORD_RESET"  # noqa: S105
+    PASSWORD_RESET = "PASSWORD_RESET"  # noqa: S105  # nosec B105
 
 
 class OneTimeToken(Base):

@@ -281,7 +281,7 @@ async def transicionar(
                     {set_retencion}
                 WHERE id = :id AND row_version = :version
                 RETURNING row_version
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             {
                 "hacia": datos.to_status,
                 "id": shipment_id,
@@ -457,7 +457,7 @@ _SQL_REQUISITOS_PENDIENTES = f"""
       AND r.status NOT IN
           ('FULFILLED', 'VERIFIED', 'NOT_APPLICABLE', 'WAIVED', 'CANCELLED')
     ORDER BY s.shipment_number, r.created_at
-"""  # noqa: S608
+"""  # noqa: S608  # nosec B608
 
 
 async def _validar_requisitos_resueltos(
@@ -1191,7 +1191,7 @@ _SQL_SINCRONIZAR_REQUISITOS = f"""
             AND existente.document_type_id = dt.id
       )
     RETURNING id, title
-"""  # noqa: S608
+"""  # noqa: S608  # nosec B608
 
 
 async def sincronizar_requisitos_del_catalogo(

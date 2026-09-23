@@ -725,6 +725,6 @@ async def actualizar_perfil_propio(
 
     asignaciones = ", ".join(f"{campo} = :{campo}" for campo in cambios)
     await session.execute(
-        text(f"UPDATE users SET {asignaciones}, updated_at = now() WHERE id = :u"),  # noqa: S608
+        text(f"UPDATE users SET {asignaciones}, updated_at = now() WHERE id = :u"),  # noqa: S608  # nosec B608
         {**cambios, "u": user_id},
     )

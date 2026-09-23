@@ -189,7 +189,7 @@ async def _empresa_de_la_carga(
         condiciones.append("company_id = ANY(:empresas)")
         parametros["empresas"] = alcance.company_ids
 
-    consulta = f"SELECT company_id FROM shipments WHERE {' AND '.join(condiciones)}"  # noqa: S608
+    consulta = f"SELECT company_id FROM shipments WHERE {' AND '.join(condiciones)}"  # noqa: S608  # nosec B608
     company_id = (await db.execute(text(consulta), parametros)).scalar_one_or_none()
 
     if company_id is None:

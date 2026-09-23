@@ -237,7 +237,7 @@ async def listar_shipments(
             SELECT 1 FROM shipment_references ref
             WHERE ref.shipment_id = s.id AND ref.value ILIKE :reference
               {tipo_referencia}
-        )""")  # noqa: S608 -- el fragmento variable es una cláusula constante
+        )""")  # noqa: S608 -- el fragmento variable es una cláusula constante  # nosec B608
         parametros["reference"] = f"%{filtros.reference}%"
 
     if cursor is not None:
@@ -256,7 +256,7 @@ async def listar_shipments(
         WHERE {" AND ".join(condiciones)}
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT :limite
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     filas = list((await session.execute(text(consulta), parametros)).all())
 
@@ -296,7 +296,7 @@ async def obtener_shipment(
         JOIN locations origen ON origen.id = s.origin_location_id
         JOIN locations destino ON destino.id = s.destination_location_id
         WHERE {" AND ".join(condiciones)}
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     fila = (await session.execute(text(consulta), parametros)).one_or_none()
 
@@ -337,7 +337,7 @@ async def timeline(
         WHERE {" AND ".join(condiciones)}
         ORDER BY e.occurred_at DESC, e.id DESC
         LIMIT :limite
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     filas = list((await session.execute(text(consulta), parametros)).all())
 
@@ -422,7 +422,7 @@ async def tarjetas_dashboard(
                 WHERE s.deleted_at IS NULL
                   AND s.archived_at IS NULL
                   {filtro_empresa}
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).one()
@@ -473,7 +473,7 @@ async def proximos_movimientos(
                     WHERE {" AND ".join(condiciones)}
                     ORDER BY s.estimated_arrival_at, s.id
                     LIMIT :limite
-                """),  # noqa: S608
+                """),  # noqa: S608  # nosec B608
                 parametros,
             )
         ).all()

@@ -28,7 +28,7 @@ reducción es un resultado honesto, no un error ni algo para inventar.
 from __future__ import annotations
 
 import gzip
-import subprocess
+import subprocess  # nosec B404 -- único uso: la llamada auditada a `gs` en _recomprimir_pdf
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,7 +104,7 @@ def _recomprimir_pdf(origen: Path, destino: Path) -> None:
     """`/screen` es el preset más agresivo de Ghostscript (72 dpi en
     imágenes internas) — a propósito: consulta esporádica, no operación
     diaria."""
-    subprocess.run(  # noqa: S603 -- lista fija de argumentos; lo único variable son rutas propias
+    subprocess.run(  # noqa: S603 -- lista fija de argumentos; lo único variable son rutas propias  # nosec B603 B607
         [  # noqa: S607 -- "gs" es el binario del sistema (Dockerfile), no una entrada del usuario
             "gs",
             "-sDEVICE=pdfwrite",

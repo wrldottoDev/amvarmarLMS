@@ -531,7 +531,7 @@ async def actualizar(
         SET {asignaciones}, row_version = row_version + 1, updated_at = now()
         WHERE id = :id AND row_version = :version
         RETURNING row_version
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     try:
         nueva_version = int((await session.execute(text(consulta), parametros)).scalar_one())

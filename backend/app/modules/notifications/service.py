@@ -628,7 +628,7 @@ async def listar(
         WHERE {" AND ".join(condiciones)}
         ORDER BY created_at DESC, id DESC
         LIMIT :limite
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     filas = (await session.execute(text(consulta), parametros)).all()
 

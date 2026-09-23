@@ -165,7 +165,9 @@ async def cliente(
     app.dependency_overrides[get_session] = _session
     app.dependency_overrides[get_redis] = _redis
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://pruebas") as http:
+    # https: fuera de ENVIRONMENT=local la cookie de refresh es Secure y httpx no
+    # la reenviaría por http.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://pruebas") as http:
         yield http
 
     app.dependency_overrides.clear()

@@ -918,7 +918,7 @@ class Migrador:
                 SELECT id, warehouse_id, dispatch_id, file, original_name,
                        content_type, size_bytes, {campo_fecha} AS subido, uploaded_by_id
                 FROM {tabla} ORDER BY id
-            """  # noqa: S608
+            """  # noqa: S608  # nosec B608
 
             for fila in self._leer(consulta):
                 c.leidos += 1

@@ -40,7 +40,7 @@ from scripts.seed_shipment_statuses import sembrar as sembrar_estados
 
 # Contraseña única para todas las cuentas de demo. Es pública a propósito: está
 # acá escrita, así que nadie puede confundirla con una credencial real.
-PASSWORD_DEMO = "Demo-AMVARMAR-2026"
+PASSWORD_DEMO = "Demo-AMVARMAR-2026"  # nosec B105 -- demo local, ver ignore S105 en pyproject
 
 # No usar `.local`, `.test` ni `.example`: son TLD reservados y el validador de
 # correo de Pydantic los rechaza, así que el login fallaría con 422 antes de
@@ -244,7 +244,7 @@ async def _cargas(
 
     # Semilla fija: dos ejecuciones producen los mismos datos, así que una
     # captura de pantalla de ayer sigue teniendo sentido hoy.
-    aleatorio = random.Random(20260825)
+    aleatorio = random.Random(20260825)  # nosec B311 -- semilla fija a propósito, no es criptografía
     creadas: list[UUID] = []
     dias = 90
     numero_demo = 0
@@ -587,7 +587,7 @@ async def limpiar(session: AsyncSession) -> None:
             "shipment_packages",
         ):
             await session.execute(
-                text(f"DELETE FROM {tabla} WHERE shipment_id = ANY(:ids)"),  # noqa: S608
+                text(f"DELETE FROM {tabla} WHERE shipment_id = ANY(:ids)"),  # noqa: S608  # nosec B608
                 {"ids": cargas},
             )
         await session.execute(text("DELETE FROM shipments WHERE id = ANY(:ids)"), {"ids": cargas})
@@ -629,7 +629,7 @@ async def limpiar(session: AsyncSession) -> None:
     )
     for tabla in ("auth_sessions", "idempotency_keys", "one_time_tokens", "column_preferences"):
         await session.execute(
-            text(f"DELETE FROM {tabla} WHERE user_id = ANY(:usuarios)"),  # noqa: S608
+            text(f"DELETE FROM {tabla} WHERE user_id = ANY(:usuarios)"),  # noqa: S608  # nosec B608
             {"usuarios": usuarios},
         )
     await session.execute(text("DELETE FROM companies WHERE id = ANY(:ids)"), {"ids": empresas})

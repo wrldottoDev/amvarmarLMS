@@ -304,10 +304,10 @@ async def _propuesta_del_actor(
     columnas = "id, created_by, company_id, action_code, payload, status, expires_at, result"
     if bloquear:
         consulta = text(
-            f"SELECT {columnas} FROM copilot_action_proposals WHERE id = :id FOR UPDATE"  # noqa: S608
+            f"SELECT {columnas} FROM copilot_action_proposals WHERE id = :id FOR UPDATE"  # noqa: S608  # nosec B608
         )
     else:
-        consulta = text(f"SELECT {columnas} FROM copilot_action_proposals WHERE id = :id")  # noqa: S608
+        consulta = text(f"SELECT {columnas} FROM copilot_action_proposals WHERE id = :id")  # noqa: S608  # nosec B608
 
     fila = (await session.execute(consulta, {"id": proposal_id})).one_or_none()
 

@@ -334,7 +334,7 @@ async def _documento_del_recurso(
                   AND d.deleted_at IS NULL AND enlace.{columna} = :resource_id
                   AND dt.context = :context
                 FOR UPDATE OF d
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             {
                 "id": document_id,
                 "company": company_id,
@@ -624,7 +624,7 @@ async def preparar_descarga(
         SELECT d.storage_key, d.original_name, d.media_type, d.upload_status
         FROM documents d
         WHERE {" AND ".join(condiciones)}
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     fila = (await session.execute(text(consulta), parametros)).one_or_none()
 
@@ -721,7 +721,7 @@ async def renombrar(
                 UPDATE documents SET original_name = :nombre, safe_name = :safe
                 WHERE {" AND ".join(condiciones)}
                 RETURNING original_name
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).scalar_one_or_none()
@@ -784,7 +784,7 @@ async def invalidar(
                     invalidation_reason = :motivo
                 WHERE {" AND ".join(condiciones)}
                 RETURNING id
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).scalar_one_or_none()
@@ -881,7 +881,7 @@ async def expediente(
 
     existe = (
         await session.execute(
-            text(f"SELECT 1 FROM shipments s WHERE {donde}"),  # noqa: S608
+            text(f"SELECT 1 FROM shipments s WHERE {donde}"),  # noqa: S608  # nosec B608
             parametros,
         )
     ).scalar_one_or_none()
@@ -1024,7 +1024,7 @@ async def _despacho_visible(
 
     empresa = (
         await session.execute(
-            text(f"SELECT d.company_id FROM dispatch_requests d WHERE {' AND '.join(condiciones)}"),  # noqa: S608
+            text(f"SELECT d.company_id FROM dispatch_requests d WHERE {' AND '.join(condiciones)}"),  # noqa: S608  # nosec B608
             parametros,
         )
     ).scalar_one_or_none()

@@ -354,7 +354,7 @@ async def _cargar_solicitud(
         FROM dispatch_requests
         WHERE {" AND ".join(condiciones)}
         FOR UPDATE
-    """  # noqa: S608
+    """  # noqa: S608  # nosec B608
 
     fila = (await session.execute(text(consulta), parametros)).one_or_none()
     if fila is None:

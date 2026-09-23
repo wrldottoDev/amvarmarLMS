@@ -31,8 +31,13 @@ def pdf_real() -> bytes:
 
 
 @pytest.fixture(autouse=True)
-def exportaciones_controladas_por_el_test(monkeypatch: pytest.MonkeyPatch) -> None:
-    """El test procesa el job explícitamente, sin depender de un worker externo."""
+def colas_controladas_por_el_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El test procesa documentos y jobs explícitamente, sin depender de un worker externo.
+
+    Sin esto, el encolado publica en el broker de `REDIS_URL`: en CI no hay Redis ahí
+    y en local las tareas caen en el Redis de desarrollo.
+    """
+    monkeypatch.setattr(documents_router, "_encolar_documento", lambda _document_id: None)
     monkeypatch.setattr(documents_router, "_encolar_exportacion", lambda _job_id: None)
 
 

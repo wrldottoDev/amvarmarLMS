@@ -116,7 +116,7 @@ async def listar_empresas(
                 {where}
                 ORDER BY c.created_at DESC, c.id DESC
                 LIMIT :limite
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).all()
@@ -208,7 +208,7 @@ async def actualizar_empresa(
                     UPDATE companies SET {asignaciones}, updated_at = now()
                     WHERE id = :id AND deleted_at IS NULL
                     RETURNING id
-                """),  # noqa: S608
+                """),  # noqa: S608  # nosec B608
                 parametros,
             )
         ).scalar_one_or_none()
@@ -322,7 +322,7 @@ async def listar_usuarios(
                 LEFT JOIN roles r ON r.id = a.role_id
                 WHERE {" AND ".join(condiciones)}
                 ORDER BY c.legal_name NULLS FIRST, u.first_name, u.last_name
-            """),  # noqa: S608
+            """),  # noqa: S608  # nosec B608
             parametros,
         )
     ).all()
@@ -503,7 +503,7 @@ async def actualizar_usuario(
                     UPDATE users SET {asignaciones}, updated_at = now()
                     WHERE id = :id AND deleted_at IS NULL
                     RETURNING id
-                """),  # noqa: S608
+                """),  # noqa: S608  # nosec B608
                 parametros,
             )
         ).scalar_one_or_none()

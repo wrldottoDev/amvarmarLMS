@@ -14,6 +14,8 @@ authors = [{ name = "AMVARMAR" }]
 dependencies = [
     # API framework
     "fastapi>=0.115,<1.0",
+    # Transitiva de FastAPI; piso explícito por CVEs de la rama 0.x.
+    "starlette>=1.3.1,<2.0",
     "uvicorn[standard]>=0.32,<1.0",
     "python-multipart>=0.0.18",
 
@@ -47,19 +49,19 @@ dependencies = [
 
     # Notificaciones
     "firebase-admin>=6.5,<7.0",
-    "aiosmtplib>=3.0,<4.0",
+    "aiosmtplib>=5.1.2,<6.0",
     "jinja2>=3.1,<4.0",
 
     # Validación de archivos subidos
     "python-magic>=0.4.27,<1.0",
-    "pillow>=11.0,<12.0",
+    "pillow>=12.3.0,<13.0",
 
     # Cliente HTTP
     "httpx>=0.28,<1.0",
 
     # Observabilidad
     "structlog>=24.4,<26.0",
-    "prometheus-fastapi-instrumentator>=7.0,<8.0",
+    "prometheus-client>=0.21,<1.0",
     "opentelemetry-sdk>=1.28,<2.0",
     "opentelemetry-instrumentation-fastapi>=0.49b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.49b0",
