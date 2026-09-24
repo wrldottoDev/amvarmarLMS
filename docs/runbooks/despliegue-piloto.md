@@ -69,6 +69,18 @@ sudo certbot --nginx -d app.amvarmar.com -d archivos.amvarmar.com
 
 `nginx -t` tiene que pasar **antes** del reload: un error ahí dejaría caído también el sistema viejo.
 
+**Sin el DNS de `archivos.amvarmar.com`:** el storage va en el mismo dominio, puerto 9443. En lugar del
+sitio `archivos…`, después de certbot (solo `-d app.amvarmar.com`):
+
+```bash
+sudo cp nginx/app.amvarmar.com-storage.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/app.amvarmar.com-storage.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Con `S3_ENDPOINT_URL=https://app.amvarmar.com:9443` en `.env` y el puerto 9443 abierto en ufw y en el
+firewall del proveedor.
+
 ## 6. Datos: copia del sistema viejo
 
 ```bash
