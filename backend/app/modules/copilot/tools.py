@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -177,6 +178,26 @@ class ProcesarFacturaOcrArgs(BaseModel):
     # archivo en sí: el asistente no es una vía alterna para subir contenido
     # que se saltearía la validación de MIME.
     document_id: str = Field(description="ID de un documento ya cargado y verificado.")
+
+
+class ProponerCambioEstadoArgs(BaseModel):
+    carga: str = Field(
+        min_length=1,
+        max_length=120,
+        description=(
+            "Cómo la nombró la persona: número de carga (SHP-...), número de "
+            "factura o ID. Tal cual, sin completar ni adivinar."
+        ),
+    )
+    # Solo el ingreso a bodega (ADR-0012, enmienda 2026-09-24): son los avances
+    # que no piden justificación. Despacho y entrega siguen su propio flujo.
+    estado_destino: Literal["IN_TRANSIT", "RECEIVED", "STORED"] = Field(
+        description=(
+            "IN_TRANSIT (en tránsito), RECEIVED (recibida, ya en bodega) o "
+            "STORED (almacenada). Si la carga está varios estados antes, se "
+            "proponen todos los pasos intermedios."
+        ),
+    )
 
 
 class CrearPrealertaBorradorArgs(BaseModel):
@@ -382,6 +403,22 @@ HERRAMIENTAS: dict[str, DefinicionHerramienta] = {
         autorizacion=RequiereTodos((Perm.COPILOT_TOOLS_DRAFT, Perm.SHIPMENTS_CREATE)),
         clase=ClaseHerramienta.ESCRITURA,
         action_code=AccionCopilot.CREAR_PREALERTA_BORRADOR,
+    ),
+    "proponer_cambio_estado": DefinicionHerramienta(
+        nombre="proponer_cambio_estado",
+        descripcion=(
+            "Prepara el avance de una carga en el ingreso a bodega (prealerta, en "
+            "tránsito, recibida, almacenada) para que la persona lo confirme. No "
+            "cambia nada por sí sola. No sirve para retroceder, cancelar, despachar "
+            "ni entregar."
+        ),
+        argumentos=ProponerCambioEstadoArgs,
+        # `SHIPMENTS_TRANSITION_FORWARD` es el mismo que exige el motor de
+        # transiciones al confirmar; se pide desde el preview para no ofrecerle
+        # la herramienta a quien no podría confirmarla nunca.
+        autorizacion=RequiereTodos((Perm.COPILOT_TOOLS_DRAFT, Perm.SHIPMENTS_TRANSITION_FORWARD)),
+        clase=ClaseHerramienta.ESCRITURA,
+        action_code=AccionCopilot.PROPONER_CAMBIO_ESTADO,
     ),
 }
 

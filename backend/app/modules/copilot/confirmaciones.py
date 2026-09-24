@@ -23,10 +23,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import SinPermiso
 from app.modules.copilot import propuestas
 from app.modules.copilot.acciones import REGISTRO_DE_CONFIRMACION, AccionCopilot
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments import queries as shipments_queries
+from app.modules.shipments import service as shipments_service
 from app.modules.shipments.gestion import (
     DatosDeBulto,
     DatosDeCarga,
@@ -135,6 +137,54 @@ async def confirmar_procesar_factura_ocr(
     return {"shipment_id": str(datos["shipment_id"]), "row_version": nueva_version}
 
 
+async def confirmar_proponer_cambio_estado(
+    session: AsyncSession,
+    permisos: PermisosEfectivos,
+    propuesta_id: UUID,
+    campos: dict[str, Any],
+) -> dict[str, Any]:
+    """Aplica los pasos con `shipments.service.transicionar`, el mismo motor que
+    `POST /shipments/{id}/transitions`: permiso, bloqueos, fechas, línea de
+    tiempo y notificaciones se revalidan acá, paso por paso.
+
+    Nada es editable: `campos` se ignora. La carga, la versión y los pasos
+    salen de la propuesta persistida. Si la carga cambió desde que se propuso,
+    el primer paso choca con la versión y no se aplica ninguno (el router hace
+    rollback y marca la propuesta FAILED).
+    """
+    propuesta = await propuestas.obtener(session, propuesta_id)
+    datos = dict(propuesta.payload)
+    shipment_id = UUID(str(datos["shipment_id"]))
+    version = int(datos["row_version"])
+    estado = ""
+
+    for paso in datos["pasos"]:
+        try:
+            resultado = await shipments_service.transicionar(
+                session,
+                shipment_id=shipment_id,
+                datos=shipments_service.DatosTransicion(
+                    to_status=str(paso), row_version=version, note="Confirmado desde AMVI."
+                ),
+                actor_user_id=propuesta.created_by,
+                permisos=permisos,
+            )
+        except shipments_service.SinPermisoParaTransicion as error:
+            # No hereda de `ErrorDeAplicacion`: sin traducirla, el router no la
+            # atraparía y la propuesta quedaría PENDING con un 500.
+            raise SinPermiso("Ya no tenés permiso para cambiar el estado de esta carga.") from error
+        version = resultado.row_version
+        estado = resultado.hacia
+
+    return {
+        "shipment_id": str(shipment_id),
+        "shipment_number": datos.get("shipment_number"),
+        "estado": estado,
+        "row_version": version,
+    }
+
+
+REGISTRO_DE_CONFIRMACION[AccionCopilot.PROPONER_CAMBIO_ESTADO] = confirmar_proponer_cambio_estado
 REGISTRO_DE_CONFIRMACION[AccionCopilot.CREAR_PREALERTA_BORRADOR] = (
     confirmar_crear_prealerta_borrador
 )

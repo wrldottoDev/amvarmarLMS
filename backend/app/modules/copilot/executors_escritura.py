@@ -34,6 +34,9 @@ from app.modules.documents.models import UploadStatus
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments import queries as shipments_queries
+from app.modules.shipments import service as shipments_service
+from app.modules.shipments.catalog import ESTADOS
+from app.modules.shipments.models import ShipmentStatus
 
 # Base64 infla ~33%; esto acota el tamaño del payload que se manda al
 # proveedor en una sola llamada (ADR-0012, Fase 6) — muy por debajo del tope
@@ -357,7 +360,195 @@ async def procesar_factura_ocr(
     return propuesta.model_dump(mode="json")
 
 
+# Ingreso a bodega, en orden. Son los avances que no piden justificación
+# (ADR-0001); lo que sigue a STORED lo mueve el flujo de despachos.
+_INGRESO_A_BODEGA: tuple[str, ...] = (
+    ShipmentStatus.PRE_ALERT,
+    ShipmentStatus.IN_TRANSIT,
+    ShipmentStatus.RECEIVED,
+    ShipmentStatus.STORED,
+)
+
+
+async def _cargas_por_referencia_exacta(
+    session: AsyncSession, permisos: PermisosEfectivos, referencia: str
+) -> list[Any]:
+    """Número de carga, factura o ID, con coincidencia EXACTA.
+
+    No reusa la búsqueda del listado: es parcial (ILIKE) y además mira shipper
+    y carrier, así que "SHP-2026" encontraría cualquier carga del año. Para
+    escribir, la carga tiene que quedar identificada sin margen de duda. El
+    alcance se aplica igual que en el resto: se descartan las cargas que el
+    actor no puede leer.
+    """
+    filas = (
+        await session.execute(
+            text("""
+                SELECT s.id, s.shipment_number, s.company_id, s.current_status_code,
+                       s.row_version, c.legal_name AS company_name
+                FROM shipments s
+                JOIN companies c ON c.id = s.company_id
+                WHERE s.deleted_at IS NULL
+                  AND (
+                    lower(s.shipment_number) = lower(:ref)
+                    OR CAST(s.id AS text) = lower(:ref)
+                    OR EXISTS (
+                        SELECT 1 FROM shipment_references r
+                        WHERE r.shipment_id = s.id AND r.reference_type = 'INVOICE'
+                          AND lower(trim(r.value)) = lower(:ref)
+                    )
+                  )
+                ORDER BY s.created_at DESC
+                LIMIT 6
+            """),
+            {"ref": referencia.strip()},
+        )
+    ).all()
+    return [f for f in filas if permisos.permite(Perm.SHIPMENTS_READ, company_id=f.company_id)]
+
+
+def _etiqueta(estado: str) -> str:
+    definicion = ESTADOS.get(estado)
+    return definicion.label if definicion else estado
+
+
+async def proponer_cambio_estado(
+    session: AsyncSession,
+    permisos: PermisosEfectivos,
+    actor_user_id: UUID,
+    company_id: UUID | None,
+    argumentos: dict[str, Any],
+) -> dict[str, Any]:
+    """Arma la propuesta de avanzar una carga en el ingreso a bodega.
+
+    Solo persiste la propuesta; el estado cambia al confirmar
+    (`confirmaciones.confirmar_proponer_cambio_estado`). Si la carga no se
+    identifica sin ambigüedad, o el primer paso está bloqueado, no propone
+    nada y devuelve el motivo para que AMVI lo explique.
+    """
+    referencia = str(argumentos["carga"])
+    destino = str(argumentos["estado_destino"])
+
+    candidatas = await _cargas_por_referencia_exacta(session, permisos, referencia)
+    if not candidatas:
+        return {
+            "encontrada": False,
+            "mensaje": f"No hay ninguna carga con número, factura o ID «{referencia}».",
+        }
+    if len(candidatas) > 1:
+        return {
+            "encontrada": True,
+            "ambigua": True,
+            "mensaje": "Varias cargas coinciden; hay que elegir una por su número.",
+            "candidatas": [
+                {
+                    "numero": f.shipment_number,
+                    "estado": _etiqueta(f.current_status_code),
+                    "empresa": f.company_name,
+                }
+                for f in candidatas
+            ],
+        }
+
+    carga = candidatas[0]
+    actual = carga.current_status_code
+
+    def sin_propuesta(motivo: str) -> dict[str, Any]:
+        return {
+            "encontrada": True,
+            "carga": carga.shipment_number,
+            "estado_actual": _etiqueta(actual),
+            "propuesta": None,
+            "motivo": motivo,
+        }
+
+    if actual not in _INGRESO_A_BODEGA[:-1] or destino not in _INGRESO_A_BODEGA:
+        return sin_propuesta(
+            f"La carga está en «{_etiqueta(actual)}». AMVI solo avanza el ingreso a "
+            "bodega (Prealerta, En tránsito, Recibida, Almacenada); lo demás se hace "
+            "desde la carga."
+        )
+    desde_i = _INGRESO_A_BODEGA.index(actual)
+    hasta_i = _INGRESO_A_BODEGA.index(destino)
+    if hasta_i <= desde_i:
+        return sin_propuesta(
+            f"La carga ya está en «{_etiqueta(actual)}». Retroceder pide una "
+            "justificación y se hace desde la carga, no desde AMVI."
+        )
+    pasos = list(_INGRESO_A_BODEGA[desde_i + 1 : hasta_i + 1])
+
+    # El primer paso se valida ya, con el mismo cálculo que la pantalla de
+    # transiciones. Los siguientes dependen de lo que abra el primero (por
+    # ejemplo, requisitos al entrar a RECEIVED): se revalidan al confirmar.
+    disponibles = await shipments_service.transiciones_disponibles(
+        session, shipment_id=carga.id, permisos=permisos
+    )
+    primero = next((d for d in disponibles if d.to_status == pasos[0]), None)
+    if primero is None:
+        return sin_propuesta(f"Tu cuenta no puede pasar esta carga a «{_etiqueta(pasos[0])}».")
+    if primero.blocked:
+        faltantes = "; ".join(str(b.get("message", "")) for b in primero.blockers)
+        return sin_propuesta(f"No se puede pasar a «{_etiqueta(pasos[0])}»: {faltantes}")
+
+    recorrido = " → ".join(_etiqueta(e) for e in (actual, *pasos))
+    campos = [
+        CampoPropuesto(
+            nombre="carga",
+            etiqueta="Carga",
+            valor=carga.shipment_number,
+            confianza=1.0,
+            editable=False,
+        ),
+        CampoPropuesto(
+            nombre="empresa",
+            etiqueta="Empresa",
+            valor=carga.company_name,
+            confianza=1.0,
+            editable=False,
+        ),
+        CampoPropuesto(
+            nombre="cambio",
+            etiqueta="Cambio de estado",
+            valor=recorrido,
+            confianza=1.0,
+            editable=False,
+        ),
+    ]
+    advertencias = (
+        ["Cada paso se revalida al confirmar; si alguno se bloquea, no se aplica ninguno."]
+        if len(pasos) > 1
+        else []
+    )
+
+    expira_en = datetime.now(UTC) + timedelta(minutes=get_settings().copilot_propuesta_ttl_minutos)
+    propuesta_id = await propuestas.crear(
+        session,
+        creador=actor_user_id,
+        company_id=carga.company_id,
+        action_code=AccionCopilot.PROPONER_CAMBIO_ESTADO,
+        payload={
+            "shipment_id": str(carga.id),
+            "shipment_number": carga.shipment_number,
+            "row_version": carga.row_version,
+            "pasos": pasos,
+        },
+        expira_en=expira_en,
+    )
+
+    propuesta = PropuestaAccion(
+        id=str(propuesta_id),
+        action_code=AccionCopilot.PROPONER_CAMBIO_ESTADO,
+        titulo="Cambio de estado",
+        resumen_efecto=f"{carga.shipment_number}: {recorrido}.",
+        expira_en=expira_en.isoformat(),
+        campos=campos,
+        advertencias=advertencias,
+    )
+    return propuesta.model_dump(mode="json")
+
+
 REGISTRO_EJECUTORES_ESCRITURA: dict[str, EjecutorHerramienta] = {
+    "proponer_cambio_estado": proponer_cambio_estado,
     "crear_prealerta_borrador": crear_prealerta_borrador,
     "procesar_factura_ocr": procesar_factura_ocr,
 }

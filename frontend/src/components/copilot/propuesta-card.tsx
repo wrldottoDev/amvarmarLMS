@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, X } from "lucide-react";
 import { useState } from "react";
 import { AvisoError } from "@/components/ui/aviso-error";
@@ -19,6 +19,7 @@ function valorInicial(valor: PropuestaAccion["campos"][number]["valor"]) {
  * endpoint dedicado (ADR-0012) — nunca escribe nada por su cuenta. */
 export function PropuestaCard({ propuesta }: { propuesta: PropuestaAccion }) {
   const [estado, setEstado] = useState<Estado>("pendiente");
+  const queryClient = useQueryClient();
   const [valores, setValores] = useState<Record<string, string>>(() =>
     Object.fromEntries(propuesta.campos.map((campo) => [campo.nombre, valorInicial(campo.valor)])),
   );
@@ -34,7 +35,14 @@ export function PropuestaCard({ propuesta }: { propuesta: PropuestaAccion }) {
           body: { campos: valores },
         }),
       ),
-    onSuccess: () => setEstado("confirmada"),
+    onSuccess: () => {
+      setEstado("confirmada");
+      // Confirmar crea o mueve una carga: lo que esté abierto (listado, detalle,
+      // tablero) tiene que dejar de mostrar el estado anterior.
+      for (const clave of ["cargas", "carga", "dashboard", "transiciones-disponibles"]) {
+        void queryClient.invalidateQueries({ queryKey: [clave] });
+      }
+    },
   });
 
   const rechazar = useMutation({
