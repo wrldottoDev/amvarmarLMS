@@ -159,6 +159,7 @@ class TestContratoDelCatalogo:
             "procesar_factura_ocr",
             "crear_prealerta_borrador",
             "proponer_cambio_estado",
+            "proponer_despacho",
         }
 
     def test_toda_herramienta_de_escritura_tiene_action_code(self) -> None:

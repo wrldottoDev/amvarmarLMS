@@ -8,6 +8,7 @@ import { Boton } from "@/components/ui/boton";
 import { Campo } from "@/components/ui/campo";
 import { api, exigirDatos } from "@/lib/api/client";
 import type { PropuestaAccion } from "@/features/copilot/usar-chat";
+import { claveDespachos } from "@/features/despachos/consultas";
 
 type Estado = "pendiente" | "confirmada" | "rechazada";
 
@@ -37,11 +38,12 @@ export function PropuestaCard({ propuesta }: { propuesta: PropuestaAccion }) {
       ),
     onSuccess: () => {
       setEstado("confirmada");
-      // Confirmar crea o mueve una carga: lo que esté abierto (listado, detalle,
-      // tablero) tiene que dejar de mostrar el estado anterior.
+      // Confirmar crea o mueve una carga, o crea un despacho: lo que esté abierto
+      // (listados, detalle, tablero) tiene que dejar de mostrar lo anterior.
       for (const clave of ["cargas", "carga", "dashboard", "transiciones-disponibles"]) {
         void queryClient.invalidateQueries({ queryKey: [clave] });
       }
+      void queryClient.invalidateQueries({ queryKey: claveDespachos });
     },
   });
 

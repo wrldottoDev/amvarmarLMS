@@ -6,6 +6,10 @@ El ícono de campana en la barra superior muestra tus avisos recientes con un co
 leíste. Al abrirlo podés marcar uno como leído tocándolo, o usar **Marcar todo como leído**. El enlace
 **Ver todos** lleva a la página completa de **Avisos**.
 
-Se te avisa, entre otras cosas, cuando una carga se almacena o cambia de estado, cuando un requisito
-bloqueante queda abierto o un documento se rechaza, cuando una solicitud de despacho se crea, aprueba,
-rechaza, cancela, despacha o completa, cuando un BL queda disponible, y cuando una carga se entrega.
+Se te avisa, entre otras cosas, cuando una carga se almacena o cambia de estado, cuando queda **lista para
+despachar** (almacenada y sin nada pendiente), cuando un documento tuyo se rechaza, cuando una solicitud
+de despacho se crea, aprueba, rechaza, cancela, despacha o completa, cuando un BL queda disponible, y
+cuando una carga se entrega.
+
+Los avisos también llegan por correo. Si no te llega ninguno, revisá spam y confirmale a AMVARMAR que tu
+correo está bien cargado.

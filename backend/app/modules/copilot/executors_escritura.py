@@ -15,7 +15,7 @@ escritura de dominio durante el turno del modelo).
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -547,7 +547,172 @@ async def proponer_cambio_estado(
     return propuesta.model_dump(mode="json")
 
 
+_METODOS = {"SEA": "Marítimo", "AIR": "Aéreo", "LAND": "Terrestre"}
+
+
+async def _requisitos_que_frenan(session: AsyncSession, shipment_ids: list[UUID]) -> list[Any]:
+    """Lo que Operaciones va a esperar antes de aprobar: no impide pedir el
+    despacho, pero el cliente tiene que saberlo al confirmar."""
+    return list(
+        (
+            await session.execute(
+                text("""
+                    SELECT s.shipment_number, r.title
+                    FROM shipment_requirements r
+                    JOIN shipments s ON s.id = r.shipment_id
+                    LEFT JOIN document_types dt ON dt.id = r.document_type_id
+                    WHERE r.shipment_id = ANY(:ids)
+                      AND r.blocks_dispatch
+                      AND COALESCE(dt.required_before_status, 'DISPATCHED') = 'DISPATCHED'
+                      AND r.status NOT IN
+                          ('FULFILLED', 'VERIFIED', 'NOT_APPLICABLE', 'WAIVED', 'CANCELLED')
+                    ORDER BY s.shipment_number, r.created_at
+                """),
+                {"ids": shipment_ids},
+            )
+        ).all()
+    )
+
+
+def _fecha(valor: str | None) -> date | None:
+    if not valor:
+        return None
+    try:
+        return date.fromisoformat(valor)
+    except ValueError:
+        return None
+
+
+async def proponer_despacho(
+    session: AsyncSession,
+    permisos: PermisosEfectivos,
+    actor_user_id: UUID,
+    company_id: UUID | None,
+    argumentos: dict[str, Any],
+) -> dict[str, Any]:
+    """Arma una solicitud de despacho para que la persona la confirme.
+
+    Cada carga tiene que identificarse sin ambigüedad (misma resolución exacta
+    que `proponer_cambio_estado`), estar almacenada y ser de una sola empresa.
+    La solicitud se crea recién al confirmar, con `dispatches.service.crear`.
+    """
+    no_encontradas: list[str] = []
+    ambiguas: list[str] = []
+    cargas: list[Any] = []
+    for referencia in dict.fromkeys(str(r).strip() for r in argumentos["cargas"]):
+        candidatas = await _cargas_por_referencia_exacta(session, permisos, referencia)
+        if not candidatas:
+            no_encontradas.append(referencia)
+        elif len(candidatas) > 1:
+            ambiguas.append(referencia)
+        else:
+            cargas.append(candidatas[0])
+
+    def sin_propuesta(motivo: str, **extra: Any) -> dict[str, Any]:
+        return {"propuesta": None, "motivo": motivo, **extra}
+
+    if no_encontradas or ambiguas:
+        partes = []
+        if no_encontradas:
+            partes.append(f"no encontré {', '.join(no_encontradas)}")
+        if ambiguas:
+            partes.append(
+                f"{', '.join(ambiguas)} coincide con varias cargas: hay que nombrarlas por su número"
+            )
+        return sin_propuesta(
+            "No armé la solicitud: " + "; ".join(partes) + ".",
+            no_encontradas=no_encontradas,
+            ambiguas=ambiguas,
+        )
+
+    cargas = list({c.id: c for c in cargas}.values())
+    empresas = {c.company_id for c in cargas}
+    if len(empresas) > 1:
+        return sin_propuesta(
+            "Una solicitud de despacho es de una sola empresa; estas cargas son de varias."
+        )
+    empresa = next(iter(empresas))
+    if not permisos.permite(Perm.DISPATCH_REQUESTS_CREATE, company_id=empresa):
+        return sin_propuesta("Tu cuenta no puede solicitar despachos para esta empresa.")
+
+    no_almacenadas = [c for c in cargas if c.current_status_code != ShipmentStatus.STORED]
+    if no_almacenadas:
+        detalle = ", ".join(
+            f"{c.shipment_number} ({_etiqueta(c.current_status_code)})" for c in no_almacenadas
+        )
+        return sin_propuesta(
+            f"Solo se despachan cargas almacenadas y {detalle} todavía no lo está."
+        )
+
+    metodo = str(argumentos["metodo"])
+    fecha = _fecha(argumentos.get("fecha_retiro"))
+    advertencias = [
+        f"{f.shipment_number}: falta «{f.title}». Operaciones aprueba el despacho cuando se resuelva."
+        for f in await _requisitos_que_frenan(session, [c.id for c in cargas])
+    ]
+    if argumentos.get("fecha_retiro") and fecha is None:
+        advertencias.append("No entendí la fecha de retiro; completala al confirmar (AAAA-MM-DD).")
+
+    numeros = ", ".join(c.shipment_number for c in cargas)
+    campos = [
+        CampoPropuesto(
+            nombre="cargas", etiqueta="Cargas", valor=numeros, confianza=1.0, editable=False
+        ),
+        CampoPropuesto(
+            nombre="empresa",
+            etiqueta="Empresa",
+            valor=cargas[0].company_name,
+            confianza=1.0,
+            editable=False,
+        ),
+        CampoPropuesto(
+            nombre="metodo",
+            etiqueta="Método (SEA, AIR o LAND)",
+            valor=metodo,
+            confianza=1.0,
+        ),
+        _campo_texto(
+            "direccion_entrega", "Dirección de entrega", argumentos.get("direccion_entrega")
+        ),
+        _campo_texto("instrucciones", "Instrucciones", argumentos.get("instrucciones")),
+        _campo_texto(
+            "fecha_retiro", "Fecha de retiro (AAAA-MM-DD)", fecha.isoformat() if fecha else None
+        ),
+    ]
+
+    expira_en = datetime.now(UTC) + timedelta(minutes=get_settings().copilot_propuesta_ttl_minutos)
+    propuesta_id = await propuestas.crear(
+        session,
+        creador=actor_user_id,
+        company_id=empresa,
+        action_code=AccionCopilot.PROPONER_DESPACHO,
+        payload={
+            "shipment_ids": [str(c.id) for c in cargas],
+            "method": metodo,
+            "delivery_address": argumentos.get("direccion_entrega"),
+            "instructions": argumentos.get("instrucciones"),
+            "requested_pickup_date": fecha.isoformat() if fecha else None,
+        },
+        expira_en=expira_en,
+    )
+
+    propuesta = PropuestaAccion(
+        id=str(propuesta_id),
+        action_code=AccionCopilot.PROPONER_DESPACHO,
+        titulo="Solicitud de despacho",
+        resumen_efecto=(
+            f"Solicita el despacho {_METODOS.get(metodo, metodo).lower()} de {numeros}. "
+            "Operaciones la revisa y aprueba."
+        ),
+        expira_en=expira_en.isoformat(),
+        campos=campos,
+        advertencias=advertencias,
+    )
+    return propuesta.model_dump(mode="json")
+
+
 REGISTRO_EJECUTORES_ESCRITURA: dict[str, EjecutorHerramienta] = {
+    "proponer_despacho": proponer_despacho,
     "proponer_cambio_estado": proponer_cambio_estado,
     "crear_prealerta_borrador": crear_prealerta_borrador,
     "procesar_factura_ocr": procesar_factura_ocr,

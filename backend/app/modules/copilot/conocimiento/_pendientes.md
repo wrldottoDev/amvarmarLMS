@@ -6,7 +6,13 @@ documentación interna, no una entrada que el ejecutor pueda devolver.
 Temas de "cómo hago X" que un usuario probablemente pregunte y que **no** se agregaron a la base porque
 no se pudo verificar el procedimiento exacto contra la interfaz actual:
 
-Ninguno por ahora. Los tres que estaban acá (historial de una carga, editar una carga, y usuarios de la
+- **Verificar mi correo.** La pantalla existe en el PR de verificación de correo (`EMAIL_VERIFY`): aviso en
+  *Mi cuenta* con **Enviarme el enlace de verificación**. Agregar la guía cuando ese PR esté en `main`.
+- **Reportar una inconformidad de entrega.** El backend la tiene (`reportar_inconformidad`), pero ninguna
+  pantalla la usa. Hoy `problema-con-entrega.md` dice que se avisa a AMVARMAR; actualizarla cuando exista
+  la pantalla.
+
+Los tres que estaban acá antes (historial de una carga, editar una carga, y usuarios de la
 propia empresa) se verificaron contra el frontend y el backend reales y ya tienen su `.md` en este mismo
 directorio (`historial-de-carga.md`, `editar-carga.md`, `usuarios-de-mi-empresa.md`).
 

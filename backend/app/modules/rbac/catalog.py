@@ -143,11 +143,13 @@ _CLIENTE_PERMS: frozenset[str] = frozenset(
         Perm.REPORTS_EXPORT,
         Perm.NOTIFICATIONS_PREFERENCES_OWN,
         Perm.NOTIFICATIONS_PREFERENCES_COMPANY,
-        # Solo `use`, sin `tools.draft` (ADR-0017): para el cliente AMVI es una
-        # guía —dónde está mi carga, qué me falta, cómo pido un despacho—, no
-        # algo que le prepare acciones. Las propuestas de escritura son para
-        # AMVARMAR, que es quien registra.
+        # AMVI para el cliente es una guía —dónde está mi carga, qué me falta—
+        # que además le prepara la solicitud de despacho para confirmar
+        # (ADR-0017, enmienda 2026-09-24). `tools.draft` no le abre las demás
+        # propuestas: cada una exige además un permiso de dominio de AMVARMAR
+        # (crear cargas, avanzar estados, subir documentos internos).
         Perm.COPILOT_USE,
+        Perm.COPILOT_TOOLS_DRAFT,
     }
 )
 

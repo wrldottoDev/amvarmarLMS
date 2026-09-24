@@ -51,13 +51,23 @@ from app.modules.copilot.schemas import (
 from app.modules.copilot.service import procesar_turno
 from app.modules.copilot.tools import herramientas_disponibles
 from app.modules.rbac.catalog import Perm
-from app.modules.rbac.service import obtener_permisos_efectivos
+from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
 
 router = APIRouter(prefix="/api/v1/copilot", tags=["asistente"])
 
 SesionDb = Annotated[AsyncSession, Depends(get_session)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
 ActorDep = Annotated[Actor, Depends(actor_actual)]
+
+
+def puede_adjuntar(permisos: PermisosEfectivos) -> bool:
+    """Leer un adjunto es preparar una acción: se paga una llamada extra al
+    proveedor y lo leído alimenta el alta de una carga (`crear_prealerta_borrador`).
+    Por eso pide `copilot.tools.draft` y además `shipments.create`: el cliente
+    tiene el primero desde ADR-0017 (enmienda 2026-09-24) para pedir despachos,
+    pero no registra cargas, y leerle una factura no le serviría de nada."""
+    codigos = permisos.codigos()
+    return Perm.COPILOT_TOOLS_DRAFT in codigos and Perm.SHIPMENTS_CREATE in codigos
 
 
 def _ip(request: Request) -> str | None:
@@ -140,7 +150,7 @@ async def capabilities(actor: ActorDep, db: SesionDb, redis: RedisDep) -> Capabi
     return CapabilitiesResponse(
         disponible=disponible,
         nombre=settings.copilot_name,
-        puede_adjuntar=Perm.COPILOT_TOOLS_DRAFT in permisos.codigos(),
+        puede_adjuntar=puede_adjuntar(permisos),
         cuota_restante=cuota_restante,
         herramientas=herramientas,
     )
@@ -230,11 +240,7 @@ async def respond(
             media_type="text/event-stream",
         )
 
-    # Leer un archivo adjunto es preparar una acción, no consultar: se paga
-    # una llamada extra al proveedor y lo que sale de ahí alimenta una
-    # propuesta. Por eso exige `copilot.tools.draft`, el mismo permiso que las
-    # herramientas de escritura — que el cliente no tiene (ADR-0017).
-    if datos.adjunto is not None and Perm.COPILOT_TOOLS_DRAFT not in permisos.codigos():
+    if datos.adjunto is not None and not puede_adjuntar(permisos):
         return StreamingResponse(
             iter(
                 [
