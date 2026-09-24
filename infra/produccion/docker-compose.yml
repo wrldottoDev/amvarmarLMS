@@ -18,6 +18,11 @@ x-backend: &backend
   image: amvarmar-lms-backend:${VERSION:-local}
   restart: unless-stopped
   env_file: .env
+  # El storage se publica en el dominio público (S3_ENDPOINT_URL) y las URLs
+  # firmadas llevan ese host. Resolverlo al host de la VPS hace que el backend
+  # le hable al nginx local sin salir a Internet ni pasar por Cloudflare.
+  extra_hosts:
+    - "${DOMINIO_PUBLICO:-app.amvarmar.com}:host-gateway"
   environment:
     # Las direcciones internas se fijan acá: son de la red del compose, no
     # algo que deba decidir quien completa el `.env`.

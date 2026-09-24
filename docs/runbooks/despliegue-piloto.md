@@ -69,17 +69,22 @@ sudo certbot --nginx -d app.amvarmar.com -d archivos.amvarmar.com
 
 `nginx -t` tiene que pasar **antes** del reload: un error ahí dejaría caído también el sistema viejo.
 
-**Sin el DNS de `archivos.amvarmar.com`:** el storage va en el mismo dominio, puerto 9443. En lugar del
-sitio `archivos…`, después de certbot (solo `-d app.amvarmar.com`):
+**Piloto con `app.amvarmar.com` en manos del sistema viejo (caso actual).** El dominio (443) lo sirve el
+sistema viejo detrás de Cloudflare y **no se toca**: el piloto va en el mismo dominio, en puertos que
+Cloudflare reenvía, con el certificado existente. No se corre certbot ni se instalan los dos sitios de
+arriba:
 
 ```bash
-sudo cp nginx/app.amvarmar.com-storage.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/app.amvarmar.com-storage.conf /etc/nginx/sites-enabled/
+sudo cp nginx/piloto-lms-8443.conf nginx/piloto-storage-2053.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/piloto-lms-8443.conf /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/piloto-storage-2053.conf /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Con `S3_ENDPOINT_URL=https://app.amvarmar.com:9443` en `.env` y el puerto 9443 abierto en ufw y en el
-firewall del proveedor.
+En `.env`: `FRONTEND_BASE_URL=https://app.amvarmar.com:8443` y
+`S3_ENDPOINT_URL=https://app.amvarmar.com:2053`. Los puertos 8443 y 2053 tienen que estar abiertos en el
+firewall del proveedor. Cloudflare corta las peticiones de más de 100 MB en el plan gratuito: los
+archivos más grandes no se pueden subir desde el navegador durante el piloto.
 
 ## 6. Datos: copia del sistema viejo
 
@@ -121,7 +126,7 @@ docker compose run --rm -v $M:/media-legacy:ro backend python -m scripts.migrate
 
 ## 7. Pruebas de humo
 
-1. `https://app.amvarmar.com/login` carga y el certificado es válido.
+1. `https://app.amvarmar.com:8443/login` carga (piloto) y el sistema viejo en `https://app.amvarmar.com` sigue igual.
 2. Una cuenta real entra con su contraseña del sistema viejo.
 3. El inventario de una empresa coincide con el del sistema viejo.
 4. Se descarga un documento migrado.
