@@ -402,30 +402,43 @@ async def crear_token_recuperacion(session: AsyncSession, email: str) -> tuple[s
     if user_id is None:
         return None
 
-    # Invalidar los anteriores: pedir un enlace nuevo debe inutilizar el viejo,
-    # o un correo antiguo reenviado seguiría sirviendo.
+    token = await _emitir_token(
+        session, user_id, proposito="PASSWORD_RESET", ttl_segundos=TTL_PASSWORD_RESET_SEGUNDOS
+    )
+    return token, user_id
+
+
+async def _emitir_token(
+    session: AsyncSession, user_id: UUID, *, proposito: str, ttl_segundos: int
+) -> str:
+    """Emite un token de un solo uso y devuelve el valor en claro.
+
+    Invalida antes los vigentes del mismo propósito: pedir un enlace nuevo debe
+    inutilizar el viejo, o un correo antiguo reenviado seguiría sirviendo. Solo
+    se guarda la huella; el valor en claro viaja por correo y nada más.
+    """
     await session.execute(
         text("""
             UPDATE one_time_tokens SET consumed_at = now()
-            WHERE user_id = :user_id AND purpose = 'PASSWORD_RESET' AND consumed_at IS NULL
+            WHERE user_id = :user_id AND purpose = :proposito AND consumed_at IS NULL
         """),
-        {"user_id": user_id},
+        {"user_id": user_id, "proposito": proposito},
     )
 
     token = secrets.token_urlsafe(48)
     await session.execute(
         text("""
             INSERT INTO one_time_tokens (user_id, purpose, token_hash, expires_at)
-            VALUES (:user_id, 'PASSWORD_RESET', :token_hash, :expires_at)
+            VALUES (:user_id, :proposito, :token_hash, :expires_at)
         """),
         {
             "user_id": user_id,
+            "proposito": proposito,
             "token_hash": fingerprint(token),
-            "expires_at": datetime.now(UTC) + timedelta(seconds=TTL_PASSWORD_RESET_SEGUNDOS),
+            "expires_at": datetime.now(UTC) + timedelta(seconds=ttl_segundos),
         },
     )
-
-    return token, user_id
+    return token
 
 
 async def consumir_token_recuperacion(
@@ -516,28 +529,9 @@ async def crear_token_invitacion(session: AsyncSession, user_id: UUID) -> str:
     crear la fila y ya tiene el id. Buscar por correo acá abriría una vía para
     pedir una invitación de una cuenta ajena.
     """
-    await session.execute(
-        text("""
-            UPDATE one_time_tokens SET consumed_at = now()
-            WHERE user_id = :user_id AND purpose = 'INVITATION' AND consumed_at IS NULL
-        """),
-        {"user_id": user_id},
+    return await _emitir_token(
+        session, user_id, proposito="INVITATION", ttl_segundos=TTL_INVITACION_SEGUNDOS
     )
-
-    token = secrets.token_urlsafe(48)
-    await session.execute(
-        text("""
-            INSERT INTO one_time_tokens (user_id, purpose, token_hash, expires_at)
-            VALUES (:user_id, 'INVITATION', :token_hash, :expires_at)
-        """),
-        {
-            "user_id": user_id,
-            "token_hash": fingerprint(token),
-            "expires_at": datetime.now(UTC) + timedelta(seconds=TTL_INVITACION_SEGUNDOS),
-        },
-    )
-
-    return token
 
 
 async def destinatario_de_invitacion(session: AsyncSession, token: str) -> Any | None:
@@ -579,6 +573,77 @@ async def consumir_token_invitacion(
     return await _consumir_token_de_contrasena(
         session, token=token, proposito="INVITATION", nueva_password=nueva_password
     )
+
+
+# --- Verificación de correo (EMAIL_VERIFY) ---
+
+# 24 horas: la persona lo pide desde su cuenta y suele abrirlo enseguida, pero
+# puede tener el correo en otro dispositivo. Más no hace falta: pedir otro es
+# un clic.
+TTL_VERIFICACION_CORREO_SEGUNDOS = 24 * 3600
+
+
+async def crear_token_verificacion(session: AsyncSession, user_id: UUID) -> str:
+    """Emite el enlace para verificar el correo actual de la cuenta.
+
+    El token se ata a la cuenta, no a la dirección. Si algún día se permite
+    cambiar el correo, ese cambio tiene que consumir los EMAIL_VERIFY vigentes y
+    borrar `email_verified_at`, o un enlace enviado a la dirección vieja
+    verificaría la nueva.
+    """
+    return await _emitir_token(
+        session,
+        user_id,
+        proposito="EMAIL_VERIFY",
+        ttl_segundos=TTL_VERIFICACION_CORREO_SEGUNDOS,
+    )
+
+
+async def correo_verificado(session: AsyncSession, user_id: UUID) -> bool:
+    return bool(
+        (
+            await session.execute(
+                text("SELECT email_verified_at IS NOT NULL FROM users WHERE id = :u"),
+                {"u": user_id},
+            )
+        ).scalar_one_or_none()
+    )
+
+
+async def consumir_token_verificacion(session: AsyncSession, *, token: str) -> UUID:
+    """Canjea el enlace y marca el correo como verificado.
+
+    No toca la contraseña ni las sesiones: probar el buzón no es un cambio de
+    credenciales. El propósito va en el WHERE, así que un token de invitación o
+    de recuperación no sirve acá, ni este allá.
+    """
+    fila = (
+        await session.execute(
+            text("""
+                UPDATE one_time_tokens
+                SET consumed_at = now()
+                WHERE token_hash = :token_hash
+                  AND purpose = 'EMAIL_VERIFY'
+                  AND consumed_at IS NULL
+                  AND expires_at > now()
+                RETURNING user_id
+            """),
+            {"token_hash": fingerprint(token)},
+        )
+    ).one_or_none()
+
+    if fila is None:
+        raise TokenRecuperacionInvalido
+
+    await session.execute(
+        text("""
+            UPDATE users SET email_verified_at = COALESCE(email_verified_at, now())
+            WHERE id = :user_id
+        """),
+        {"user_id": fila.user_id},
+    )
+    user_id: UUID = fila.user_id
+    return user_id
 
 
 async def _revocar_todas(session: AsyncSession, user_id: UUID, motivo: RevokeReason) -> int:

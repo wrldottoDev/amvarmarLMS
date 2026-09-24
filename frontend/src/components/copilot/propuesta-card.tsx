@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, X } from "lucide-react";
 import { useState } from "react";
 import { AvisoError } from "@/components/ui/aviso-error";
@@ -8,6 +8,7 @@ import { Boton } from "@/components/ui/boton";
 import { Campo } from "@/components/ui/campo";
 import { api, exigirDatos } from "@/lib/api/client";
 import type { PropuestaAccion } from "@/features/copilot/usar-chat";
+import { claveDespachos } from "@/features/despachos/consultas";
 
 type Estado = "pendiente" | "confirmada" | "rechazada";
 
@@ -19,6 +20,7 @@ function valorInicial(valor: PropuestaAccion["campos"][number]["valor"]) {
  * endpoint dedicado (ADR-0012) — nunca escribe nada por su cuenta. */
 export function PropuestaCard({ propuesta }: { propuesta: PropuestaAccion }) {
   const [estado, setEstado] = useState<Estado>("pendiente");
+  const queryClient = useQueryClient();
   const [valores, setValores] = useState<Record<string, string>>(() =>
     Object.fromEntries(propuesta.campos.map((campo) => [campo.nombre, valorInicial(campo.valor)])),
   );
@@ -34,7 +36,15 @@ export function PropuestaCard({ propuesta }: { propuesta: PropuestaAccion }) {
           body: { campos: valores },
         }),
       ),
-    onSuccess: () => setEstado("confirmada"),
+    onSuccess: () => {
+      setEstado("confirmada");
+      // Confirmar crea o mueve una carga, o crea un despacho: lo que esté abierto
+      // (listados, detalle, tablero) tiene que dejar de mostrar lo anterior.
+      for (const clave of ["cargas", "carga", "dashboard", "transiciones-disponibles"]) {
+        void queryClient.invalidateQueries({ queryKey: [clave] });
+      }
+      void queryClient.invalidateQueries({ queryKey: claveDespachos });
+    },
   });
 
   const rechazar = useMutation({

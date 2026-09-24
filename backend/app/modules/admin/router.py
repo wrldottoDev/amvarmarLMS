@@ -18,6 +18,7 @@ from starlette.requests import Request
 from app.core.database import get_session
 from app.core.redis import get_redis
 from app.modules.admin import service
+from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
 from app.modules.rbac.service import obtener_permisos_efectivos
@@ -193,6 +194,8 @@ class UsuarioAdminResponse(BaseModel):
     company_name: str | None
     last_login_at: datetime | None
     created_at: datetime
+    # Sin verificar no le llegan avisos por correo.
+    email_verificado: bool
 
 
 class CrearUsuarioRequest(BaseModel):
@@ -320,6 +323,33 @@ async def restablecer_contrasena(
     await db.commit()
 
     return ContrasenaTemporalResponse(password_temporal=temporal)
+
+
+class VerificacionCorreoResponse(BaseModel):
+    estado: service.EstadoVerificacion
+
+
+@router.post("/users/{user_id}/email-verification", response_model=VerificacionCorreoResponse)
+async def enviar_verificacion_de_correo(
+    user_id: UUID, request: Request, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> VerificacionCorreoResponse:
+    """Reenvía el enlace de verificación al correo de la cuenta."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    estado = await service.enviar_verificacion_de_correo(db, user_id=user_id, permisos=permisos)
+
+    if estado != "YA_VERIFICADO":
+        await registrar(
+            db,
+            action="user.email_verification_sent",
+            resource_type="user",
+            resource_id=user_id,
+            actor_user_id=actor.user_id,
+            outcome=Outcome.SUCCESS if estado == "ENVIADO" else Outcome.FAILED,
+            ip_address=_ip(request),
+        )
+    await db.commit()
+
+    return VerificacionCorreoResponse(estado=estado)
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

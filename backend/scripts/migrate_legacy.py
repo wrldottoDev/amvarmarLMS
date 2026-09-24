@@ -87,6 +87,17 @@ _TIPO_BULTO = {
     "OTRO": "OTHER",
 }
 
+# --- Verificación de correos ---
+
+# Legacy ya enviaba sus avisos a estas direcciones y nadie se autorregistra (las
+# cuentas las crea AMVARMAR), así que el correo de origen se da por verificado.
+# Sin esto, ningún migrado recibiría avisos por correo (ADR-0008). Las
+# excepciones: direcciones temporales del Paso 5.1 y correos cuya última
+# corrección no la confirmó AMVARMAR. Esos se verifican al canjear una
+# invitación o una recuperación, o al migrar después de `004_correos_reales`.
+_DOMINIO_TEMPORAL = "@local.amvarmar.com"
+_SCRIPTS_QUE_CONFIRMAN_CORREO = frozenset({"004_correos_reales"})
+
 # Estados de solicitud de despacho del legacy.
 _ESTADO_DESPACHO = {
     "PENDIENTE": "PENDING",
@@ -343,6 +354,8 @@ class Migrador:
             ORDER BY u.id
         """)
 
+        sin_confirmar = self._correos_sin_confirmar()
+
         for fila in filas:
             c.leidos += 1
             if self.buscar("auth_user", fila["id"]):
@@ -358,14 +371,21 @@ class Migrador:
                 )
                 continue
 
+            sin_verificar = self._motivo_sin_verificar(correo, sin_confirmar.get(fila["id"]))
+            if sin_verificar:
+                self.reporte.avisos.append(
+                    f"auth_user {fila['id']} ({fila['username']}): {sin_verificar}."
+                )
+
             nuevo = uuid4()
             if not self.seco:
                 await self.session.execute(
                     text("""
                         INSERT INTO users
                             (id, email, password_hash, first_name, last_name, status,
-                             created_at, last_login_at)
-                        VALUES (:id, :e, :h, :n, :a, :estado, :alta, :ultimo)
+                             created_at, last_login_at, email_verified_at)
+                        VALUES (:id, :e, :h, :n, :a, :estado, :alta, :ultimo,
+                                CASE WHEN :verificado THEN now() END)
                     """),
                     {
                         "id": nuevo,
@@ -379,6 +399,7 @@ class Migrador:
                         "estado": "ACTIVE" if fila["is_active"] else "SUSPENDED",
                         "alta": fila["date_joined"],
                         "ultimo": fila["last_login"],
+                        "verificado": sin_verificar is None,
                     },
                 )
                 await self.session.execute(
@@ -390,8 +411,41 @@ class Migrador:
                 )
                 await self._asignar_rol(nuevo, fila)
 
-            await self._registrar("auth_user", fila["id"], "users", nuevo)
+            await self._registrar("auth_user", fila["id"], "users", nuevo, sin_verificar)
             c.creados += 1
+
+    def _correos_sin_confirmar(self) -> dict[int, str]:
+        """Usuarios cuyo correo actual salió de una corrección no confirmada.
+
+        Devuelve el script de la última corrección de `email` de cada uno. Si la
+        base no tiene `migracion_correcciones`, no hubo Paso 5.1 y no hay nada.
+        """
+        with self.legacy.cursor() as cur:
+            cur.execute("SELECT to_regclass('migracion_correcciones') IS NOT NULL")
+            fila = cur.fetchone()
+            if not fila or not fila[0]:
+                return {}
+        filas = self._leer("""
+            SELECT DISTINCT ON (registro_pk) registro_pk, script
+            FROM migracion_correcciones
+            WHERE tabla = 'auth_user' AND campo = 'email'
+            ORDER BY registro_pk, aplicada_en DESC, id DESC
+        """)
+        return {
+            int(f["registro_pk"]): f["script"]
+            for f in filas
+            if f["script"] not in _SCRIPTS_QUE_CONFIRMAN_CORREO
+        }
+
+    @staticmethod
+    def _motivo_sin_verificar(correo: str, script: str | None) -> str | None:
+        # El script primero: dice quién decidió el cambio, que es lo que hay que
+        # rastrear. El dominio atrapa una temporal que haya llegado sin traza.
+        if script is not None:
+            return f"correo sin verificar: corregido por {script} sin confirmar"
+        if correo.lower().endswith(_DOMINIO_TEMPORAL):
+            return "correo sin verificar: dirección temporal"
+        return None
 
     async def _asignar_rol(self, user_id: UUID, fila: dict[str, Any]) -> None:
         """Staff a operaciones, cliente a su empresa (ADR-0011).

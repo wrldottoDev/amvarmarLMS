@@ -64,7 +64,8 @@ class CopilotActionProposal(Base):
         # base. El CHECK es la última defensa si alguien inserta a mano.
         # Se actualiza junto con el StrEnum.
         CheckConstraint(
-            "action_code IN ('procesar_factura_ocr', 'crear_prealerta_borrador')",
+            "action_code IN ('procesar_factura_ocr', 'crear_prealerta_borrador', "
+            "'proponer_cambio_estado', 'proponer_despacho')",
             name="action_code_valido",
         ),
         CheckConstraint(

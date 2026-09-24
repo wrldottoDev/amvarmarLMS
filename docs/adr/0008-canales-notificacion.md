@@ -201,3 +201,33 @@ viaja en el aviso (regla de este ADR): queda en la línea de tiempo de la carga.
 **Pendiente:** `shipment.requirement_blocking`, `shipment.permit_review` y `account.security_alert` están
 en el catálogo, pero ningún código los emite todavía.
 
+## Enmienda — cómo se verifica un correo (2026-09-24)
+
+La regla de `SKIPPED` sin correo verificado se mantiene, pero no había forma de
+verificar uno: ninguna vía de la aplicación escribía `email_verified_at`, así
+que ninguna cuenta recibía avisos por correo. Se definen tres vías, todas con
+la misma premisa: **canjear un enlace enviado al correo de la cuenta prueba que
+la persona controla ese buzón.**
+
+1. **Invitación y recuperación.** Al canjearlas, `email_verified_at` queda en
+   `COALESCE(email_verified_at, now())`.
+2. **`EMAIL_VERIFY`.** La persona lo pide desde su cuenta
+   (`POST /auth/email/verify/request`, con sesión y límite de 3 cada 15 minutos)
+   o quien administra usuarios lo reenvía
+   (`POST /admin/users/{id}/email-verification`, `users.manage` sobre la empresa
+   del usuario). El enlace vence a las 24 horas, sirve una vez y se canjea sin
+   sesión (`POST /auth/email/verify/confirm`), porque el buzón puede estar en
+   otro dispositivo. No cambia la contraseña ni cierra sesiones. Evento
+   `account.email_verify`, crítico, que sale aunque el correo no esté
+   verificado (sería circular exigirlo) y fuera del outbox, igual que la
+   recuperación, para no guardar el token en claro.
+3. **Migración legacy.** El migrador da por verificado el correo que viene del
+   sistema viejo: legacy ya enviaba a esas direcciones y las cuentas las crea
+   AMVARMAR, nadie se autorregistra. Quedan sin verificar las direcciones
+   temporales del Paso 5.1 y los correos cuya última corrección no confirmó
+   AMVARMAR (`004_correos_reales`).
+
+El token `EMAIL_VERIFY` se ata a la cuenta, no a la dirección. Si se habilita el
+cambio de correo, ese cambio tiene que borrar `email_verified_at` y consumir los
+`EMAIL_VERIFY` vigentes, o un enlace enviado a la dirección vieja verificaría la
+nueva.

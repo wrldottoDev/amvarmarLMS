@@ -229,6 +229,19 @@ EVENTOS: dict[str, DefinicionEvento] = {
         ),
         ruta="/restablecer-contrasena?token={id}",
     ),
+    "account.email_verify": DefinicionEvento(
+        # Lo pide la persona desde su cuenta. Sin correo verificado los demás
+        # avisos por correo quedan SKIPPED, así que este es el que los habilita.
+        codigo="account.email_verify",
+        critico=True,
+        asunto="Confirme su correo",
+        mensaje=(
+            "Use el enlace para confirmar que esta dirección es suya y empezar a "
+            "recibir los avisos de AMVARMAR por correo. Vence en 24 horas y sirve "
+            "una sola vez. Si no lo pidió, ignore este mensaje."
+        ),
+        ruta="/verificar-correo?token={id}",
+    ),
     # --- No críticos ---
     "shipment.status_changed": DefinicionEvento(
         codigo="shipment.status_changed",

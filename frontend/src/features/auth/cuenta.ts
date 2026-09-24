@@ -25,3 +25,10 @@ export function useActualizarPerfil() {
     onSuccess: () => cliente.invalidateQueries(),
   });
 }
+
+export function useSolicitarVerificacion() {
+  return useMutation({
+    mutationFn: async () =>
+      exigirDatos(await api.POST("/api/v1/auth/email/verify/request", {})),
+  });
+}

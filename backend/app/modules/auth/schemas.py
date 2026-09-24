@@ -51,6 +51,10 @@ class PasswordResetRequest(BaseModel):
     nueva_password: str = Field(min_length=12, max_length=1024)
 
 
+class VerificarCorreoRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
+
+
 class MensajeResponse(BaseModel):
     mensaje: str
 
@@ -70,6 +74,8 @@ class MeResponse(BaseModel):
 
     id: UUID
     email: str
+    # Sin verificar no llegan avisos por correo; la interfaz ofrece verificarlo.
+    email_verificado: bool
     first_name: str
     last_name: str
     empresa: EmpresaResponse | None

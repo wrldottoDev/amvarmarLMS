@@ -86,3 +86,30 @@ del cliente equivocado es peor que no registrar.
 - **Queda pendiente** revisar las guías de AMVI que describen el flujo viejo
   (`crear-carga.md`, `usuarios-de-mi-empresa.md`): un cliente que pregunte
   "¿cómo creo una carga?" hoy recibiría instrucciones que ya no puede seguir.
+
+## Enmienda — AMVI le prepara la solicitud de despacho al cliente (2026-09-24)
+
+Pedido de Operaciones: que AMVI acompañe al cliente en todo el proceso de despacho, no solo que le
+explique cómo hacerlo. Se revierte **en parte** la decisión de arriba: `CLIENTE` vuelve a tener
+`copilot.tools.draft`.
+
+**Qué habilita y qué no.** Las herramientas de propuesta exigen `copilot.tools.draft` más un permiso de
+dominio. El cliente solo tiene el de `proponer_despacho` (`dispatch_requests.create`, que ya tenía para la
+pantalla), así que es la única que alcanza. Crear cargas, avanzar estados y leer documentos internos
+siguen siendo de AMVARMAR porque exigen `shipments.create`, `shipments.transition.forward` y
+`documents.upload.internal`, que el cliente no tiene.
+
+**Adjuntos del chat.** Hasta ahora se habilitaban solo con `copilot.tools.draft`. Leer un adjunto es una
+llamada extra al proveedor y lo leído solo alimenta el alta de una carga. Por eso pasan a exigir también
+`shipments.create` (`copilot.router.puede_adjuntar`), y el cliente sigue sin poder adjuntar.
+
+**Cómo funciona.** El cliente nombra las cargas por número, factura o ID. AMVI las resuelve por
+coincidencia exacta y única dentro de su empresa, verifica que estén almacenadas y avisa qué requisitos
+van a frenar la aprobación. La solicitud se crea recién cuando el cliente pulsa **Confirmar**, con
+`dispatches.service.crear`, el mismo camino que `POST /dispatches`: reclamo exclusivo de las cargas, paso
+a `DISPATCH_REQUESTED`, línea de tiempo, acuse al cliente y aviso a Operaciones. La empresa y las cargas
+salen de la propuesta guardada; al confirmar solo se pueden corregir el método, la dirección, las
+instrucciones y la fecha.
+
+El `CHECK` de `copilot_action_proposals.action_code` se amplía en la migración `e7b1f3c9a852`.
+

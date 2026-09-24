@@ -233,6 +233,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/email/verify/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verificacion Pedir
+         * @description Manda a la persona un enlace para verificar su correo.
+         *
+         *     Requiere sesión: el enlace va al correo de la cuenta de quien lo pide, así
+         *     que no sirve para mandar correos a terceros ni revela qué cuentas existen.
+         */
+        post: operations["verificacion_pedir_api_v1_auth_email_verify_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/email/verify/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verificacion Confirmar
+         * @description Canjea el enlace del correo. Sin sesión: se abre desde el buzón, que puede
+         *     estar en otro dispositivo; tener el token ya prueba lo que hay que probar.
+         */
+        post: operations["verificacion_confirmar_api_v1_auth_email_verify_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1277,6 +1321,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{user_id}/email-verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enviar Verificacion De Correo
+         * @description Reenvía el enlace de verificación al correo de la cuenta.
+         */
+        post: operations["enviar_verificacion_de_correo_api_v1_admin_users__user_id__email_verification_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/copilot/capabilities": {
         parameters: {
             query?: never;
@@ -2194,6 +2258,8 @@ export interface components {
             id: string;
             /** Email */
             email: string;
+            /** Email Verificado */
+            email_verificado: boolean;
             /** First Name */
             first_name: string;
             /** Last Name */
@@ -2896,6 +2962,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Email Verificado */
+            email_verificado: boolean;
         };
         /** UsuarioCreadoResponse */
         UsuarioCreadoResponse: {
@@ -2923,6 +2991,19 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VerificacionCorreoResponse */
+        VerificacionCorreoResponse: {
+            /**
+             * Estado
+             * @enum {string}
+             */
+            estado: "ENVIADO" | "NO_ENVIADO" | "YA_VERIFICADO";
+        };
+        /** VerificarCorreoRequest */
+        VerificarCorreoRequest: {
+            /** Token */
+            token: string;
         };
         /** VerifyRequirementRequest */
         VerifyRequirementRequest: {
@@ -3238,6 +3319,59 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensajeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verificacion_pedir_api_v1_auth_email_verify_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensajeResponse"];
+                };
+            };
+        };
+    };
+    verificacion_confirmar_api_v1_auth_email_verify_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerificarCorreoRequest"];
             };
         };
         responses: {
@@ -5228,6 +5362,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContrasenaTemporalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enviar_verificacion_de_correo_api_v1_admin_users__user_id__email_verification_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerificacionCorreoResponse"];
                 };
             };
             /** @description Validation Error */

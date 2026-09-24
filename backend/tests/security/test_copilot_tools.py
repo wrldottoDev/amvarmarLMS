@@ -155,7 +155,12 @@ class TestContratoDelCatalogo:
             nombre for nombre, d in HERRAMIENTAS.items() if d.clase is ClaseHerramienta.ESCRITURA
         }
 
-        assert escritura == {"procesar_factura_ocr", "crear_prealerta_borrador"}
+        assert escritura == {
+            "procesar_factura_ocr",
+            "crear_prealerta_borrador",
+            "proponer_cambio_estado",
+            "proponer_despacho",
+        }
 
     def test_toda_herramienta_de_escritura_tiene_action_code(self) -> None:
         for definicion in HERRAMIENTAS.values():

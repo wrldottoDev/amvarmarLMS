@@ -5,12 +5,13 @@ import { useState } from "react";
 import { FormularioContrasena } from "@/components/auth/formulario-contrasena";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
-import { useActualizarPerfil } from "@/features/auth/cuenta";
+import { useActualizarPerfil, useSolicitarVerificacion } from "@/features/auth/cuenta";
 import { useSesion } from "@/features/auth/contexto-sesion";
 
 export default function PaginaCuenta() {
   const { usuario } = useSesion();
   const actualizar = useActualizarPerfil();
+  const verificar = useSolicitarVerificacion();
 
   const [nombre, setNombre] = useState(usuario?.first_name ?? "");
   const [apellido, setApellido] = useState(usuario?.last_name ?? "");
@@ -70,6 +71,29 @@ export default function PaginaCuenta() {
             <span className="mt-1 block text-xs text-[var(--texto-secundario)]">
               Para cambiarlo, pedíselo a Operaciones.
             </span>
+            {usuario.email_verificado ? null : (
+              <div
+                className="mt-2 space-y-2 rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-3 py-2 text-sm"
+                role="status"
+              >
+                <p>
+                  Tu correo no está verificado: mientras tanto no te llegan los avisos por correo.
+                </p>
+                {verificar.data ? (
+                  <p className="font-medium">{verificar.data.mensaje}</p>
+                ) : (
+                  <Boton
+                    type="button"
+                    variante="secundario"
+                    cargando={verificar.isPending}
+                    onClick={() => verificar.mutate()}
+                  >
+                    Enviarme el enlace de verificación
+                  </Boton>
+                )}
+                {verificar.error ? <AvisoError error={verificar.error} /> : null}
+              </div>
+            )}
           </div>
 
           {actualizar.error ? <AvisoError error={actualizar.error} /> : null}
