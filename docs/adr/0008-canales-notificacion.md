@@ -177,6 +177,30 @@ Queda también la vía actual —el sistema genera una contraseña temporal y el
 administrador la entrega por el medio que prefiera—, con el bloqueo por
 `must_change_password` que obliga a cambiarla al primer acceso.
 
+## Enmienda — "lista para despachar" y el aviso de rechazo que no salía (2026-09-24)
+
+**Evento nuevo, crítico: `shipment.ready_to_dispatch`.** "Almacenada" (`shipment.stored`) no le dice al
+cliente si ya puede despachar: la carga puede seguir frenada por un documento o un pago. El aviso nuevo
+sale cuando la carga está `STORED`, visible, sin archivar y **sin requisitos que bloqueen `DISPATCHED`**
+(`shipments.service.lista_para_despachar`). Se dispara en dos momentos:
+
+- al almacenarla, si ya no tiene pendientes. En ese caso **reemplaza** a `shipment.stored`: un solo correo
+  con el dato útil, no dos seguidos por el mismo hecho;
+- al resolverse el último requisito pendiente de una carga ya almacenada. Resolver un requisito
+  (cumplido, verificado, exonerado, no aplica, cancelado) publica `shipment.requirement_resolved` en el
+  outbox, y el manejador decide si la carga quedó lista.
+
+Va solo a los usuarios de la empresa dueña, **una vez por carga** (`dedup_key` por carga y no por evento):
+si más tarde se abre y se resuelve otro requisito, no se repite.
+
+**Bug corregido: el rechazo de un documento no avisaba.** `rechazar_requisito_documental` publicaba
+`shipment.document_rejected`, pero ningún manejador lo tomaba. El worker lo marcaba como entregado sin
+hacer nada, así que `shipment.requirement_rejected` nunca salía. Ahora tiene manejador. El motivo no
+viaja en el aviso (regla de este ADR): queda en la línea de tiempo de la carga.
+
+**Pendiente:** `shipment.requirement_blocking`, `shipment.permit_review` y `account.security_alert` están
+en el catálogo, pero ningún código los emite todavía.
+
 ## Enmienda — cómo se verifica un correo (2026-09-24)
 
 La regla de `SKIPPED` sin correo verificado se mantiene, pero no había forma de

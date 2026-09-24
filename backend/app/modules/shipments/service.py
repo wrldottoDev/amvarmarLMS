@@ -460,6 +460,43 @@ _SQL_REQUISITOS_PENDIENTES = f"""
 """  # noqa: S608  # nosec B608
 
 
+async def lista_para_despachar(session: AsyncSession, shipment_id: UUID) -> bool:
+    """Almacenada, visible y sin requisitos que bloqueen el despacho.
+
+    Es lo que el cliente entiende por "ya puedo despachar": `STORED` solo no
+    alcanza si todavía falta un documento o un pago que frena `DISPATCHED`.
+    """
+    lista: bool = (
+        await session.execute(
+            text(f"""
+                SELECT s.current_status_code = 'STORED'
+                   AND s.deleted_at IS NULL
+                   AND s.archived_at IS NULL
+                   AND s.hidden_at IS NULL
+                   AND NOT EXISTS ({_SQL_REQUISITOS_PENDIENTES})
+                FROM shipments s WHERE s.id = :id
+            """),  # noqa: S608  # nosec B608
+            {"id": shipment_id, "cargas": [shipment_id], "hacia": ShipmentStatus.DISPATCHED.value},
+        )
+    ).scalar_one_or_none() or False
+    return lista
+
+
+async def _publicar_requisito_resuelto(
+    session: AsyncSession, *, shipment_id: UUID, requirement_id: UUID, estado: str
+) -> None:
+    """Un requisito resuelto puede dejar la carga lista para despachar. Quien
+    decide si avisar es el manejador del outbox, no este servicio."""
+    await publicar(
+        session,
+        aggregate_type="shipment",
+        aggregate_id=shipment_id,
+        event_type="shipment.requirement_resolved",
+        payload={"requirement_id": str(requirement_id), "estado": estado},
+        dedup_key=f"requirement:{requirement_id}:resolved:{estado}",
+    )
+
+
 async def _validar_requisitos_resueltos(
     session: AsyncSession, shipment_ids: list[UUID], hacia: str
 ) -> None:
@@ -690,6 +727,12 @@ async def resolver_requisito(
                 "descripcion": motivo,
                 "actor": actor_user_id,
             },
+        )
+        await _publicar_requisito_resuelto(
+            session,
+            shipment_id=fila.shipment_id,
+            requirement_id=requirement_id,
+            estado=nuevo_estado,
         )
 
     shipment_id: UUID = fila.shipment_id
@@ -1059,6 +1102,12 @@ async def verificar_requisito_documental(
         estado=RequirementStatus.VERIFIED.value,
         actor_user_id=actor_user_id,
         descripcion=nota,
+    )
+    await _publicar_requisito_resuelto(
+        session,
+        shipment_id=shipment_id,
+        requirement_id=requirement_id,
+        estado=RequirementStatus.VERIFIED.value,
     )
 
 

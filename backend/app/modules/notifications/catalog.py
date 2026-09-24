@@ -123,6 +123,20 @@ EVENTOS: dict[str, DefinicionEvento] = {
         con_referencia=f"Recibimos su carga {{ref}} y ya está almacenada. {_ENTRAR}",
         ruta="/shipments/{id}",
     ),
+    "shipment.ready_to_dispatch": DefinicionEvento(
+        # "Almacenada" no alcanza si falta un documento o un pago que frena el
+        # despacho. Este sale cuando la carga queda almacenada Y sin nada que
+        # la bloquee: al almacenarla, o al resolverse lo último que faltaba.
+        # Una vez por carga.
+        codigo="shipment.ready_to_dispatch",
+        critico=True,
+        asunto="Su carga está lista para despachar",
+        mensaje=f"Una de sus cargas está en bodega y lista: ya puede solicitar su despacho. {_ENTRAR}",
+        con_referencia=(
+            f"Su carga {{ref}} está en bodega y lista: ya puede solicitar su despacho. {_ENTRAR}"
+        ),
+        ruta="/shipments/{id}",
+    ),
     "dispatch.requested": DefinicionEvento(
         # Reemplaza `dispatch_received.html`: el acuse al cliente.
         codigo="dispatch.requested",

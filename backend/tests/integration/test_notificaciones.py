@@ -184,6 +184,21 @@ async def _carga_con_referencia(
     return shipment_id
 
 
+async def _requisito_pendiente(
+    session: AsyncSession, shipment_id: uuid.UUID, *, creador: uuid.UUID
+) -> None:
+    """Un requisito que frena el despacho, sin pasar por el servicio."""
+    await session.execute(
+        text("""
+            INSERT INTO shipment_requirements
+                (shipment_id, requirement_type, title, required_from, status,
+                 blocks_dispatch, created_by)
+            VALUES (:s, 'ACTION', 'Pago de bodegaje', 'CLIENT', 'OPEN', true, :u)
+        """),
+        {"s": shipment_id, "u": creador},
+    )
+
+
 def _evento_de_outbox(*, aggregate_id: uuid.UUID, payload: dict) -> EventoPendiente:
     """Lo que el worker le pasa a un manejador, sin pasar por el worker."""
     return EventoPendiente(
@@ -266,6 +281,8 @@ _CRITICOS_ESPERADOS = frozenset(
         "account.invitation",
         # El correo que `/password/forgot` prometía y no mandaba
         "account.password_reset",
+        # "Ya puede despachar": almacenada y sin nada que la bloquee
+        "shipment.ready_to_dispatch",
         # La verificación que habilita los demás avisos por correo
         "account.email_verify",
     }
@@ -633,6 +650,9 @@ class TestSeisCorreosDelSistemaAnterior:
         empresa = await _empresa(session)
         usuario, _ = await _usuario(session, empresa)
         shipment_id = await _carga_con_referencia(session, empresa, "WR105921", creador=usuario)
+        # Con algo pendiente, "en bodega" es el aviso correcto; sin pendientes
+        # sale "lista para despachar" (TestCargaListaParaDespachar).
+        await _requisito_pendiente(session, shipment_id, creador=usuario)
 
         await handlers.cambio_de_estado_de_carga(
             session,
@@ -1193,3 +1213,160 @@ class TestFlujoDesdeElOutbox:
             )
         ).scalar_one()
         assert estado == "DONE"
+
+
+class TestCargaListaParaDespachar:
+    """ "Su carga está almacenada" no alcanza si le falta un documento: el cliente
+    necesita saber cuándo puede pedir el despacho de verdad."""
+
+    async def _procesar(self, session: AsyncSession) -> None:
+        from app.modules.audit.outbox import procesar_lote
+        from app.workers.tasks.outbox import construir_manejador
+
+        await procesar_lote(session, construir_manejador(session), limite=200)
+
+    async def _codigos(self, session: AsyncSession, user_id: uuid.UUID) -> list[str]:
+        return list(
+            (
+                await session.execute(
+                    text(
+                        "SELECT event_code FROM notifications WHERE user_id = :u "
+                        "ORDER BY created_at"
+                    ),
+                    {"u": user_id},
+                )
+            ).scalars()
+        )
+
+    async def _almacenar(self, session, redis, ctx, carga) -> None:
+        await cargas.transicionar(
+            session,
+            shipment_id=carga,
+            datos=cargas.DatosTransicion(to_status=ShipmentStatus.STORED, row_version=1),
+            actor_user_id=ctx["admin"],
+            permisos=await _permisos(session, redis, ctx["admin"]),
+        )
+
+    async def _requisito(self, session, redis, ctx, carga) -> uuid.UUID:
+        return await cargas.abrir_requisito(
+            session,
+            shipment_id=carga,
+            requirement_type="ACTION",
+            title="Pago de bodegaje",
+            required_from="CLIENT",
+            actor_user_id=ctx["admin"],
+            permisos=await _permisos(session, redis, ctx["admin"]),
+        )
+
+    async def _exonerar_pendientes(self, session, redis, ctx, carga) -> None:
+        """Resuelve lo que haya abierto el catálogo al almacenar (factura, packing
+        list), además de lo que haya abierto la prueba."""
+        pendientes = (
+            await session.execute(
+                text("""
+                    SELECT id FROM shipment_requirements
+                    WHERE shipment_id = :s AND status NOT IN
+                        ('FULFILLED', 'VERIFIED', 'NOT_APPLICABLE', 'WAIVED', 'CANCELLED')
+                """),
+                {"s": carga},
+            )
+        ).scalars()
+        for requisito in list(pendientes):
+            await cargas.resolver_requisito(
+                session,
+                requirement_id=requisito,
+                nuevo_estado="WAIVED",
+                motivo="Exonerado en la prueba.",
+                actor_user_id=ctx["admin"],
+                permisos=await _permisos(session, redis, ctx["admin"]),
+            )
+
+    async def test_almacenada_sin_pendientes_avisa_que_esta_lista(
+        self, session: AsyncSession
+    ) -> None:
+        """Un solo aviso, el útil: no "en bodega" y "lista" a la vez."""
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        shipment_id = await _carga_con_referencia(session, empresa, "WR105921", creador=usuario)
+
+        await handlers.cambio_de_estado_de_carga(
+            session,
+            _evento_de_outbox(
+                aggregate_id=shipment_id,
+                payload={"desde": ShipmentStatus.RECEIVED, "hacia": ShipmentStatus.STORED},
+            ),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "shipment.ready_to_dispatch"
+        assert "WR105921" in await _cuerpo_de_aviso(session, usuario)
+
+    async def test_con_pendientes_avisa_en_bodega_y_despues_lista(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx, estado=ShipmentStatus.RECEIVED)
+        await self._requisito(session, redis, ctx, carga)
+
+        await self._almacenar(session, redis, ctx, carga)
+        await self._procesar(session)
+        assert await self._codigos(session, ctx["cliente"]) == ["shipment.stored"]
+
+        await self._exonerar_pendientes(session, redis, ctx, carga)
+        await self._procesar(session)
+        # Misma transacción en la prueba: `created_at` empata y no sirve para
+        # ordenar. Lo que importa es que haya uno de cada uno.
+        assert sorted(await self._codigos(session, ctx["cliente"])) == [
+            "shipment.ready_to_dispatch",
+            "shipment.stored",
+        ]
+
+    async def test_avisa_una_sola_vez_por_carga(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx, estado=ShipmentStatus.RECEIVED)
+        await self._almacenar(session, redis, ctx, carga)
+        await self._exonerar_pendientes(session, redis, ctx, carga)
+        await self._procesar(session)
+
+        # Algo nuevo se abre y se resuelve: la carga vuelve a estar lista, pero
+        # el cliente ya lo sabe.
+        await self._requisito(session, redis, ctx, carga)
+        await self._exonerar_pendientes(session, redis, ctx, carga)
+        await self._procesar(session)
+
+        assert (await self._codigos(session, ctx["cliente"])).count(
+            "shipment.ready_to_dispatch"
+        ) == 1
+
+    async def test_resolver_un_requisito_antes_de_almacenar_no_avisa(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx, estado=ShipmentStatus.RECEIVED)
+        await self._requisito(session, redis, ctx, carga)
+
+        await self._exonerar_pendientes(session, redis, ctx, carga)
+        await self._procesar(session)
+
+        assert await self._codigos(session, ctx["cliente"]) == []
+
+    async def test_un_documento_rechazado_le_avisa_al_cliente(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """El evento se publicaba pero ningún manejador lo tomaba: el worker lo
+        descartaba y el cliente nunca se enteraba de que tenía que resubir."""
+        from app.modules.audit.outbox import publicar
+
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx, estado=ShipmentStatus.STORED)
+        await publicar(
+            session,
+            aggregate_type="shipment",
+            aggregate_id=carga,
+            event_type="shipment.document_rejected",
+            payload={"requirement_id": str(uuid.uuid4()), "motivo": "Ilegible"},
+            dedup_key=f"prueba:{uuid.uuid4()}",
+        )
+        await self._procesar(session)
+
+        assert await self._codigos(session, ctx["cliente"]) == ["shipment.requirement_rejected"]

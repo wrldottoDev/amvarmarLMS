@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.audit.outbox import EventoPendiente
 from app.modules.dispatches.models import DispatchStatus
 from app.modules.notifications import service
+from app.modules.shipments import service as cargas
 from app.modules.shipments.models import ShipmentStatus
 
 # Estados de carga que ADR-0008 marca como aviso crítico propio. El resto cae
@@ -102,6 +103,22 @@ def _codigo_de_transicion(desde: str, hacia: str) -> str:
     return "shipment.status_changed"
 
 
+async def _avisar_lista_para_despachar(
+    session: AsyncSession, *, shipment_id: UUID, empresa: UUID, referencia: str | None
+) -> None:
+    """Una vez por carga: la clave no depende del evento que lo disparó, así que
+    almacenar y después resolver el último requisito no avisa dos veces."""
+    await service.notificar(
+        session,
+        event_code="shipment.ready_to_dispatch",
+        destinatarios=await service.destinatarios_de_empresa(session, empresa),
+        resource_type="shipment",
+        resource_id=shipment_id,
+        referencia=referencia,
+        dedup_key=f"lista-para-despachar:{shipment_id}",
+    )
+
+
 async def cambio_de_estado_de_carga(session: AsyncSession, evento: EventoPendiente) -> None:
     carga = await _carga(session, evento.aggregate_id)
     if carga is None:
@@ -109,10 +126,19 @@ async def cambio_de_estado_de_carga(session: AsyncSession, evento: EventoPendien
         return
 
     empresa, referencia = carga
+    hacia = str(evento.payload.get("hacia", ""))
 
-    codigo = _codigo_de_transicion(
-        str(evento.payload.get("desde", "")), str(evento.payload.get("hacia", ""))
-    )
+    # Almacenada y sin nada pendiente: el aviso útil es "ya puede despachar", no
+    # dos correos seguidos ("en bodega" y "lista") por el mismo hecho.
+    if hacia == ShipmentStatus.STORED and await cargas.lista_para_despachar(
+        session, evento.aggregate_id
+    ):
+        await _avisar_lista_para_despachar(
+            session, shipment_id=evento.aggregate_id, empresa=empresa, referencia=referencia
+        )
+        return
+
+    codigo = _codigo_de_transicion(str(evento.payload.get("desde", "")), hacia)
 
     await service.notificar(
         session,
@@ -218,6 +244,36 @@ async def documento_de_despacho_listo(session: AsyncSession, evento: EventoPendi
     )
 
 
+async def requisito_resuelto(session: AsyncSession, evento: EventoPendiente) -> None:
+    """Si lo resuelto era lo último que frenaba una carga almacenada, avisa."""
+    if not await cargas.lista_para_despachar(session, evento.aggregate_id):
+        return
+    carga = await _carga(session, evento.aggregate_id)
+    if carga is None:
+        return
+    empresa, referencia = carga
+    await _avisar_lista_para_despachar(
+        session, shipment_id=evento.aggregate_id, empresa=empresa, referencia=referencia
+    )
+
+
+async def documento_rechazado(session: AsyncSession, evento: EventoPendiente) -> None:
+    """El motivo no viaja (ADR-0008): queda en la línea de tiempo de la carga."""
+    carga = await _carga(session, evento.aggregate_id)
+    if carga is None:
+        return
+    empresa, referencia = carga
+    await service.notificar(
+        session,
+        event_code="shipment.requirement_rejected",
+        destinatarios=await service.destinatarios_de_empresa(session, empresa),
+        resource_type="shipment",
+        resource_id=evento.aggregate_id,
+        referencia=referencia,
+        dedup_key=f"outbox:{evento.id}",
+    )
+
+
 # El worker (`app.workers.tasks.outbox`) arma su registro a partir de esto. Se
 # declara acá, junto a los manejadores, para que agregar un evento nuevo sea
 # tocar un solo archivo.
@@ -226,4 +282,8 @@ POR_EVENTO = {
     "dispatch.status_changed": cambio_de_estado_de_despacho,
     "dispatch.created": solicitud_de_despacho_creada,
     "dispatch.document.ready": documento_de_despacho_listo,
+    "shipment.requirement_resolved": requisito_resuelto,
+    # Se publicaba desde el rechazo de documentos pero no tenía manejador: el
+    # worker lo descartaba y el cliente nunca se enteraba.
+    "shipment.document_rejected": documento_rechazado,
 }
