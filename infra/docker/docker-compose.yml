@@ -1,0 +1,175 @@
+name: amvarmar-lms
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-amvarmar_lms}
+      POSTGRES_USER: ${POSTGRES_USER:-amvarmar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env}
+    ports:
+      - "5434:5432" # 5432 ya está en uso en el host por un PostgreSQL nativo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amvarmar} -d ${POSTGRES_DB:-amvarmar_lms}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379" # 6379 ya está en uso en el host por otro proceso local
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-amvarmar}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD en .env}
+    ports:
+      - "9000:9000" # API S3
+      - "9001:9001" # consola web
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # El worker de Celery no se define acá: corre desde el backend con
+  # `celery -A app.workers.app.celery_app worker`. Levantarlo en compose
+  # obligaría a construir la imagen del backend en cada `up`, que en desarrollo
+  # es más lento que útil.
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP (Fase 4 apunta aquí en local)
+      - "8025:8025" # UI web para leer correos capturados
+
+  # --- Sistema viejo, solo para la migración (Fase 5) ---
+  # PostgreSQL 18 porque los volcados de producción vienen de esa versión y
+  # `pg_restore` no lee archivos más nuevos que él. Es un contenedor aparte a
+  # propósito: el esquema viejo y el nuevo no deben convivir en la misma base,
+  # o dejaría de saberse qué dato vino de dónde.
+  #
+  #   docker compose --profile legacy up -d
+  postgres-legacy:
+    image: postgres:18-alpine
+    profiles: ["legacy"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: amvarmar_legacy
+      POSTGRES_USER: ${POSTGRES_USER:-amvarmar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env}
+    ports:
+      - "5435:5432"
+    volumes:
+      # PostgreSQL 18 cambió la convención: el montaje va en el directorio padre
+      # y la imagen coloca los datos en un subdirectorio. Montar en `/data`
+      # como en las versiones anteriores deja el contenedor reiniciándose.
+      - pgdata-legacy:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amvarmar} -d amvarmar_legacy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Observabilidad (Paso 4.3) ---
+  # Perfil aparte: en desarrollo casi nunca hacen falta y suman memoria.
+  # `docker compose --profile observabilidad up` los levanta.
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alertas.yml:/etc/prometheus/alertas.yml:ro
+      # El token de `/metrics` se monta como fichero, nunca se versiona.
+      - ./metrics_token:/etc/prometheus/metrics_token:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+
+  # `prometheus.yml` los raspa por nombre de servicio; sin definirlos acá,
+  # los jobs `postgres`/`redis` de Prometheus fallaban con DNS inexistente
+  # (GUIA_CODIGO.md, hallazgo #10). El de `backend:8000` sigue sin definirse
+  # a propósito: en local corre por `uvicorn` en el host, no en un contenedor
+  # — esa topología es de despliegue, no de este compose de desarrollo.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-amvarmar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-amvarmar_lms}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  # Recibe las métricas de los trabajos programados (respaldo, ensayo de
+  # restauración). Terminan antes del siguiente raspado, así que no se los
+  # puede raspar: empujan su resultado.
+  pushgateway:
+    image: prom/pushgateway:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observabilidad"]
+    restart: unless-stopped
+    ports:
+      - "3001:3000" # 3000 lo usa el frontend
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?falta GRAFANA_PASSWORD en .env}
+      # Sin registro abierto: cualquiera con la URL podría crearse una cuenta.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  pgdata:
+  pgdata-legacy:
+  prometheus-data:
+  grafana-data:
+  redis-data:
+  minio-data:

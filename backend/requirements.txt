@@ -5,6 +5,7 @@
 
 # --- API framework ---
 fastapi>=0.115,<1.0
+starlette>=1.3.1,<2.0            # transitiva de FastAPI; piso por CVEs de 0.x
 uvicorn[standard]>=0.32,<1.0
 python-multipart>=0.0.18          # uploads multipart/form-data
 
@@ -38,19 +39,19 @@ botocore>=1.35,<2.0
 
 # --- Notificaciones ---
 firebase-admin>=6.5,<7.0          # FCM push
-aiosmtplib>=3.0,<4.0              # envío de correo async
+aiosmtplib>=5.1.2,<6.0            # envío de correo async
 jinja2>=3.1,<4.0                  # plantillas de correo
 
 # --- Validación de archivos subidos ---
 python-magic>=0.4.27,<1.0         # MIME real, no confiar en el header del cliente
-pillow>=11.0,<12.0                # validación/normalización de imágenes
+pillow>=12.3.0,<13.0              # validación/normalización de imágenes
 
 # --- Cliente HTTP ---
 httpx>=0.28,<1.0
 
 # --- Observabilidad ---
 structlog>=24.4,<26.0             # logs JSON con request_id, actor, ruta, status
-prometheus-fastapi-instrumentator>=7.0,<8.0
+prometheus-client>=0.21,<1.0
 opentelemetry-sdk>=1.28,<2.0
 opentelemetry-instrumentation-fastapi>=0.49b0
 opentelemetry-instrumentation-sqlalchemy>=0.49b0
@@ -60,3 +61,6 @@ sentry-sdk[fastapi]>=2.18,<3.0
 # --- Utilidades ---
 orjson>=3.10,<4.0
 python-dateutil>=2.9,<3.0
+
+# --- Asistente virtual (ADR-0012) ---
+openai>=3.7,<4.0                  # Responses API, function calling estricto

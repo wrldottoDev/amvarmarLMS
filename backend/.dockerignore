@@ -1,0 +1,19 @@
+# Secretos: nunca deben llegar al contexto de build.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+tests/
+Dockerfile
+.dockerignore

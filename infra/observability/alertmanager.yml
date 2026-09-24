@@ -1,0 +1,40 @@
+# Enrutado de alertas (Paso 4.3).
+#
+# El criterio: solo despierta a alguien lo que no puede esperar a mañana. Una
+# alerta que suena de madrugada y no se acciona entrena a ignorar todas.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: equipo-correo
+  group_by: [alertname, entorno]
+  # Agrupa el primer aviso: si se cae la base, no se mandan quince correos.
+  group_wait: 30s
+  group_interval: 5m
+  # Recordatorio de lo que sigue abierto. Más frecuente cansa y se filtra.
+  repeat_interval: 12h
+
+  routes:
+    - matchers: [severidad = "critica"]
+      receiver: equipo-urgente
+      repeat_interval: 1h
+
+receivers:
+  - name: equipo-correo
+    email_configs:
+      - to: operaciones@amvarmar.com
+        send_resolved: true
+
+  - name: equipo-urgente
+    email_configs:
+      - to: operaciones@amvarmar.com
+        send_resolved: true
+    # El canal urgente real (guardia telefónica o similar) se configura al
+    # desplegar: acá no se versiona ninguna credencial de proveedor.
+
+inhibit_rules:
+  # Si la API está caída, la latencia y los 5xx son consecuencia. Avisar de las
+  # tres cosas a la vez solo hace más ruido sobre un único problema.
+  - source_matchers: [alertname = "ApiCaida"]
+    target_matchers: [severidad =~ "critica|aviso"]
+    equal: [entorno]

@@ -1,0 +1,33 @@
+# Configuración de Prometheus (Paso 4.3).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    entorno: ${ENTORNO:-produccion}
+
+rule_files:
+  - /etc/prometheus/alertas.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: amvarmar-api
+    metrics_path: /metrics
+    # `/metrics` exige token: expone rutas internas y patrones de fallo de
+    # login. El fichero lo monta el orquestador, nunca se versiona.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
+    static_configs:
+      - targets: ["backend:8000"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
