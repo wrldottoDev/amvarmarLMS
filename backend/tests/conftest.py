@@ -207,8 +207,10 @@ def minio_container() -> Generator["DockerContainer"]:
 
     from testcontainers.core.container import DockerContainer
 
+    # MinIO ya no publica imágenes: en una máquina nueva hay que construir
+    # infra/minio y apuntar acá (MINIO_IMAGEN=amvarmar-minio:RELEASE...).
     contenedor = (
-        DockerContainer("minio/minio:latest")
+        DockerContainer(os.environ.get("MINIO_IMAGEN", "minio/minio:latest"))
         .with_command("server /data")
         .with_env("MINIO_ROOT_USER", "pruebas")
         .with_env("MINIO_ROOT_PASSWORD", "pruebas-secreto-largo")

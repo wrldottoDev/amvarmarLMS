@@ -124,6 +124,14 @@ docker compose run --rm -v $M:/media-legacy:ro backend python -m scripts.migrate
 docker compose run --rm -v $M:/media-legacy:ro backend python -m scripts.migrate_files --media-root /media-legacy --verificar
 ```
 
+## Pendiente antes del cutover: storage mantenido
+
+MinIO dejó de publicar imágenes y archivó su código. El piloto usa la última versión comunitaria
+compilada desde el código (`infra/minio`), que **no recibe parches de seguridad**. Antes del cambio
+definitivo hay que migrar a un storage S3 mantenido (SeaweedFS o Garage, validado con la suite de
+storage: `MINIO_IMAGEN=…` en `tests/conftest.py`) y copiar los objetos del bucket (por ejemplo, con
+`rclone sync`). El backend solo usa S3 estándar, así que no cambia código.
+
 ## 7. Pruebas de humo
 
 1. `https://app.amvarmar.com:8443/login` carga (piloto) y el sistema viejo en `https://app.amvarmar.com` sigue igual.
