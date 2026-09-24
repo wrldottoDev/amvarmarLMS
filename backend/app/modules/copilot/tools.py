@@ -200,6 +200,31 @@ class ProponerCambioEstadoArgs(BaseModel):
     )
 
 
+class ProponerDespachoArgs(BaseModel):
+    cargas: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description=(
+            "Las cargas a despachar, como las nombró la persona: número (SHP-...), "
+            "número de factura o ID. Todas de la misma empresa y almacenadas."
+        ),
+    )
+    metodo: Literal["SEA", "AIR", "LAND"] = Field(
+        description="SEA (marítimo), AIR (aéreo) o LAND (terrestre). Preguntalo si no lo dijo."
+    )
+    direccion_entrega: str | None = Field(
+        default=None, max_length=2000, description="Dirección de entrega, si la dio."
+    )
+    instrucciones: str | None = Field(
+        default=None, max_length=2000, description="Instrucciones para Operaciones, si las dio."
+    )
+    fecha_retiro: str | None = Field(
+        default=None,
+        max_length=10,
+        description="Fecha pedida de retiro en formato AAAA-MM-DD, si la dio.",
+    )
+
+
 class CrearPrealertaBorradorArgs(BaseModel):
     descripcion: str = Field(max_length=2000)
     # De qué cliente es la carga. Lo usa el personal de AMVARMAR, que es quien
@@ -419,6 +444,20 @@ HERRAMIENTAS: dict[str, DefinicionHerramienta] = {
         autorizacion=RequiereTodos((Perm.COPILOT_TOOLS_DRAFT, Perm.SHIPMENTS_TRANSITION_FORWARD)),
         clase=ClaseHerramienta.ESCRITURA,
         action_code=AccionCopilot.PROPONER_CAMBIO_ESTADO,
+    ),
+    "proponer_despacho": DefinicionHerramienta(
+        nombre="proponer_despacho",
+        descripcion=(
+            "Prepara una solicitud de despacho de cargas almacenadas para que la "
+            "persona la revise y confirme. No crea la solicitud por sí sola."
+        ),
+        argumentos=ProponerDespachoArgs,
+        # `DISPATCH_REQUESTS_CREATE` es el que exige `POST /dispatches`; con él,
+        # esta es la única herramienta de escritura que el cliente alcanza
+        # (ADR-0017, enmienda 2026-09-24).
+        autorizacion=RequiereTodos((Perm.COPILOT_TOOLS_DRAFT, Perm.DISPATCH_REQUESTS_CREATE)),
+        clase=ClaseHerramienta.ESCRITURA,
+        action_code=AccionCopilot.PROPONER_DESPACHO,
     ),
 }
 

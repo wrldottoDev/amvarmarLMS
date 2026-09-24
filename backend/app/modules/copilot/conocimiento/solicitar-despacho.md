@@ -11,3 +11,9 @@ Andá a **Despachos → Solicitar despacho** y elegí una o más cargas de la mi
 - Al confirmar, las cargas pasan a `DISPATCH_REQUESTED` de una sola vez — la interfaz te pide confirmar
   mostrando qué cargas incluiste antes de enviar la solicitud.
 - Solo se despacha por mar (`SEA`), aire (`AIR`) o tierra (`LAND`).
+
+También me lo podés pedir a mí: decime qué cargas (por número, factura o ID) y por qué vía (marítimo,
+aéreo o terrestre), y si querés una dirección de entrega o instrucciones. Te preparo la solicitud, la
+revisás y la confirmás. Hasta que no confirmes, no se envía nada. El proceso completo está en "Cómo es el
+proceso de despacho de principio a fin".
+
