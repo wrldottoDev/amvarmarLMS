@@ -136,6 +136,18 @@ python -m scripts.verificar_migracion --muestra 10
 **Todos los conteos tienen que cuadrar.** Un descuadre sin explicación es
 criterio de abortar.
 
+```sql
+-- Migrados activos sin correo verificado: no reciben avisos por correo.
+SELECT m.legacy_pk, u.email, m.nota
+FROM legacy_id_map m JOIN users u ON u.id = m.new_uuid
+WHERE m.legacy_table = 'auth_user' AND u.status = 'ACTIVE'
+  AND u.email_verified_at IS NULL;
+```
+
+**Verificar:** solo aparecen los que el reporte del migrador listó como
+"correo sin verificar" (temporales o corregidos en el 5.1 sin confirmar por
+AMVARMAR). Cualquier otro significa que la política de verificación no corrió.
+
 ```bash
 python -m scripts.migrate_files --media-root /var/media-legacy --verificar
 ```

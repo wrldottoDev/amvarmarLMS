@@ -597,3 +597,81 @@ class TestMigradorCompleto:
         assert invariantes.doble_contexto == 0
         assert invariantes.conteos_incorrectos == 0
         assert invariantes.wr_sin_bodega == 0
+
+    async def test_verifica_solo_los_correos_que_vienen_del_legacy(
+        self, legacy, postgres_container, session
+    ) -> None:
+        """Legacy ya enviaba a esas direcciones y ninguna se autorregistró: se confía en
+        ellas. No en las temporales del Paso 5.1 ni en correcciones sin confirmar
+        por AMVARMAR, que siguen sin verificar hasta `004_correos_reales`.
+        """
+        import psycopg
+        from scripts import seed_document_types, seed_rbac, seed_shipment_statuses
+        from scripts.migrate_legacy import Migrador
+        from sqlalchemy import text
+        from sqlalchemy.engine import make_url
+
+        await session.execute(text("TRUNCATE users, companies CASCADE"))
+        legacy["psql"]("""
+            UPDATE auth_user
+            SET email = 'legacy-' || id || '@migration.test',
+                password = 'pbkdf2_sha256$720000$salt$hash-de-prueba'
+        """)
+        legacy["correr"]("/tmp/000_registro.sql")
+        legacy["psql"]("""
+            UPDATE auth_user SET email = 'temporal3@local.amvarmar.com' WHERE id = 3;
+            UPDATE auth_user SET email = 'confirmado4@migration.test' WHERE id = 4;
+            UPDATE auth_user SET email = 'sin-traza6@local.amvarmar.com' WHERE id = 6;
+            UPDATE auth_user SET email = 'corregido7@migration.test' WHERE id = 7;
+            INSERT INTO migracion_correcciones
+                (aplicada_en, script, tabla, registro_pk, campo,
+                 valor_anterior, valor_nuevo, motivo, decidido_por)
+            VALUES
+                ('2026-09-07', '001_emails', 'auth_user', '3', 'email',
+                 '', 'temporal3@local.amvarmar.com', 'temporal', 'prueba'),
+                ('2026-09-07', '001_emails', 'auth_user', '4', 'email',
+                 '', 'temporal4@local.amvarmar.com', 'temporal', 'prueba'),
+                ('2026-09-30', '004_correos_reales', 'auth_user', '4', 'email',
+                 'temporal4@local.amvarmar.com', 'confirmado4@migration.test',
+                 'confirmado por AMVARMAR', 'prueba'),
+                ('2026-09-07', '001_emails', 'auth_user', '7', 'email',
+                 'duplicado@migration.test', 'corregido7@migration.test',
+                 'duplicado', 'prueba');
+        """)
+
+        await seed_rbac.sembrar(session)
+        await seed_shipment_statuses.sembrar(session)
+        await seed_document_types.sembrar(session)
+
+        url = make_url(postgres_container.get_connection_url()).set(
+            drivername="postgresql", database=legacy["base"]
+        )
+        with psycopg.connect(url.render_as_string(hide_password=False)) as conexion_legacy:
+            reporte = await Migrador(conexion_legacy, session, seco=False).ejecutar()
+        assert not reporte.problemas, reporte.problemas
+
+        filas = (
+            await session.execute(
+                text("""
+                    SELECT m.legacy_pk::int AS legacy_id,
+                           u.email_verified_at IS NOT NULL AS verificado,
+                           m.nota
+                    FROM legacy_id_map m JOIN users u ON u.id = m.new_uuid
+                    WHERE m.legacy_table = 'auth_user'
+                """)
+            )
+        ).all()
+        verificado = {f.legacy_id: f.verificado for f in filas}
+        nota = {f.legacy_id: f.nota for f in filas}
+
+        assert verificado[9] is True  # correo original del legacy
+        assert verificado[4] is True  # la última corrección la confirmó AMVARMAR
+        assert verificado[3] is False  # temporal del 001
+        assert verificado[6] is False  # dominio temporal aunque no haya traza
+        assert verificado[7] is False  # corregido en el 5.1 sin confirmar
+        assert "001_emails" in nota[3]
+        assert "temporal" in nota[6]
+        assert nota[9] is None
+        assert sum(not v for v in verificado.values()) == sum(
+            "sin verificar" in a for a in reporte.avisos
+        )
