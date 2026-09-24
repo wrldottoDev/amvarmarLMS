@@ -31,6 +31,7 @@ class AccionCopilot(StrEnum):
 
     PROCESAR_FACTURA_OCR = "procesar_factura_ocr"
     CREAR_PREALERTA_BORRADOR = "crear_prealerta_borrador"
+    PROPONER_CAMBIO_ESTADO = "proponer_cambio_estado"
 
 
 # Firma que todo ejecutor de confirmación implementa. Recibe la propuesta ya

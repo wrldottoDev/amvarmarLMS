@@ -355,3 +355,33 @@ La implementación de las Fases 1 a 4 y la auditoría de seguridad actualizaron 
   y `factura_de_carga` filtra por las empresas permitidas.
 - La cuota de clientes conserva deliberadamente una ventana móvil de 30 días, no un mes calendario. El setting
   y su comentario reflejan ahora ese mecanismo sin cambiar el comportamiento.
+
+## Enmienda 2026-09-24 — AMVI avanza el ingreso a bodega
+
+Pedido de Operaciones: poder mover una carga desde el chat nombrándola por su número, su factura o su ID.
+Se agrega una tercera herramienta de **escritura**, `proponer_cambio_estado`, con las mismas reglas que las
+otras dos: el modelo solo arma una propuesta y la persona confirma.
+
+**Alcance cerrado al ingreso a bodega:** `PRE_ALERT` → `IN_TRANSIT` → `RECEIVED` → `STORED`. Son los
+avances que no piden justificación (ADR-0001). Quedan fuera, a propósito:
+- retroceder, cancelar y reabrir, que exigen motivo;
+- despacho y entrega (`DISPATCH_REQUESTED` en adelante), que los mueve el flujo de `dispatch_requests`;
+  cambiarlos sueltos desde el chat desincronizaría la carga con su solicitud.
+
+**Identificación exacta.** La búsqueda del listado es parcial y mira shipper y carrier; para escribir no
+sirve. La herramienta resuelve por coincidencia **exacta** del número de carga, de una referencia `INVOICE`
+o del ID, filtra por las cargas que el actor puede leer y exige **una sola** coincidencia. Con varias,
+devuelve las candidatas y no propone nada.
+
+**Varios pasos, todo o nada.** Si la carga está varios estados antes del destino, la propuesta encadena los
+pasos. Al confirmar, cada paso pasa por `shipments.service.transicionar`, el mismo motor que
+`POST /shipments/{id}/transitions`: permiso, bloqueos, fechas, línea de tiempo y notificaciones. Todo corre
+en la transacción de la confirmación; si un paso falla, no se aplica ninguno y la propuesta queda `FAILED`.
+La propuesta guarda la `row_version`: si la carga cambió desde que se propuso, el primer paso choca con la
+versión y no se aplica nada.
+
+**Permiso:** `copilot.tools.draft` + `shipments.transition.forward`, que es el que el motor exige al
+confirmar. Los clientes no tienen la herramienta.
+
+El `CHECK` de `copilot_action_proposals.action_code` se amplía en la migración `c5d2e8a41f07`.
+
