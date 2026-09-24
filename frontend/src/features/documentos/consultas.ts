@@ -143,6 +143,46 @@ export function useQuitarDocumento(cargaId: string) {
   });
 }
 
+/** Aprobar o rechazar el documento que se subió para un requisito (ADR-0003). */
+export function useRevisarRequisito(cargaId: string) {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      requisitoId,
+      documentoId,
+      decision,
+      motivo,
+    }: {
+      requisitoId: string;
+      documentoId: string;
+      decision: "aprobar" | "rechazar";
+      motivo?: string;
+    }) => {
+      const params = { path: { shipment_id: cargaId, requirement_id: requisitoId } };
+      return decision === "aprobar"
+        ? exigirDatos(
+            await api.POST("/api/v1/shipments/{shipment_id}/requirements/{requirement_id}/verify", {
+              params,
+              body: { document_id: documentoId },
+            }),
+          )
+        : exigirDatos(
+            await api.POST("/api/v1/shipments/{shipment_id}/requirements/{requirement_id}/reject", {
+              params,
+              body: { document_id: documentoId, reason: motivo ?? "" },
+            }),
+          );
+    },
+    onSuccess: () => {
+      cliente.invalidateQueries({ queryKey: claveExpediente(cargaId) });
+      cliente.invalidateQueries({ queryKey: ["carga", cargaId] });
+      cliente.invalidateQueries({ queryKey: ["cargas"] });
+      // Un requisito aprobado puede desbloquear una transición.
+      cliente.invalidateQueries({ queryKey: ["transiciones-disponibles", cargaId] });
+    },
+  });
+}
+
 export function useDescargar() {
   return useMutation({
     mutationFn: async (documentoId: string) =>
