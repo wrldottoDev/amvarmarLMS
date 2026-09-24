@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Clock, Download, FileText, Pencil, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Check, Clock, Download, FileText, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { ExportacionCarga } from "@/components/documentos/progreso-exportacion";
 import {
@@ -9,8 +9,11 @@ import {
   useExpediente,
   useQuitarDocumento,
   useRenombrarDocumento,
+  useRevisarRequisito,
   useSubirDocumento,
 } from "@/features/documentos/consultas";
+import { revisionDeRequisito } from "@/features/documentos/revision";
+import { useSesion } from "@/features/auth/contexto-sesion";
 import {
   estadoSubida,
   estadoRequisito,
@@ -56,6 +59,8 @@ export function Expediente({
   const descargar = useDescargar();
   const renombrar = useRenombrarDocumento(cargaId);
   const quitar = useQuitarDocumento(cargaId);
+  const revisar = useRevisarRequisito(cargaId);
+  const { tienePermiso } = useSesion();
 
   const [subiendo, setSubiendo] = useState<string | null>(null);
   const [progreso, setProgreso] = useState(0);
@@ -66,6 +71,12 @@ export function Expediente({
   const [nombreNuevo, setNombreNuevo] = useState("");
   const [aQuitar, setAQuitar] = useState<{ id: string; original_name: string } | null>(null);
   const [motivoQuitar, setMotivoQuitar] = useState("");
+  const [aRechazar, setARechazar] = useState<{
+    requisitoId: string;
+    documentoId: string;
+    nombre: string;
+  } | null>(null);
+  const [motivoRechazo, setMotivoRechazo] = useState("");
 
   // Renombrar y quitar son de personal interno, igual que `edit_files` del
   // sistema viejo, que estaba bajo `@staff_member_required`.
@@ -83,6 +94,8 @@ export function Expediente({
     : data.requisitos;
 
   const faltantes = requisitos.filter((r) => ["PENDING", "REJECTED", "OPEN"].includes(r.status));
+  // Aprobar o rechazar es de Operaciones; la carga archivada no se toca.
+  const puedeRevisar = !soloLectura && tienePermiso("documents.verify");
 
   async function guardarNombre(documentoId: string) {
     await renombrar.mutateAsync({ id: documentoId, nombre: nombreNuevo.trim() });
@@ -166,6 +179,7 @@ export function Expediente({
       ) : null}
 
       {subir.error ? <AvisoError error={subir.error} /> : null}
+      {revisar.error && !aRechazar ? <AvisoError error={revisar.error} /> : null}
       {descargar.error ? <AvisoError error={descargar.error} /> : null}
 
       {requisitos.length > 0 ? (
@@ -184,6 +198,11 @@ export function Expediente({
               Boolean(tipo) &&
               ["PENDING", "REJECTED", "OPEN"].includes(requisito.status);
             const enProgreso = subiendo === requisito.id;
+            const revision = revisionDeRequisito(
+              requisito,
+              data.documentos.find((d) => d.id === requisito.document_id)?.upload_status,
+              puedeRevisar,
+            );
 
             return (
               <li key={requisito.id} className="flex flex-wrap items-center gap-3 px-4 py-4">
@@ -216,6 +235,47 @@ export function Expediente({
                     <Download className="size-4" aria-hidden="true" />
                     Ver
                   </button>
+                ) : null}
+
+                {revision.mostrar && requisito.document_id ? (
+                  <span className="flex shrink-0 flex-wrap items-center gap-2">
+                    {revision.aviso ? (
+                      <span className="text-xs text-[var(--texto-secundario)]">{revision.aviso}</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--exito-borde)] px-3 text-sm font-medium text-[var(--exito)] hover:bg-[var(--exito-tenue)] disabled:opacity-60"
+                      title="El documento es correcto: el requisito queda cumplido"
+                      disabled={!revision.listo || revisar.isPending}
+                      onClick={() =>
+                        revisar.mutate({
+                          requisitoId: requisito.id,
+                          documentoId: requisito.document_id as string,
+                          decision: "aprobar",
+                        })
+                      }
+                    >
+                      <Check className="size-4" aria-hidden="true" />
+                      Aprobar
+                    </button>
+                    <button
+                      type="button"
+                      className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium text-[var(--peligro)] hover:bg-[var(--peligro-tenue)] disabled:opacity-60"
+                      title="El documento no sirve: hay que volver a subirlo"
+                      disabled={!revision.listo || revisar.isPending}
+                      onClick={() => {
+                        setMotivoRechazo("");
+                        setARechazar({
+                          requisitoId: requisito.id,
+                          documentoId: requisito.document_id as string,
+                          nombre: requisito.label,
+                        });
+                      }}
+                    >
+                      <X className="size-4" aria-hidden="true" />
+                      Rechazar
+                    </button>
+                  </span>
                 ) : null}
 
                 {puedeSubir ? (
@@ -477,6 +537,62 @@ export function Expediente({
             }}
           >
             Quitar
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        abierto={aRechazar !== null}
+        titulo="Rechazar documento"
+        cerrar={() => setARechazar(null)}
+      >
+        <p className="text-sm">
+          <strong>{aRechazar?.nombre}</strong> vuelve a quedar pendiente y hay que subir otro
+          archivo. La empresa recibe un aviso; el motivo queda en la línea de tiempo de la carga,
+          así que conviene que diga qué corregir.
+        </p>
+        <label className="mt-3 block text-sm font-medium">
+          Motivo del rechazo
+          <textarea
+            className="mt-1 w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+            rows={3}
+            maxLength={2000}
+            value={motivoRechazo}
+            onChange={(evento) => setMotivoRechazo(evento.target.value)}
+          />
+        </label>
+
+        {revisar.error ? (
+          <div className="mt-3">
+            <AvisoError error={revisar.error} />
+          </div>
+        ) : null}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
+            onClick={() => setARechazar(null)}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="h-10 rounded-md bg-[var(--peligro)] px-4 text-sm font-semibold text-white disabled:opacity-60"
+            disabled={revisar.isPending || !motivoRechazo.trim()}
+            onClick={async () => {
+              if (aRechazar) {
+                await revisar.mutateAsync({
+                  requisitoId: aRechazar.requisitoId,
+                  documentoId: aRechazar.documentoId,
+                  decision: "rechazar",
+                  motivo: motivoRechazo.trim(),
+                });
+              }
+              setARechazar(null);
+            }}
+          >
+            Rechazar
           </button>
         </div>
       </Modal>
