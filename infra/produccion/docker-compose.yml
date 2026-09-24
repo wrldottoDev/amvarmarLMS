@@ -1,0 +1,165 @@
+# AMVARMAR LMS — despliegue en la VPS (piloto y producción).
+#
+# Convive con el sistema viejo en la misma máquina: nada escucha en una
+# interfaz pública. Todo se publica en 127.0.0.1 y el nginx del host es la
+# única entrada (app.amvarmar.com y archivos.amvarmar.com, ver `nginx/`).
+# Los puertos de host se eligen lejos de los habituales para no chocar con lo
+# que ya corre; se cambian en `.env` si alguno está tomado.
+#
+#   docker compose --env-file .env up -d --build
+#
+# Runbook: docs/runbooks/despliegue-piloto.md
+
+name: amvarmar-lms-prod
+
+x-backend: &backend
+  build:
+    context: ../../backend
+  image: amvarmar-lms-backend:${VERSION:-local}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    # Las direcciones internas se fijan acá: son de la red del compose, no
+    # algo que deba decidir quien completa el `.env`.
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?falta POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?falta POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+    ports:
+      # Solo local, para respaldos y para el migrador.
+      - "127.0.0.1:${PUERTO_POSTGRES:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?falta MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD}
+      # El navegador sube y descarga directo con URLs firmadas: solo el
+      # frontend propio puede hacerlo desde JavaScript.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_BASE_URL:?falta FRONTEND_BASE_URL}
+    ports:
+      - "127.0.0.1:${PUERTO_MINIO:-59000}:9000"
+      # Consola web: solo por túnel SSH, nunca publicada en nginx.
+      - "127.0.0.1:${PUERTO_MINIO_CONSOLA:-59001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    <<: *backend
+    # Detrás de nginx: sin `--proxy-headers` todas las peticiones llegarían con
+    # la IP de la red de Docker, y el rate limit por IP del login y la
+    # auditoría quedarían ciegos. Confiar en cualquier origen es seguro porque
+    # el puerto solo escucha en 127.0.0.1: el único que llega es nginx.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--proxy-headers", "--forwarded-allow-ips", "*"]
+    ports:
+      - "127.0.0.1:${PUERTO_BACKEND:-58000}:8000"
+
+  worker:
+    <<: *backend
+    # Sin worker los documentos quedan en PROCESSING y no sale ningún aviso.
+    command: ["celery", "-A", "app.workers.app.celery_app", "worker", "--loglevel=INFO"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.app.celery_app inspect ping -d celery@$$HOSTNAME -t 10 | grep -q pong"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+
+  beat:
+    <<: *backend
+    # Uno solo: dos beats dispararían dos veces cada tarea programada.
+    command: ["celery", "-A", "app.workers.app.celery_app", "beat", "--loglevel=INFO", "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+
+  frontend:
+    build:
+      context: ../../frontend
+    image: amvarmar-lms-frontend:${VERSION:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PUERTO_FRONTEND:-53000}:3000"
+    depends_on:
+      - backend
+
+  # --- Migración (Fase 5) ---
+  # Copia del sistema viejo para migrar sin tocar su base real: el volcado se
+  # restaura acá, las correcciones del Paso 5.1 se aplican sobre la copia y el
+  # migrador lee de ella. PostgreSQL 18 porque los volcados vienen de esa
+  # versión y `pg_restore` no lee archivos más nuevos que él.
+  #   docker compose --profile migracion up -d postgres-legacy
+  postgres-legacy:
+    image: postgres:18-alpine
+    profiles: ["migracion"]
+    restart: "no"
+    environment:
+      POSTGRES_DB: amvarmar_legacy
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # PostgreSQL 18 monta el directorio padre (ver infra/docker).
+      - pgdata-legacy:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d amvarmar_legacy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Piloto ---
+  # Mientras el sistema viejo siga activo, el correo del LMS va acá y no a
+  # los clientes: si no, recibirían avisos repetidos de los dos sistemas.
+  # Se quita el perfil y se apunta SMTP_* al servidor real en el cutover.
+  #   docker compose --profile piloto up -d
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["piloto"]
+    restart: unless-stopped
+    ports:
+      # UI solo por túnel SSH: ssh -L 58025:127.0.0.1:58025 usuario@vps
+      - "127.0.0.1:${PUERTO_MAILPIT:-58025}:8025"
+
+volumes:
+  pgdata:
+  pgdata-legacy:
+  redis-data:
+  minio-data:
