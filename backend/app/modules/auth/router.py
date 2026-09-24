@@ -25,6 +25,7 @@ from app.modules.auth.schemas import (
     PasswordResetRequest,
     SessionResponse,
     TokenResponse,
+    VerificarCorreoRequest,
 )
 from app.modules.auth.service import DatosCliente
 from app.modules.notifications import service as notificaciones
@@ -438,6 +439,81 @@ async def invitacion_aceptar(
     return MensajeResponse(mensaje="Contraseña creada. Ya puede iniciar sesión.")
 
 
+@router.post("/email/verify/request", response_model=MensajeResponse)
+async def verificacion_pedir(
+    actor: ActorDep,
+    request: Request,
+    db: SesionDb,
+    redis: RedisDep,
+) -> MensajeResponse:
+    """Manda a la persona un enlace para verificar su correo.
+
+    Requiere sesión: el enlace va al correo de la cuenta de quien lo pide, así
+    que no sirve para mandar correos a terceros ni revela qué cuentas existen.
+    """
+    if await service.correo_verificado(db, actor.user_id):
+        return MensajeResponse(mensaje="Su correo ya está verificado.")
+
+    await rate_limit.consumir(
+        redis,
+        clave=f"verify:{actor.user_id}",
+        limite=rate_limit.LIMITE_VERIFICACION_CORREO,
+    )
+
+    token = await service.crear_token_verificacion(db, actor.user_id)
+    # Mismo motivo que la recuperación: el outbox guardaría el token en claro.
+    enviado = await notificaciones.enviar_enlace_de_cuenta(
+        db, user_id=actor.user_id, event_code="account.email_verify", token=token
+    )
+    await registrar(
+        db,
+        action="auth.email.verify_requested",
+        resource_type="user",
+        resource_id=actor.user_id,
+        actor_user_id=actor.user_id,
+        outcome=Outcome.SUCCESS if enviado else Outcome.FAILED,
+        ip_address=_ip(request),
+        reason=None if enviado else "No se pudo entregar el correo de verificación.",
+    )
+    await db.commit()
+
+    return MensajeResponse(
+        mensaje="Le enviamos un enlace a su correo. Vence en 24 horas."
+        if enviado
+        else "No pudimos enviar el correo. Intente de nuevo en unos minutos."
+    )
+
+
+@router.post("/email/verify/confirm", response_model=MensajeResponse)
+async def verificacion_confirmar(
+    datos: VerificarCorreoRequest,
+    request: Request,
+    db: SesionDb,
+) -> MensajeResponse:
+    """Canjea el enlace del correo. Sin sesión: se abre desde el buzón, que puede
+    estar en otro dispositivo; tener el token ya prueba lo que hay que probar."""
+    try:
+        user_id = await service.consumir_token_verificacion(db, token=datos.token)
+    except service.TokenRecuperacionInvalido as error:
+        await db.rollback()
+        raise ReglaDeNegocioViolada(
+            "El enlace de verificación no es válido o ya venció.",
+            code="TOKEN_VERIFICACION_INVALIDO",
+        ) from error
+
+    await registrar(
+        db,
+        action="auth.email.verified",
+        resource_type="user",
+        resource_id=user_id,
+        actor_user_id=user_id,
+        ip_address=_ip(request),
+        reason="Correo verificado con el enlace enviado a su buzón.",
+    )
+    await db.commit()
+    return MensajeResponse(mensaje="Correo verificado. Ya recibirá los avisos por correo.")
+
+
 me_router = APIRouter(prefix="/api/v1", tags=["auth"])
 
 
@@ -454,6 +530,7 @@ async def me(actor: ActorDep, db: SesionDb, redis: RedisDep) -> MeResponse:
         await db.execute(
             text("""
                 SELECT u.id, u.email, u.first_name, u.last_name,
+                       u.email_verified_at IS NOT NULL AS email_verificado,
                        c.id AS company_id, c.legal_name, c.trade_name
                 FROM users u
                 LEFT JOIN company_memberships m
@@ -473,6 +550,7 @@ async def me(actor: ActorDep, db: SesionDb, redis: RedisDep) -> MeResponse:
     return MeResponse(
         id=fila.id,
         email=fila.email,
+        email_verificado=fila.email_verificado,
         first_name=fila.first_name,
         last_name=fila.last_name,
         empresa=None

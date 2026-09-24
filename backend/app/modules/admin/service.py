@@ -17,7 +17,7 @@ Reglas del modelo que este servicio hace cumplir:
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -73,6 +73,7 @@ class UsuarioResumen:
     company_name: str | None
     last_login_at: datetime | None
     created_at: datetime
+    email_verificado: bool
 
 
 def _exigir(permisos: PermisosEfectivos, permiso: str, company_id: UUID | None = None) -> None:
@@ -313,6 +314,7 @@ async def listar_usuarios(
             text(f"""
                 SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.status,
                        u.last_login_at, u.created_at,
+                       u.email_verified_at IS NOT NULL AS email_verificado,
                        r.code AS role_code, m.company_id, c.legal_name AS company_name
                 FROM users u
                 LEFT JOIN company_memberships m
@@ -340,6 +342,7 @@ async def listar_usuarios(
             company_name=f.company_name,
             last_login_at=f.last_login_at,
             created_at=f.created_at,
+            email_verificado=f.email_verificado,
         )
         for f in filas
     ]
@@ -602,6 +605,33 @@ async def restablecer_contrasena(
     await invalidar_permisos(session, user_id)
 
     return temporal
+
+
+EstadoVerificacion = Literal["ENVIADO", "NO_ENVIADO", "YA_VERIFICADO"]
+
+
+async def enviar_verificacion_de_correo(
+    session: AsyncSession, *, user_id: UUID, permisos: PermisosEfectivos
+) -> EstadoVerificacion:
+    """Manda el enlace de verificación a la cuenta, a pedido de quien la administra.
+
+    Para migrados o cuentas que no la pidieron: sin correo verificado no les
+    llega ningún aviso por correo. Va siempre al correo de la cuenta, nunca a
+    uno que elija el administrador.
+    """
+    empresa = await _empresa_del_usuario(session, user_id)
+    _exigir(permisos, Perm.USERS_MANAGE, empresa)
+
+    if await auth_service.correo_verificado(session, user_id):
+        return "YA_VERIFICADO"
+
+    enviado = await notificaciones.enviar_enlace_de_cuenta(
+        session,
+        user_id=user_id,
+        event_code="account.email_verify",
+        token=await auth_service.crear_token_verificacion(session, user_id),
+    )
+    return "ENVIADO" if enviado else "NO_ENVIADO"
 
 
 async def desactivar_usuario(
