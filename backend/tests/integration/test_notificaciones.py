@@ -266,6 +266,8 @@ _CRITICOS_ESPERADOS = frozenset(
         "account.invitation",
         # El correo que `/password/forgot` prometía y no mandaba
         "account.password_reset",
+        # La verificación que habilita los demás avisos por correo
+        "account.email_verify",
     }
 )
 
@@ -917,6 +919,25 @@ class TestCorreoReal:
         assert creado.password_temporal not in cuerpo["Text"]
         assert creado.password_temporal not in cuerpo["HTML"]
         assert creado.email not in cuerpo["Text"]
+
+    async def test_la_verificacion_llega_a_un_correo_sin_verificar(
+        self, session: AsyncSession, correo_de_prueba: str
+    ) -> None:
+        """Si exigiera verificación, ninguna cuenta podría verificarse nunca."""
+        from app.modules.auth.service import crear_token_verificacion
+
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        user_id, _email = await _usuario(session, empresa, verificado=False)
+        token = await crear_token_verificacion(session, user_id)
+
+        enviado = await service.enviar_enlace_de_cuenta(
+            session, user_id=user_id, event_code="account.email_verify", token=token
+        )
+
+        assert enviado is True
+        cuerpo = _cuerpo(correo_de_prueba, _mensajes(correo_de_prueba)[0]["ID"])
+        assert f"/verificar-correo?token={token}" in cuerpo["Text"]
 
     async def test_la_invitacion_sale_aunque_el_correo_no_este_verificado(
         self, session: AsyncSession, correo_de_prueba: str, redis

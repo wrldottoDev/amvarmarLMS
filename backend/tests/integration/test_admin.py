@@ -347,6 +347,72 @@ class TestUsuarios:
         ).scalar_one()
         assert activas == 0
 
+    async def test_el_listado_informa_si_el_correo_esta_verificado(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        await session.execute(
+            text("UPDATE users SET email_verified_at = now() WHERE id = :u"),
+            {"u": entorno["ops"]},
+        )
+        permisos = await _permisos(session, redis, entorno["super"])
+
+        usuarios = {
+            u.id: u
+            for u in await service.listar_usuarios(
+                session, permisos=permisos, company_id=None, incluir_inactivos=False
+            )
+        }
+
+        assert usuarios[entorno["ops"]].email_verificado is True
+        assert usuarios[entorno["cliente_alfa"]].email_verificado is False
+
+    async def test_reenviar_la_verificacion_emite_un_enlace(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        permisos = await _permisos(session, redis, entorno["ops"])
+
+        estado = await service.enviar_verificacion_de_correo(
+            session, user_id=entorno["cliente_alfa"], permisos=permisos
+        )
+
+        assert estado in {"ENVIADO", "NO_ENVIADO"}  # depende del relay de la prueba
+        vivos = (
+            await session.execute(
+                text("""
+                    SELECT count(*) FROM one_time_tokens
+                    WHERE user_id = :u AND purpose = 'EMAIL_VERIFY' AND consumed_at IS NULL
+                """),
+                {"u": entorno["cliente_alfa"]},
+            )
+        ).scalar_one()
+        assert vivos == 1
+
+    async def test_un_correo_verificado_no_se_reenvia(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        await session.execute(
+            text("UPDATE users SET email_verified_at = now() WHERE id = :u"),
+            {"u": entorno["cliente_alfa"]},
+        )
+        permisos = await _permisos(session, redis, entorno["ops"])
+
+        estado = await service.enviar_verificacion_de_correo(
+            session, user_id=entorno["cliente_alfa"], permisos=permisos
+        )
+
+        assert estado == "YA_VERIFICADO"
+
+    async def test_un_cliente_no_reenvia_verificaciones(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Mandar correos a nombre del sistema es de quien administra usuarios."""
+        permisos = await _permisos(session, redis, entorno["cliente_alfa"])
+
+        with pytest.raises(SinPermiso):
+            await service.enviar_verificacion_de_correo(
+                session, user_id=entorno["ops"], permisos=permisos
+            )
+
     async def test_desactivar_usuario_no_lo_borra(
         self, session: AsyncSession, redis, entorno
     ) -> None:

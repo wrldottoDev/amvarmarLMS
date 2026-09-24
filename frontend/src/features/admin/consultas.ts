@@ -137,6 +137,19 @@ export function useRestablecerContrasena() {
   });
 }
 
+export function useEnviarVerificacion() {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      exigirDatos(
+        await api.POST("/api/v1/admin/users/{user_id}/email-verification", {
+          params: { path: { user_id: id } },
+        }),
+      ),
+    onSuccess: () => cliente.invalidateQueries({ queryKey: claveUsuarios }),
+  });
+}
+
 export function useDesactivarUsuario() {
   const cliente = useQueryClient();
   return useMutation({

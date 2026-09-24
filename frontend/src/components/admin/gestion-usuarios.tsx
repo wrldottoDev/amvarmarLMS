@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Plus, Power, UserRound } from "lucide-react";
+import { KeyRound, MailCheck, Plus, Power, UserRound } from "lucide-react";
 import { useState } from "react";
 import { ContrasenaTemporal, type EstadoInvitacion } from "./contrasena-temporal";
 import { AvisoError } from "@/components/ui/aviso-error";
@@ -11,10 +11,12 @@ import {
   useCrearUsuario,
   useDesactivarUsuario,
   useEmpresas,
+  useEnviarVerificacion,
   useRestablecerContrasena,
   useUsuarios,
 } from "@/features/admin/consultas";
 import { etiquetaEstadoCuenta, etiquetaRol, rolesDeCliente, rolesInternos } from "@/features/admin/roles";
+import { mensajeVerificacion } from "@/features/admin/verificacion";
 import { clases, tiempoRelativo } from "@/lib/utilidades";
 
 /**
@@ -42,6 +44,11 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
   const crear = useCrearUsuario();
   const restablecer = useRestablecerContrasena();
   const desactivar = useDesactivarUsuario();
+  const verificar = useEnviarVerificacion();
+  const [avisoVerificacion, setAvisoVerificacion] = useState<{
+    texto: string;
+    exito: boolean;
+  } | null>(null);
 
   const [correo, setCorreo] = useState("");
   const [nombre, setNombre] = useState("");
@@ -107,6 +114,21 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
         />
       ) : null}
 
+      {avisoVerificacion ? (
+        <p
+          className={clases(
+            "rounded-md border px-4 py-3 text-sm",
+            avisoVerificacion.exito
+              ? "border-[var(--exito-borde)] bg-[var(--exito-tenue)] text-[var(--exito)]"
+              : "border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] text-[var(--peligro)]",
+          )}
+          role="status"
+        >
+          {avisoVerificacion.texto}
+        </p>
+      ) : null}
+      {verificar.error ? <AvisoError error={verificar.error} /> : null}
+
       {error ? <AvisoError error={error} /> : null}
       {isPending ? <CargandoPagina /> : null}
 
@@ -142,6 +164,15 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
                 {usuario.last_login_at ? `Entró ${tiempoRelativo(usuario.last_login_at)}` : "Nunca entró"}
               </span>
 
+              {usuario.status === "ACTIVE" && !usuario.email_verificado ? (
+                <span
+                  className="shrink-0 rounded-full border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-2.5 py-0.5 text-xs font-semibold"
+                  title="No le llegan los avisos por correo hasta que lo verifique"
+                >
+                  Correo sin verificar
+                </span>
+              ) : null}
+
               {usuario.status !== "ACTIVE" ? (
                 <span className="shrink-0 rounded-full border border-[var(--peligro-borde)] bg-[var(--peligro-tenue)] px-2.5 py-0.5 text-xs font-semibold text-[var(--peligro)]">
                   {etiquetaEstadoCuenta[usuario.status] ?? usuario.status}
@@ -168,6 +199,22 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
                   <KeyRound className="size-4" aria-hidden="true" />
                   Contraseña
                 </button>
+
+                {usuario.status === "ACTIVE" && !usuario.email_verificado ? (
+                  <button
+                    type="button"
+                    className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
+                    title="Manda a su correo un enlace para verificarlo"
+                    onClick={async () => {
+                      const resultado = await verificar.mutateAsync(usuario.id);
+                      setAvisoVerificacion(mensajeVerificacion(resultado.estado, usuario.email));
+                    }}
+                    disabled={verificar.isPending}
+                  >
+                    <MailCheck className="size-4" aria-hidden="true" />
+                    Verificar correo
+                  </button>
+                ) : null}
 
                 {usuario.status === "ACTIVE" ? (
                   <button

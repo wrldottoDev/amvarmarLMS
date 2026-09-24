@@ -33,6 +33,9 @@ LIMITE_REFRESH_POR_IP = Limite(intentos=60, ventana_segundos=60)
 # Recuperación de contraseña: cada intento manda un correo.
 LIMITE_PASSWORD_FORGOT = Limite(intentos=3, ventana_segundos=900)
 
+# Pedir verificación de correo: cada pedido también manda un correo.
+LIMITE_VERIFICACION_CORREO = Limite(intentos=3, ventana_segundos=900)
+
 
 async def consumir(
     redis: Redis,
