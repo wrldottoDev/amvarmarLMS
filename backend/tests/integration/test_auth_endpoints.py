@@ -5,6 +5,7 @@ formato de error, que los tests de servicio no ven.
 """
 
 import uuid
+from datetime import datetime
 
 import pytest
 from httpx import AsyncClient
@@ -479,6 +480,110 @@ class TestInvitacion:
         await cliente.post("/api/v1/auth/password/forgot", json={"email": email})
 
         assert await _ultimo_token_de(db_directa, user_id, "PASSWORD_RESET") is not None
+
+
+async def _verificado_en(db: AsyncSession, user_id: str) -> datetime | None:
+    fecha: datetime | None = (
+        await db.execute(text("SELECT email_verified_at FROM users WHERE id = :u"), {"u": user_id})
+    ).scalar_one()
+    return fecha
+
+
+async def _recuperacion(db: AsyncSession, email: str) -> str:
+    """Token de recuperación en claro, emitido por el servicio real."""
+    from app.modules.auth.service import crear_token_recuperacion
+
+    resultado = await crear_token_recuperacion(db, email)
+    assert resultado is not None
+    await db.commit()
+    return resultado[0]
+
+
+class TestVerificacionDeCorreo:
+    """Canjear un enlace enviado al correo prueba que la persona controla el buzón.
+
+    Sin esto ninguna cuenta queda verificada por la aplicación, y las
+    notificaciones por correo se saltean para siempre (ADR-0008).
+    """
+
+    async def test_aceptar_la_invitacion_verifica_el_correo(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        _email, user_id = usuario
+        assert await _verificado_en(db_directa, user_id) is None
+        token = await _invitacion(db_directa, user_id)
+
+        r = await cliente.post(
+            "/api/v1/auth/invitation/accept",
+            json={
+                "token": token,
+                "nueva_password": "la passphrase que eligio la persona",  # pragma: allowlist secret
+            },
+        )
+
+        assert r.status_code == 200
+        assert await _verificado_en(db_directa, user_id) is not None
+
+    async def test_restablecer_la_contrasena_verifica_el_correo(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        email, user_id = usuario
+        token = await _recuperacion(db_directa, email)
+
+        r = await cliente.post(
+            "/api/v1/auth/password/reset",
+            json={
+                "token": token,
+                "nueva_password": "una passphrase larga de prueba",  # pragma: allowlist secret
+            },
+        )
+
+        assert r.status_code == 200
+        assert await _verificado_en(db_directa, user_id) is not None
+
+    async def test_no_pisa_una_verificacion_anterior(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        """La fecha original dice desde cuándo se confía en el correo; no se reescribe."""
+        email, user_id = usuario
+        await db_directa.execute(
+            text("""
+                UPDATE users SET email_verified_at = '2026-01-01T00:00:00Z' WHERE id = :u
+            """),
+            {"u": user_id},
+        )
+        await db_directa.commit()
+        antes = await _verificado_en(db_directa, user_id)
+        token = await _recuperacion(db_directa, email)
+
+        r = await cliente.post(
+            "/api/v1/auth/password/reset",
+            json={
+                "token": token,
+                "nueva_password": "una passphrase larga de prueba",  # pragma: allowlist secret
+            },
+        )
+
+        assert r.status_code == 200
+        assert await _verificado_en(db_directa, user_id) == antes
+
+    async def test_un_token_invalido_no_verifica(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usuario: tuple[str, str]
+    ) -> None:
+        """Solo un canje exitoso prueba el buzón; uno rechazado no puede dejar rastro."""
+        _email, user_id = usuario
+        await _invitacion(db_directa, user_id)
+
+        r = await cliente.post(
+            "/api/v1/auth/invitation/accept",
+            json={
+                "token": "no-es-el-token",
+                "nueva_password": "una passphrase larga de prueba",  # pragma: allowlist secret
+            },
+        )
+
+        assert r.status_code == 422
+        assert await _verificado_en(db_directa, user_id) is None
 
 
 class TestRequestId:

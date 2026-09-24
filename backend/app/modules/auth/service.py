@@ -476,6 +476,10 @@ async def _consumir_token_de_contrasena(
     if fila is None:
         raise TokenRecuperacionInvalido
 
+    # El token llegó al correo de la cuenta: canjearlo prueba el buzón, así que
+    # la dirección queda verificada. COALESCE conserva la fecha original si ya lo
+    # estaba. Sin esto ninguna cuenta se verifica por la aplicación y los avisos
+    # por correo quedan SKIPPED para siempre (ADR-0008).
     await session.execute(
         text("""
             UPDATE users
@@ -483,7 +487,8 @@ async def _consumir_token_de_contrasena(
                 password_changed_at = now(),
                 must_change_password = false,
                 failed_login_attempts = 0,
-                locked_until = NULL
+                locked_until = NULL,
+                email_verified_at = COALESCE(email_verified_at, now())
             WHERE id = :user_id
         """),
         {"hash": hash_password(nueva_password), "user_id": fila.user_id},

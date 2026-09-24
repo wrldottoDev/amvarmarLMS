@@ -42,7 +42,9 @@ nc -zv "$SMTP_HOST" "$SMTP_PORT"
 Una entrega en `SKIPPED` significa que el usuario no tiene correo verificado. Es
 deliberado: enviar a una dirección sin verificar filtraría el aviso a quien haya
 puesto un correo ajeno al registrarse. No hay nada que arreglar; si el usuario
-debería recibirlo, hay que verificar su correo.
+debería recibirlo, hay que verificar su correo. Hoy eso ocurre cuando la persona
+acepta su invitación o restablece su contraseña: canjear el enlace prueba que
+controla el buzón.
 
 ## Qué NO hacer
 
