@@ -59,6 +59,18 @@ def crear_celery() -> Celery:
             },
         },
         beat_schedule={
+            # Sin esto nadie procesa el outbox: los eventos quedan PENDING y no
+            # sale ningún aviso por cambio de estado, documento o despacho (se
+            # detectó en producción el 2026-09-25, con 5 eventos acumulados).
+            # Cada 10 s: el aviso llega casi en el momento. El reclamo del lote
+            # usa FOR UPDATE SKIP LOCKED, así que dos corridas que se pisen no
+            # procesan el mismo evento; `expires` evita que, con el worker
+            # caído, se acumule una cola de corridas viejas.
+            "process-outbox": {
+                "task": "outbox.procesar_pendientes",
+                "schedule": 10.0,
+                "options": {"expires": 10},
+            },
             "expire-document-exports-hourly": {
                 "task": "documents.expire_exports",
                 "schedule": 3600.0,

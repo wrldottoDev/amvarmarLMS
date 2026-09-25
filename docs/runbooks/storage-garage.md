@@ -77,8 +77,9 @@ El espejo del respaldo ocupa lo mismo que el bucket y crece con él: con el
 respaldo en la misma VPS, el disco guarda cada documento dos veces.
 
 `infra/backup/vigilar.sh` corre cada hora y manda un correo a `ALERTA_CORREO`
-(del `.env`) si el disco pasa del 90 %, o si el respaldo de la base o el de
-archivos no corrió bien en las últimas 26 h. Cada problema avisa como mucho una
+(del `.env`) si el disco pasa del 90 %, si el respaldo de la base o el de
+archivos no corrió bien en las últimas 26 h, o si hay avisos del outbox sin
+procesar hace más de 15 minutos (beat o worker caídos). Cada problema avisa como mucho una
 vez por día. Log: `/home/ubuntu/vigilar.log`.
 
 ```bash

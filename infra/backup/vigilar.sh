@@ -3,7 +3,9 @@
 # Vigilancia de la VPS, cada hora por cron. Manda un correo si:
 #   - el disco pasa de UMBRAL_DISCO (por defecto 90 %);
 #   - el respaldo de la base no dejó un volcado en las últimas 26 h;
-#   - el respaldo de archivos no terminó bien en las últimas 26 h.
+#   - el respaldo de archivos no terminó bien en las últimas 26 h;
+#   - hay avisos sin procesar hace más de 15 min en el outbox (beat o worker
+#     caídos: los clientes dejan de recibir avisos y nadie se entera).
 #
 # Un respaldo que falla en silencio es tan grave como no tenerlo: nadie lo
 # nota hasta que hace falta restaurar.
@@ -94,4 +96,24 @@ else
   resuelto respaldo-archivos
 fi
 
-echo "${ahora} ok: disco ${uso} %"
+# --- Outbox (avisos) ---
+pg_usuario="$(grep -E "^POSTGRES_USER=" "${COMPOSE_DIR}/.env" | tail -1 | cut -d= -f2- || true)"
+pg_base="$(grep -E "^POSTGRES_DB=" "${COMPOSE_DIR}/.env" | tail -1 | cut -d= -f2- || true)"
+atrasados="$(docker compose --project-directory "$COMPOSE_DIR" exec -T postgres \
+  psql -U "$pg_usuario" -d "$pg_base" -tAc \
+  "SELECT count(*) FROM outbox_events WHERE status = 'PENDING' AND created_at < now() - interval '15 minutes'" \
+  2>/dev/null | tr -dc '0-9')"
+if [[ -z "$atrasados" ]]; then
+  alertar outbox "No se pudo revisar la cola de avisos" "vigilar.sh no pudo consultar outbox_events: ¿está arriba postgres?
+
+Revisar: docker compose ps"
+elif (( atrasados > 0 )); then
+  alertar outbox "Hay ${atrasados} avisos sin enviar" "Hay ${atrasados} eventos del outbox pendientes hace más de 15 minutos: los clientes no están recibiendo avisos.
+
+Revisar que corran beat y worker: docker compose ps beat worker
+y sus logs: docker compose logs --since 30m beat worker"
+else
+  resuelto outbox
+fi
+
+echo "${ahora} ok: disco ${uso} %, avisos al día"
