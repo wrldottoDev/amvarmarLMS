@@ -10,12 +10,13 @@
 #
 # Variables:
 #   VPS_HOST     obligatoria. usuario@host de la VPS.
-#   MEDIA_REMOTO ruta en la VPS (por defecto la del inventario del Paso 0.3)
+#   MEDIA_REMOTO ruta en la VPS. Por defecto, la copia de /opt/respaldos: el
+#                sistema viejo (y su media original) se borró en el cutover.
 #   MEDIA_LOCAL  destino local (por defecto ./media-legacy)
 set -Eeuo pipefail
 
 : "${VPS_HOST:?falta VPS_HOST, por ejemplo ubuntu@203.0.113.10}"
-MEDIA_REMOTO="${MEDIA_REMOTO:-/home/ubuntu/amvarmar/amvarmarProduccion/media}"
+MEDIA_REMOTO="${MEDIA_REMOTO:-/opt/respaldos/legacy-20260924/media}"
 MEDIA_LOCAL="${MEDIA_LOCAL:-./media-legacy}"
 
 mkdir -p "$MEDIA_LOCAL"
