@@ -44,7 +44,7 @@ En `/opt/respaldos/legacy-final-AAAAMMDDTHHMM/`:
   hacer `count(*)` real de `auth_user`, `core_company`, `core_clientprofile`, `core_warehouse`,
   `core_piecewarehouse`, `core_dispatchrequest`, `core_dispatchrequestitem`, `core_warehousedocument`,
   `core_warehouseinvoice` y `core_dispatchbldocument`.
-- `media/`: `rsync -a --delete` sobre la copia de `/opt/respaldos/legacy-20260924/media` (solo trae lo
+- `media/`: `rsync -a` (sin `--delete`, para no perder nada de la copia anterior) sobre la copia de `/opt/respaldos/legacy-20260924/media` (solo trae lo
   nuevo) y un inventario sha256 nuevo de todos los archivos.
 
 ## C3 — Migrar desde cero
