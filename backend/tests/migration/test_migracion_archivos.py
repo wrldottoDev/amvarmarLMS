@@ -287,3 +287,38 @@ class TestVerificacion:
         reporte = await migrate_files.verificar(db_directa)
 
         assert any("no está en el storage" in f for f in reporte.faltantes)
+
+    async def test_una_subida_abandonada_se_lista_aparte_y_no_falla(
+        self, db_directa: AsyncSession, documento_legacy: dict
+    ) -> None:
+        """Una subida de la app que no terminó (UPLOADING, sin objeto) no es un
+        archivo perdido: se informa, pero no cuenta como faltante."""
+        await migrate_files.subir(db_directa, media_root=documento_legacy["media"], seco=False)
+        await db_directa.execute(
+            text("""
+                INSERT INTO documents
+                    (company_id, uploaded_by, storage_provider, storage_key,
+                     original_name, safe_name, media_type, size_bytes, sha256,
+                     upload_status, issued_by)
+                SELECT company_id, uploaded_by, 's3', 'abandonada/informe.pdf',
+                       'informe.pdf', 'informe.pdf', 'application/pdf', 1,
+                       :hash, 'UPLOADING', issued_by
+                FROM documents WHERE id = :id
+            """),
+            {"id": documento_legacy["id"], "hash": "0" * 64},
+        )
+        await db_directa.commit()
+
+        reporte = await migrate_files.verificar(db_directa)
+
+        assert not reporte.faltantes
+        assert any("informe.pdf: UPLOADING" in linea for linea in reporte.sin_terminar)
+
+    async def test_un_migrado_que_no_se_subio_es_faltante(
+        self, db_directa: AsyncSession, documento_legacy: dict
+    ) -> None:
+        """Sin correr la subida, el documento sigue apuntando al sistema viejo:
+        la verificación no puede darlo por bueno."""
+        reporte = await migrate_files.verificar(db_directa)
+
+        assert any("no se subió desde el sistema viejo" in f for f in reporte.faltantes)
