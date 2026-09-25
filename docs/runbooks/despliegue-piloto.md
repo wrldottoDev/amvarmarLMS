@@ -1,5 +1,9 @@
 # Despliegue del piloto en la VPS
 
+> **Histórico.** El piloto terminó con el cutover del 2026-09-25 (`infra/produccion/CUTOVER_VPS.md`):
+> el LMS es el sistema oficial en `app.amvarmar.com` y el storage es Garage. Los sitios `piloto-*`
+> ya no existen.
+
 El LMS corre **en paralelo** con el sistema viejo, en la misma VPS, con una **copia** de sus datos. El
 sistema viejo sigue siendo el oficial: nada de este runbook toca su base, sus archivos ni su configuración
 de nginx, salvo agregar dos sitios nuevos.
@@ -126,8 +130,8 @@ docker compose run --rm -v $M:/media-legacy:ro backend python -m scripts.migrate
 
 ## Storage
 
-El storage es Garage (MinIO archivó su código y dejó de publicar parches). La migración desde MinIO
-y el respaldo diario de los archivos están en `docs/runbooks/migrar-storage-garage.md`.
+El storage es Garage (MinIO archivó su código y dejó de publicar parches). Su operación, el respaldo
+diario de los archivos y la historia de la migración desde MinIO están en `docs/runbooks/storage-garage.md`.
 
 ## 7. Pruebas de humo
 

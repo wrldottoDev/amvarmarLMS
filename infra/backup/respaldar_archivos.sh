@@ -20,7 +20,7 @@
 #   COMPOSE_DIR=/opt/amvarmar-lms/infra/produccion BACKUP_DIR=/opt/respaldos/archivos \
 #     /opt/amvarmar-lms/infra/backup/respaldar_archivos.sh
 #
-# Restaurar (todo el bucket, o una carpeta): ver docs/runbooks/migrar-storage-garage.md.
+# Restaurar (todo el bucket, o una carpeta): ver docs/runbooks/storage-garage.md.
 set -Eeuo pipefail
 
 : "${COMPOSE_DIR:?falta COMPOSE_DIR (la carpeta con el docker-compose.yml y el .env)}"
