@@ -71,8 +71,16 @@ tabla `documents`.
 
 Después de restaurar: `migrate_files --verificar` (ver "Estado y diagnóstico").
 
-## Espacio en disco
+## Espacio en disco y alertas
 
 El espejo del respaldo ocupa lo mismo que el bucket y crece con él: con el
-respaldo en la misma VPS, el disco guarda cada documento dos veces. Revisar
-`df -h /` y el final de `/home/ubuntu/respaldo-archivos.log`.
+respaldo en la misma VPS, el disco guarda cada documento dos veces.
+
+`infra/backup/vigilar.sh` corre cada hora y manda un correo a `ALERTA_CORREO`
+(del `.env`) si el disco pasa del 90 %, o si el respaldo de la base o el de
+archivos no corrió bien en las últimas 26 h. Cada problema avisa como mucho una
+vez por día. Log: `/home/ubuntu/vigilar.log`.
+
+```bash
+# 0 * * * * COMPOSE_DIR=/opt/amvarmar-lms/infra/produccion /opt/amvarmar-lms/infra/backup/vigilar.sh >> /home/ubuntu/vigilar.log 2>&1
+```

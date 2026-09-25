@@ -77,3 +77,5 @@ find "${BACKUP_DIR}/cambios" -mindepth 1 -maxdepth 1 -type d -empty -delete
 objetos="$(find "${BACKUP_DIR}/actual" -type f | wc -l)"
 tamano="$(du -sh "${BACKUP_DIR}/actual" | cut -f1)"
 echo "== OK: ${objetos} objetos, ${tamano} en ${BACKUP_DIR}/actual"
+# Marca de éxito para infra/backup/vigilar.sh: si no se renueva en un día, avisa.
+touch "${BACKUP_DIR}/ultimo-ok"
