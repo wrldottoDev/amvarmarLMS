@@ -48,6 +48,9 @@ class Reporte:
     faltantes: list[str] = field(default_factory=list)
     discrepancias: list[str] = field(default_factory=list)
     bytes_subidos: int = 0
+    # Subidas de la app que no terminaron (UPLOADING/PROCESSING/FAILED): no
+    # son archivos perdidos, así que no hacen fallar la verificación.
+    sin_terminar: list[str] = field(default_factory=list)
 
     def imprimir(self, *, seco: bool) -> None:
         titulo = "SIMULACIÓN (no se subió nada)" if seco else "SUBIDA COMPLETA"
@@ -201,12 +204,39 @@ async def verificar(session: AsyncSession) -> Reporte:
     dice de sí misma no probaría nada.
     """
     reporte = Reporte()
+
+    # Migrados que todavía no se subieron: siguen apuntando al servidor viejo.
+    for pendiente in await _pendientes(session):
+        reporte.faltantes.append(
+            f"{pendiente['original_name']}: no se subió desde el sistema viejo"
+        )
+
+    # Solo los que la app da por completos (READY). Una subida que el usuario
+    # abandonó queda en UPLOADING sin objeto en el storage, y eso no es una
+    # pérdida: se lista aparte.
+    for incompleta in (
+        await session.execute(
+            text("""
+                SELECT original_name, upload_status, created_at
+                FROM documents
+                WHERE storage_provider = 's3' AND deleted_at IS NULL
+                  AND upload_status <> 'READY'
+                ORDER BY created_at
+            """)
+        )
+    ).all():
+        reporte.sin_terminar.append(
+            f"{incompleta.original_name}: {incompleta.upload_status} "
+            f"desde {incompleta.created_at:%Y-%m-%d %H:%M}"
+        )
+
     filas = (
         await session.execute(
             text("""
                 SELECT id, storage_key, sha256, size_bytes, original_name
                 FROM documents
                 WHERE storage_provider = 's3' AND deleted_at IS NULL
+                  AND upload_status = 'READY'
                 ORDER BY created_at
             """)
         )
@@ -284,6 +314,10 @@ async def principal() -> None:
             print(f"  discrepancias:{len(reporte.discrepancias)}")
             for linea in (reporte.faltantes + reporte.discrepancias)[:30]:
                 print(f"  - {linea}")
+            if reporte.sin_terminar:
+                print(f"  subidas sin terminar (no se verifican): {len(reporte.sin_terminar)}")
+                for linea in reporte.sin_terminar[:30]:
+                    print(f"  · {linea}")
         else:
             reporte = await subir(
                 session,
