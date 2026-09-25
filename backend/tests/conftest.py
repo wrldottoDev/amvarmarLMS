@@ -193,52 +193,91 @@ async def db_directa(migrated_database: str) -> AsyncGenerator[AsyncSession]:
     await engine.dispose()
 
 
-@pytest.fixture(scope="session")
-def minio_container() -> Generator["DockerContainer"]:
-    """MinIO efímero para los tests de storage.
+# Credenciales fijas del Garage de prueba: `garage key import` exige el
+# formato de Garage (GK + 24 hex, secreto de 64 hex).
+_GARAGE_KEY_ID = "GK000000000000000000000001"
+_GARAGE_SECRETO = "0" * 63 + "1"
+_GARAGE_TOML = """
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "{secreto_rpc}"
 
-    Se usa `DockerContainer` genérico en vez de `testcontainers.minio` para no
-    sumar la dependencia `minio` solo por levantar el contenedor: el proyecto
-    habla S3 por boto3, no por el SDK de MinIO.
+[s3_api]
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900"
+"""
+
+
+@pytest.fixture(scope="session")
+def storage_container(tmp_path_factory: pytest.TempPathFactory) -> Generator["DockerContainer"]:
+    """Garage efímero para los tests de storage: el mismo que en producción.
+
+    `DockerContainer` genérico: el proyecto habla S3 por boto3 y no necesita
+    el SDK de ningún proveedor. La imagen se puede cambiar con
+    `STORAGE_IMAGEN` para probar una versión nueva antes de actualizar.
     """
+    import secrets
     import time
     import urllib.error
     import urllib.request
 
     from testcontainers.core.container import DockerContainer
 
-    # MinIO ya no publica imágenes: en una máquina nueva hay que construir
-    # infra/minio y apuntar acá (MINIO_IMAGEN=amvarmar-minio:RELEASE...).
+    config = tmp_path_factory.mktemp("garage") / "garage.toml"
+    config.write_text(_GARAGE_TOML.format(secreto_rpc=secrets.token_hex(32)))
+
     contenedor = (
-        DockerContainer(os.environ.get("MINIO_IMAGEN", "minio/minio:latest"))
-        .with_command("server /data")
-        .with_env("MINIO_ROOT_USER", "pruebas")
-        .with_env("MINIO_ROOT_PASSWORD", "pruebas-secreto-largo")
-        .with_exposed_ports(9000)
+        DockerContainer(os.environ.get("STORAGE_IMAGEN", "dxflrs/garage:v2.4.1"))
+        .with_volume_mapping(str(config), "/etc/garage.toml", "ro")
+        .with_exposed_ports(3900)
     )
+
+    def garage(*args: str) -> str:
+        codigo, salida = contenedor.exec(["/garage", *args])
+        if codigo != 0:
+            raise RuntimeError(f"garage {' '.join(args)}: {salida.decode()}")
+        return str(salida.decode())
+
     with contenedor:
-        # Se espera al endpoint de salud y no a un mensaje de log: el formato
-        # de los logs de MinIO cambia entre versiones, el health check no.
-        salud = (
-            f"http://{contenedor.get_container_host_ip()}:"
-            f"{contenedor.get_exposed_port(9000)}/minio/health/live"
-        )
         limite = time.monotonic() + 60
         while True:
             try:
-                with urllib.request.urlopen(salud, timeout=2):
-                    break
+                nodo = garage("node", "id", "-q").strip().splitlines()[-1].split("@")[0]
+                break
+            except RuntimeError:
+                if time.monotonic() > limite:
+                    raise TimeoutError("Garage no arrancó.") from None
+                time.sleep(0.5)
+
+        # Un nodo solo: sin layout, Garage no acepta escrituras.
+        garage("layout", "assign", "-z", "dc1", "-c", "1G", nodo)
+        garage("layout", "apply", "--version", "1")
+        garage("key", "import", "--yes", "-n", "pruebas", _GARAGE_KEY_ID, _GARAGE_SECRETO)
+        garage("key", "allow", "--create-bucket", "pruebas")
+
+        # La API S3 responde 403 sin firma: cualquier respuesta HTTP es "listo".
+        api = f"http://{contenedor.get_container_host_ip()}:{contenedor.get_exposed_port(3900)}/"
+        while True:
+            try:
+                urllib.request.urlopen(api, timeout=2)  # nosec B310 - URL local del contenedor de prueba
+                break
+            except urllib.error.HTTPError:
+                break
             except (urllib.error.URLError, OSError):
                 if time.monotonic() > limite:
-                    raise TimeoutError("MinIO no respondió al health check.") from None
+                    raise TimeoutError("La API S3 de Garage no respondió.") from None
                 time.sleep(0.5)
 
         yield contenedor
 
 
 @pytest.fixture
-def storage_de_prueba(minio_container: "DockerContainer") -> Generator[str]:
-    """Apunta el módulo de storage al MinIO efímero y crea un bucket limpio.
+def storage_de_prueba(storage_container: "DockerContainer") -> Generator[str]:
+    """Apunta el módulo de storage al Garage efímero y crea un bucket limpio.
 
     Se limpian las cachés de `Settings` y del cliente boto3 antes y después:
     ambas son `lru_cache` y arrastrarían la configuración de otro test.
@@ -249,8 +288,8 @@ def storage_de_prueba(minio_container: "DockerContainer") -> Generator[str]:
     from app.infrastructure.storage import s3
 
     bucket = f"pruebas-{_uuid.uuid4().hex[:12]}"
-    host = minio_container.get_container_host_ip()
-    puerto = minio_container.get_exposed_port(9000)
+    host = storage_container.get_container_host_ip()
+    puerto = storage_container.get_exposed_port(3900)
 
     anteriores = {
         "S3_ENDPOINT_URL": os.environ.get("S3_ENDPOINT_URL"),
@@ -259,8 +298,8 @@ def storage_de_prueba(minio_container: "DockerContainer") -> Generator[str]:
         "S3_BUCKET": os.environ.get("S3_BUCKET"),
     }
     os.environ["S3_ENDPOINT_URL"] = f"http://{host}:{puerto}"
-    os.environ["S3_ACCESS_KEY"] = "pruebas"
-    os.environ["S3_SECRET_KEY"] = "pruebas-secreto-largo"
+    os.environ["S3_ACCESS_KEY"] = _GARAGE_KEY_ID
+    os.environ["S3_SECRET_KEY"] = _GARAGE_SECRETO
     os.environ["S3_BUCKET"] = bucket
 
     get_settings.cache_clear()

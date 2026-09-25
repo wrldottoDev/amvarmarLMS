@@ -31,29 +31,39 @@ services:
       timeout: 3s
       retries: 10
 
-  minio:
-    # MinIO ya no publica imágenes: se compila la última versión comunitaria
-    # desde el código (infra/minio). Sin parches de seguridad: migrar a un
-    # storage S3 mantenido antes del cutover.
-    build:
-      context: ../minio
-    image: amvarmar-minio:RELEASE.2025-10-15T17-29-55Z
+  garage:
+    # Storage S3, el mismo que en producción (infra/garage). Primera vez: ver
+    # los pasos junto a GARAGE_RPC_SECRET en backend/.env.example.
+    image: dxflrs/garage:v2.4.1
     restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?falta GARAGE_RPC_SECRET en .env (infra/garage/generar_claves.sh)}
+    ports:
+      - "9000:3900" # API S3, en el mismo puerto que usaba MinIO
+    volumes:
+      - ../garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # MinIO, solo para copiar a Garage lo que haya quedado en él:
+  #   docker compose --profile minio-viejo up -d minio
+  minio:
+    image: amvarmar-minio:RELEASE.2025-10-15T17-29-55Z
+    profiles: ["minio-viejo"]
+    restart: "no"
+    # El volumen local lo creó la imagen oficial de MinIO, que corría como root.
+    user: "0:0"
+    command: ["server", "/data"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-amvarmar}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD en .env}
-    ports:
-      - "9000:9000" # API S3
-      - "9001:9001" # consola web
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
     volumes:
       - minio-data:/data
-    healthcheck:
-      # La imagen propia no trae `mc`: se consulta el endpoint de salud.
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
 
   # El worker de Celery no se define acá: corre desde el backend con
   # `celery -A app.workers.app.celery_app worker`. Levantarlo en compose
@@ -178,4 +188,6 @@ volumes:
   prometheus-data:
   grafana-data:
   redis-data:
+  garage-meta:
+  garage-data:
   minio-data:

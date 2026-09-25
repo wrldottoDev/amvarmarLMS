@@ -2,7 +2,7 @@
 #
 # Convive con el sistema viejo en la misma máquina: nada escucha en una
 # interfaz pública. Todo se publica en 127.0.0.1 y el nginx del host es la
-# única entrada (app.amvarmar.com y archivos.amvarmar.com, ver `nginx/`).
+# única entrada (app.amvarmar.com, con el bucket en /amvarmar-documentos/).
 # Los puertos de host se eligen lejos de los habituales para no chocar con lo
 # que ya corre; se cambian en `.env` si alguno está tomado.
 #
@@ -33,7 +33,7 @@ x-backend: &backend
       condition: service_healthy
     redis:
       condition: service_healthy
-    minio:
+    garage:
       condition: service_healthy
 
 services:
@@ -67,33 +67,42 @@ services:
       timeout: 3s
       retries: 10
 
-  minio:
-    # MinIO ya no publica imágenes: se compila la última versión comunitaria
-    # desde el código (infra/minio). Sin parches de seguridad: migrar a un
-    # storage S3 mantenido antes del cutover.
-    build:
-      context: ../minio
-    image: amvarmar-minio:RELEASE.2025-10-15T17-29-55Z
+  garage:
+    # Storage S3 (reemplaza a MinIO: ver docs/runbooks/migrar-storage-garage.md).
+    # Configuración en infra/garage/garage.toml; claves, layout y bucket con
+    # infra/garage/inicializar.sh.
+    image: dxflrs/garage:v2.4.1
     restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?falta MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta MINIO_ROOT_PASSWORD}
-      # El navegador sube y descarga directo con URLs firmadas: solo el
-      # frontend propio puede hacerlo desde JavaScript.
-      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_BASE_URL:?falta FRONTEND_BASE_URL}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?falta GARAGE_RPC_SECRET (infra/garage/generar_claves.sh)}
     ports:
-      - "127.0.0.1:${PUERTO_MINIO:-59000}:9000"
-      # Consola web: solo por túnel SSH, nunca publicada en nginx.
-      - "127.0.0.1:${PUERTO_MINIO_CONSOLA:-59001}:9001"
+      # Solo local: nginx publica el bucket en /amvarmar-documentos/.
+      - "127.0.0.1:${PUERTO_STORAGE:-59010}:3900"
+    volumes:
+      - ../garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      # La imagen no trae shell ni curl: el propio binario consulta el nodo.
+      test: ["CMD", "/garage", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # MinIO, solo mientras dure la migración de objetos a Garage. Sin puertos
+  # publicados: rclone lo lee por la red del compose. Se borra (servicio,
+  # imagen y volumen) después de verificar la copia.
+  #   docker compose --profile minio-viejo up -d minio
+  minio:
+    image: amvarmar-minio:RELEASE.2025-10-15T17-29-55Z
+    profiles: ["minio-viejo"]
+    restart: "no"
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-amvarmar}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
     volumes:
       - minio-data:/data
-    healthcheck:
-      # La imagen propia no trae `mc`: se consulta el endpoint de salud.
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
 
   backend:
     <<: *backend
@@ -176,4 +185,7 @@ volumes:
   pgdata:
   pgdata-legacy:
   redis-data:
+  garage-meta:
+  garage-data:
+  # Solo durante la migración a Garage.
   minio-data:

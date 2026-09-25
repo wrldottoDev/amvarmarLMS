@@ -1,0 +1,29 @@
+# Garage: el storage S3 del LMS (reemplaza a MinIO, que archivó su código y
+# dejó de publicar parches). Un solo nodo, sin réplicas: la copia de seguridad
+# de los objetos es infra/backup/respaldar_archivos.sh.
+#
+# Sin secretos acá: `rpc_secret` llega por la variable GARAGE_RPC_SECRET del
+# compose. La API de administración no se habilita; todo se hace con la CLI
+# (`docker compose exec garage /garage ...`).
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+# SQLite y no LMDB: LMDB puede corromperse ante un apagado brusco de la VPS, y
+# con el volumen de este sistema la diferencia de rendimiento no se nota.
+db_engine = "sqlite"
+# Una foto de la metadata cada 6 h, dentro del mismo volumen: si la base de
+# metadata se corrompe, se recupera desde ahí sin perder los objetos.
+metadata_auto_snapshot_interval = "6h"
+metadata_fsync = true
+data_fsync = true
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+# La misma región que S3_REGION: forma parte de la firma de las URLs.
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900"

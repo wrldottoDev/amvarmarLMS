@@ -4,7 +4,7 @@
 
 ## Qué significa
 
-MinIO/S3 no devuelve los objetos. Los efectos se ven en dos lados: las subidas
+El storage (Garage) no devuelve los objetos. Los efectos se ven en dos lados: las subidas
 quedan a medias —el documento existe en la base pero el objeto no— y las
 descargas fallan aunque el documento figure como disponible.
 
@@ -15,8 +15,11 @@ subirse.
 ## Diagnóstico
 
 ```bash
-# ¿El storage responde?
-curl -fsS "$S3_ENDPOINT_URL/minio/health/live"
+# ¿El storage responde? (en infra/produccion)
+docker compose ps garage
+docker compose exec garage /garage status
+# Sin firma, el bucket tiene que contestar 403 con XML de Garage (no 502):
+curl -s -o /dev/null -w "%{http_code}\n" "$S3_ENDPOINT_URL/amvarmar-documentos/"
 
 # ¿El worker está vivo?
 celery -A app.workers.app.celery_app inspect active
