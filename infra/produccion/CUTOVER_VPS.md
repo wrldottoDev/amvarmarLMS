@@ -124,7 +124,8 @@ sudo ln -s /etc/nginx/sites-available/produccion-app.amvarmar.com.conf /etc/ngin
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-El storage sigue en `https://app.amvarmar.com:2053` (`piloto-storage-2053.conf` queda activo).
+El storage pasa al mismo origen: `S3_ENDPOINT_URL=https://app.amvarmar.com` (ruta `/amvarmar-documentos/`
+en el sitio final). `piloto-storage-2053.conf` puede quedar activo mientras tanto, pero ya no se usa.
 
 ## C6 — Pruebas en producción
 
