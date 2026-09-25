@@ -285,6 +285,9 @@ async def procesar_factura_ocr(
     )
 
     advertencias: list[str] = []
+    if descripcion.es_factura is False:
+        tipo = descripcion.tipo_documento or "otro tipo de documento"
+        advertencias.append(f"Este documento no parece una factura: parece {tipo}.")
     if not descripcion.numero_guia:
         advertencias.append("No pude leer el número de factura de este documento.")
     if not descripcion.proveedor:

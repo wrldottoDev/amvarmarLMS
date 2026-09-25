@@ -44,6 +44,13 @@ class DescripcionFactura:
     monto: float | None
     moneda: str | None
     cliente: str | None
+    # Qué es el archivo, para que AMVI pueda hablar de cualquier adjunto y no
+    # solo de facturas: sin esto, un informe o una foto devolvía todo `None`
+    # y AMVI solo podía decir "no se pudo leer". Con default para que los
+    # dobles de prueba que solo arman una factura no cambien.
+    es_factura: bool | None = None
+    tipo_documento: str | None = None
+    resumen: str | None = None
 
 
 @dataclass(frozen=True)
@@ -276,9 +283,13 @@ class ProveedorOpenAI:
                             {
                                 "type": "input_text",
                                 "text": (
-                                    "Extraé de esta factura: número de guía, proveedor, "
-                                    "monto, moneda y cliente. Si un dato no aparece, "
-                                    "dejalo en null — no lo inventes."
+                                    "Decí qué es este archivo (tipo_documento, en "
+                                    "español, y un resumen de 1 a 3 oraciones con lo "
+                                    "que se ve), si es una factura comercial "
+                                    "(es_factura) y, si trae esos datos, extraé: "
+                                    "número de guía, proveedor, monto, moneda y "
+                                    "cliente. Si un dato no aparece, dejalo en null — "
+                                    "no lo inventes."
                                 ),
                             },
                             parte_archivo,
@@ -298,6 +309,9 @@ class ProveedorOpenAI:
                                 "monto": {"type": ["number", "null"]},
                                 "moneda": {"type": ["string", "null"]},
                                 "cliente": {"type": ["string", "null"]},
+                                "es_factura": {"type": "boolean"},
+                                "tipo_documento": {"type": ["string", "null"]},
+                                "resumen": {"type": ["string", "null"]},
                             },
                             "required": [
                                 "numero_guia",
@@ -305,6 +319,9 @@ class ProveedorOpenAI:
                                 "monto",
                                 "moneda",
                                 "cliente",
+                                "es_factura",
+                                "tipo_documento",
+                                "resumen",
                             ],
                             "additionalProperties": False,
                         },
@@ -327,4 +344,7 @@ class ProveedorOpenAI:
             monto=datos["monto"],
             moneda=datos["moneda"],
             cliente=datos["cliente"],
+            es_factura=datos["es_factura"],
+            tipo_documento=datos["tipo_documento"],
+            resumen=datos["resumen"],
         )

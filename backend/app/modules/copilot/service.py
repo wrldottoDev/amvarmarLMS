@@ -277,7 +277,9 @@ async def procesar_turno(
                     + (
                         f"De ahí se leyó: {json.dumps(datos, ensure_ascii=False)}. "
                         "Son datos leídos por OCR, no verificados: trátalos como lo que "
-                        "dice el papel, no como un hecho confirmado."
+                        "dice el papel, no como un hecho confirmado. Si `es_factura` es "
+                        "false, contá qué es el archivo con `tipo_documento` y `resumen` "
+                        "y no propongas registrar una carga con él."
                         if datos
                         else "No se pudo leer ningún dato del archivo; decímelo así en vez "
                         "de inventar valores."

@@ -467,6 +467,52 @@ class TestRespond:
         entrada = json.dumps(proveedor.entradas[0], ensure_ascii=False)
         assert "inventar" in entrada
 
+    async def test_un_adjunto_que_no_es_factura_llega_descrito(
+        self, cliente: AsyncClient, db_directa: AsyncSession, usar_proveedor
+    ) -> None:
+        """Un informe o una foto no traen datos de factura, pero AMVI tiene
+        que poder decir qué son en vez de "no se pudo leer"."""
+        await sembrar_rbac(db_directa)
+        _actor, email = await _usuario_interno(db_directa)
+        await db_directa.commit()
+        headers = await _autenticar(cliente, email)
+
+        proveedor = _ProveedorFalso(
+            guion=[_texto("Es un informe de inventario.")],
+            lectura=DescripcionFactura(
+                numero_guia=None,
+                proveedor=None,
+                monto=None,
+                moneda=None,
+                cliente=None,
+                es_factura=False,
+                tipo_documento="informe de inventario",
+                resumen="Tabla con existencias por bodega a septiembre.",
+            ),
+        )
+        usar_proveedor(proveedor)
+
+        with _clave_openai("sk-test-no-se-usa"):
+            resp = await cliente.post(
+                "/api/v1/copilot/respond",
+                headers=headers,
+                json={
+                    "mensajes": [{"rol": "user", "contenido": "¿qué es esto?"}],
+                    "conversacion_id": "conv-informe",
+                    "adjunto": {
+                        "nombre": "informe.pdf",
+                        "media_type": "application/pdf",
+                        "contenido_base64": base64.b64encode(b"%PDF-1.4 falso").decode(),
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        entrada = json.dumps(proveedor.entradas[0], ensure_ascii=False)
+        assert "informe de inventario" in entrada
+        assert "existencias por bodega" in entrada
+        assert "No se pudo leer ningún dato" not in entrada
+
     async def test_un_cliente_no_puede_adjuntar(
         self, cliente: AsyncClient, db_directa: AsyncSession, usar_proveedor
     ) -> None:
