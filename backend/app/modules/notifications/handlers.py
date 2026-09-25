@@ -9,13 +9,16 @@ defensa es `dedup_key`, que se deriva del propio evento del outbox y por lo
 tanto es estable entre reintentos.
 """
 
+import gzip
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.infrastructure.storage import s3
 from app.modules.audit.outbox import EventoPendiente
 from app.modules.dispatches.models import DispatchStatus
+from app.modules.notifications import email as correo
 from app.modules.notifications import service
 from app.modules.shipments import service as cargas
 from app.modules.shipments.models import ShipmentStatus
@@ -23,16 +26,19 @@ from app.modules.shipments.models import ShipmentStatus
 # Estados de carga que ADR-0008 marca como aviso crítico propio. El resto cae
 # en `shipment.status_changed`, que es el avance rutinario.
 _EVENTO_POR_ESTADO: dict[str, str] = {
+    ShipmentStatus.IN_TRANSIT: "shipment.in_transit",
+    ShipmentStatus.RECEIVED: "shipment.received",
     ShipmentStatus.STORED: "shipment.stored",
+    ShipmentStatus.DISPATCH_REQUESTED: "shipment.dispatch_requested",
+    ShipmentStatus.PREPARING: "shipment.preparing",
     ShipmentStatus.DISPATCHED: "shipment.dispatched",
     ShipmentStatus.DELIVERED: "shipment.delivered",
+    ShipmentStatus.CANCELLED: "shipment.cancelled",
 }
 
-# Retrocesos, cancelación, reapertura y reversión son "correcciones
-# importantes" (evento crítico 7 de ADR-0008), no avance normal.
-_ESTADOS_DE_CORRECCION: frozenset[str] = frozenset(
-    {ShipmentStatus.CANCELLED, ShipmentStatus.PRE_ALERT}
-)
+# Volver a prealerta es una corrección importante (evento crítico 7 de
+# ADR-0008), no avance normal.
+_ESTADOS_DE_CORRECCION: frozenset[str] = frozenset({ShipmentStatus.PRE_ALERT})
 
 # Estados de despacho con aviso propio. El BL se notifica por su evento READY,
 # no por completar: son hechos distintos y pueden ocurrir en cualquier orden.
@@ -90,17 +96,30 @@ async def _numero_de_solicitud(session: AsyncSession, dispatch_id: UUID) -> str 
     return numero
 
 
-def _codigo_de_transicion(desde: str, hacia: str) -> str:
-    if hacia in _EVENTO_POR_ESTADO:
-        return _EVENTO_POR_ESTADO[hacia]
+# El recorrido normal, en orden: sirve para reconocer un retroceso.
+_RECORRIDO: tuple[str, ...] = (
+    ShipmentStatus.PRE_ALERT,
+    ShipmentStatus.IN_TRANSIT,
+    ShipmentStatus.RECEIVED,
+    ShipmentStatus.STORED,
+    ShipmentStatus.DISPATCH_REQUESTED,
+    ShipmentStatus.PREPARING,
+    ShipmentStatus.DISPATCHED,
+    ShipmentStatus.DELIVERED,
+)
 
-    # Un retroceso se reconoce por el destino, no por comparar posiciones: el
-    # catálogo de transiciones ya define cuáles exigen justificación, y esos
-    # son los que el cliente necesita ver explicados.
-    if hacia in _ESTADOS_DE_CORRECCION:
+
+def _codigo_de_transicion(desde: str, hacia: str) -> str:
+    # Un retroceso (almacenada que vuelve a recibida, reapertura, reversión) es
+    # una corrección: avisarlo como "Recibimos su carga" confundiría al cliente.
+    if (
+        desde in _RECORRIDO
+        and hacia in _RECORRIDO
+        and _RECORRIDO.index(hacia) < _RECORRIDO.index(desde)
+    ) or hacia in _ESTADOS_DE_CORRECCION:
         return "shipment.corrected"
 
-    return "shipment.status_changed"
+    return _EVENTO_POR_ESTADO.get(hacia, "shipment.status_changed")
 
 
 async def _avisar_lista_para_despachar(
@@ -128,6 +147,11 @@ async def cambio_de_estado_de_carga(session: AsyncSession, evento: EventoPendien
     empresa, referencia = carga
     hacia = str(evento.payload.get("hacia", ""))
 
+    # Alta directa en un estado posterior: solo avisa el último paso.
+    hasta = evento.payload.get("registro_inicial_hasta")
+    if hasta is not None and hasta != hacia:
+        return
+
     # Almacenada y sin nada pendiente: el aviso útil es "ya puede despachar", no
     # dos correos seguidos ("en bodega" y "lista") por el mismo hecho.
     if hacia == ShipmentStatus.STORED and await cargas.lista_para_despachar(
@@ -149,6 +173,30 @@ async def cambio_de_estado_de_carga(session: AsyncSession, evento: EventoPendien
         referencia=referencia,
         # El id del evento del outbox es único por cambio de estado, así que
         # sirve de clave estable: reintentar no genera un segundo aviso.
+        dedup_key=f"outbox:{evento.id}",
+    )
+
+
+async def carga_creada(session: AsyncSession, evento: EventoPendiente) -> None:
+    """Aviso de carga nueva, solo si nació en prealerta.
+
+    Si Operaciones la dio de alta en un estado posterior, el aviso es el de ese
+    estado y lo manda `cambio_de_estado_de_carga`: dos correos por el mismo
+    hecho serían ruido.
+    """
+    if evento.payload.get("estado_inicial") != ShipmentStatus.PRE_ALERT:
+        return
+    carga = await _carga(session, evento.aggregate_id)
+    if carga is None:
+        return
+    empresa, referencia = carga
+    await service.notificar(
+        session,
+        event_code="shipment.pre_alerted",
+        destinatarios=await service.destinatarios_de_empresa(session, empresa),
+        resource_type="shipment",
+        resource_id=evento.aggregate_id,
+        referencia=referencia,
         dedup_key=f"outbox:{evento.id}",
     )
 
@@ -212,8 +260,60 @@ async def solicitud_de_despacho_creada(session: AsyncSession, evento: EventoPend
     )
 
 
+async def _adjunto_del_documento(
+    session: AsyncSession, document_id: UUID
+) -> tuple[list[correo.Adjunto], str]:
+    """El PDF para adjuntar y la frase que lo acompaña en el correo.
+
+    Se lee del storage UNA vez por evento y se reusa para todos los
+    destinatarios. Por encima de `TOPE_ADJUNTOS_BYTES` no se adjunta: el correo
+    dice por qué y el archivo se descarga desde el sistema.
+    """
+    doc = (
+        await session.execute(
+            text("""
+                SELECT original_name, media_type, storage_key
+                FROM documents WHERE id = :d
+            """),
+            {"d": document_id},
+        )
+    ).one()
+
+    sin_adjunto = "Puede descargarlo desde el sistema."
+    try:
+        tamano = (await s3.describir_objeto(doc.storage_key)).size_bytes
+    except s3.ObjetoNoEncontrado:
+        # No debería pasar con un documento READY. Si pasa, el aviso sale igual:
+        # reintentar para siempre no traería el archivo de vuelta.
+        return [], sin_adjunto
+
+    if tamano > correo.TOPE_ADJUNTOS_BYTES:
+        megas = tamano / (1024 * 1024)
+        return [], (
+            f"El archivo ({doc.original_name}, {megas:.1f} MB) es demasiado grande para "
+            "adjuntarlo: descárguelo desde el sistema."
+        )
+
+    contenido = bytearray()
+    async for fragmento in s3.iterar_chunks(doc.storage_key):
+        contenido.extend(fragmento)
+    datos = bytes(contenido)
+    # Un documento archivado (ADR-0007) se guarda comprimido con gzip como
+    # `Content-Encoding`: el navegador lo descomprime solo, el correo no.
+    if datos[:2] == b"\x1f\x8b" and doc.media_type != "application/gzip":
+        datos = gzip.decompress(datos)
+
+    return [correo.Adjunto(doc.original_name, doc.media_type, datos)], (
+        f"Adjuntamos el Bill of Lading ({doc.original_name})."
+    )
+
+
 async def documento_de_despacho_listo(session: AsyncSession, evento: EventoPendiente) -> None:
-    """Avisa por el BL cuando sus bytes están READY, no por cerrar el despacho."""
+    """Avisa por el BL cuando sus bytes están READY, no por cerrar el despacho.
+
+    Adjunta el PDF (enmienda de ADR-0008 del 2026-09-25), como el sistema
+    anterior, salvo que supere el tope.
+    """
     if str(evento.payload.get("document_type_code", "")).upper() != "BL":
         return
 
@@ -233,6 +333,8 @@ async def documento_de_despacho_listo(session: AsyncSession, evento: EventoPendi
     if fila is None:
         return
 
+    adjuntos, nota = await _adjunto_del_documento(session, evento.aggregate_id)
+
     await service.notificar(
         session,
         event_code="dispatch.bol_available",
@@ -241,6 +343,8 @@ async def documento_de_despacho_listo(session: AsyncSession, evento: EventoPendi
         resource_id=fila.id,
         referencia=fila.dispatch_number,
         dedup_key=f"outbox:{evento.id}",
+        adjuntos=adjuntos,
+        nota=nota,
     )
 
 
@@ -278,6 +382,7 @@ async def documento_rechazado(session: AsyncSession, evento: EventoPendiente) ->
 # declara acá, junto a los manejadores, para que agregar un evento nuevo sea
 # tocar un solo archivo.
 POR_EVENTO = {
+    "shipment.created": carga_creada,
     "shipment.status_changed": cambio_de_estado_de_carga,
     "dispatch.status_changed": cambio_de_estado_de_despacho,
     "dispatch.created": solicitud_de_despacho_creada,

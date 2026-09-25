@@ -323,12 +323,22 @@ async def transicionar(
     #    no queda ni el cambio de estado ni la notificación pendiente. La clave
     #    de deduplicación usa la versión resultante: es única por cambio, así
     #    que un reintento del endpoint no genera dos avisos.
+    payload: dict[str, object] = {
+        "desde": desde,
+        "hacia": datos.to_status,
+        "actor_user_id": str(actor_user_id),
+    }
+    # Alta directa en un estado posterior: se recorren los intermedios, pero al
+    # cliente le interesa un solo aviso, el del estado en que quedó. El
+    # manejador del outbox usa esto para saltear los pasos intermedios.
+    if datos.metadatos.get("initial_registration"):
+        payload["registro_inicial_hasta"] = datos.metadatos.get("initial_target")
     await publicar(
         session,
         aggregate_type="shipment",
         aggregate_id=shipment_id,
         event_type="shipment.status_changed",
-        payload={"desde": desde, "hacia": datos.to_status, "actor_user_id": str(actor_user_id)},
+        payload=payload,
         dedup_key=f"shipment:{shipment_id}:v{nueva_version}",
     )
 

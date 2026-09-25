@@ -1,9 +1,11 @@
 {{ asunto }}
 
 {{ mensaje }}
-
+{% if nota %}
+{{ nota }}
+{% endif %}
 {{ enlace }}
 
 --
 AMVARMAR. Este es un mensaje automático; no responda a esta dirección.
-Por seguridad, este correo no lleva documentos adjuntos ni el detalle de sus cargas: eso vive dentro del sistema.
+{% if con_adjuntos %}Por seguridad, este correo no lleva el detalle de sus cargas: eso vive dentro del sistema.{% else %}Por seguridad, este correo no lleva documentos adjuntos ni el detalle de sus cargas: eso vive dentro del sistema.{% endif %}

@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
+from app.modules.audit.outbox import publicar
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments.models import (
@@ -271,6 +272,17 @@ async def crear(
         },
     )
 
+    # El aviso de "carga nueva" sale del outbox, como el resto: si el alta se
+    # revierte, no queda un correo avisando de una carga que no existe.
+    await publicar(
+        session,
+        aggregate_type="shipment",
+        aggregate_id=fila.id,
+        event_type="shipment.created",
+        payload={"estado_inicial": estado_inicial, "actor_user_id": str(actor_user_id)},
+        dedup_key=f"shipment:{fila.id}:created",
+    )
+
     version = int(fila.row_version)
     if estado_inicial != ShipmentStatus.PRE_ALERT.value:
         limite = _SECUENCIA_ESTADOS_INICIALES.index(estado_inicial)
@@ -282,7 +294,7 @@ async def crear(
                     to_status=destino,
                     row_version=version,
                     note="Estado inicial registrado por Operaciones.",
-                    metadatos={"initial_registration": True},
+                    metadatos={"initial_registration": True, "initial_target": estado_inicial},
                 ),
                 actor_user_id=actor_user_id,
                 permisos=permisos,

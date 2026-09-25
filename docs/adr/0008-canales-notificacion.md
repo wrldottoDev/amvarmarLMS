@@ -231,3 +231,32 @@ El token `EMAIL_VERIFY` se ata a la cuenta, no a la dirección. Si se habilita e
 cambio de correo, ese cambio tiene que borrar `email_verified_at` y consumir los
 `EMAIL_VERIFY` vigentes, o un enlace enviado a la dirección vieja verificaría la
 nueva.
+
+## Enmienda — el BL viaja adjunto y hay un aviso por estado (2026-09-25)
+
+Pedido de Otto para AMVARMAR, ya con el LMS en producción.
+
+**El Bill of Lading se adjunta.** El aviso `dispatch.bol_available` lleva el
+PDF del BL, como lo hacía `dispatch_bol.html` en el sistema anterior. Es el
+único aviso con adjunto: el resto sigue sin documentos. Tope:
+`TOPE_ADJUNTOS_BYTES` = 10 MB. Por encima, el correo no lo adjunta y dice por
+qué, y el archivo se descarga desde el sistema: Gmail y Outlook rechazan
+mensajes de más de 20-25 MB, y un correo rebotado no le sirve a nadie.
+
+Lo que se acepta al decidirlo: el BL queda en la bandeja del cliente, con lo
+que ella se reenvíe o sincronice. Es un papel que el cliente necesita tener y
+que ya circulaba así; el detalle comercial del resto de los avisos sigue fuera
+del correo.
+
+**Un aviso por estado de la carga.** Además de almacenada, despachada,
+entregada y "lista para despachar", ahora tienen aviso propio: prealerta (al
+crear la carga), en tránsito, recibida, despacho solicitado, en preparación y
+cancelada. `shipment.corrected` queda para los retrocesos.
+
+- Alta directa en un estado posterior: el motor recorre los estados
+  intermedios, pero sale **un solo** aviso, el del estado final. Antes eran
+  uno por paso.
+- Un retroceso (por ejemplo, almacenada que vuelve a recibida) se avisa como
+  corrección, no como "Recibimos su carga".
+- Los avisos nuevos son no críticos, salvo `shipment.cancelled`. Cuando
+  exista WhatsApp, el cliente podrá apagar los no críticos.

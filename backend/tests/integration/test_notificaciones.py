@@ -5,7 +5,9 @@ real, no contra un doble: lo que puede romperse es el diálogo SMTP y el armado
 del multipart, y un doble que acepta cualquier cosa no lo detecta.
 """
 
+import asyncio
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -285,6 +287,9 @@ _CRITICOS_ESPERADOS = frozenset(
         "shipment.ready_to_dispatch",
         # La verificación que habilita los demás avisos por correo
         "account.email_verify",
+        # Un aviso por estado (2026-09-25): la cancelación deja de ser una
+        # "corrección" genérica
+        "shipment.cancelled",
     }
 )
 
@@ -769,6 +774,21 @@ class TestSeisCorreosDelSistemaAnterior:
 
         assert await _codigo_de_aviso(session, usuario) == "dispatch.bol_available"
 
+    async def test_un_retroceso_se_avisa_como_correccion(self, session: AsyncSession) -> None:
+        """Almacenada que vuelve a recibida no es "Recibimos su carga": es una
+        corrección, y el cliente tiene que leerla así."""
+        await sembrar_rbac(session)
+        empresa = await _empresa(session)
+        usuario, _ = await _usuario(session, empresa)
+        carga = await _carga_con_referencia(session, empresa, "WR100200", creador=usuario)
+
+        await handlers.cambio_de_estado_de_carga(
+            session,
+            _evento_de_outbox(aggregate_id=carga, payload={"desde": "STORED", "hacia": "RECEIVED"}),
+        )
+
+        assert await _codigo_de_aviso(session, usuario) == "shipment.corrected"
+
     async def test_aprobar_un_despacho_tiene_su_propio_aviso(self, session: AsyncSession) -> None:
         await sembrar_rbac(session)
         empresa = await _empresa(session)
@@ -871,6 +891,96 @@ class TestCorreoReal:
         assert numero not in cuerpo["Text"]
         assert numero not in cuerpo["HTML"]
         assert cuerpo["Attachments"] == []
+
+    async def _bl_en_storage(
+        self, session: AsyncSession, contenido: bytes, carpeta: Path
+    ) -> uuid.UUID:
+        """Un despacho con su BL READY y el PDF subido de verdad al storage."""
+        from app.infrastructure.storage import s3
+
+        await sembrar_rbac(session)
+        await sembrar_documentos(session)
+        empresa = await _empresa(session)
+        await _usuario(session, empresa)
+        usuario_staff, _ = await _usuario(session, None)
+        dispatch_id, _ = await _solicitud(session, empresa, usuario_staff)
+        clave = f"test/{uuid.uuid4()}.pdf"
+        ruta = carpeta / "bl.pdf"
+        await asyncio.to_thread(ruta.write_bytes, contenido)
+        await s3.subir_archivo(str(ruta), clave, media_type="application/pdf")
+
+        documento = (
+            await session.execute(
+                text("""
+                    INSERT INTO documents
+                        (company_id, uploaded_by, storage_provider, storage_key,
+                         original_name, safe_name, media_type, size_bytes, sha256,
+                         upload_status, issued_by)
+                    VALUES (:c, :u, 's3', :key, 'BL-0001.pdf', 'BL-0001.pdf',
+                            'application/pdf', :tam, :sha, 'READY', 'CARRIER')
+                    RETURNING id
+                """),
+                {
+                    "c": empresa,
+                    "u": usuario_staff,
+                    "key": clave,
+                    "tam": len(contenido),
+                    "sha": "c" * 64,
+                },
+            )
+        ).scalar_one()
+        await session.execute(
+            text("""
+                INSERT INTO dispatch_documents (dispatch_request_id, document_id, document_type_id)
+                SELECT :d, :doc, id FROM document_types WHERE code = 'BL'
+            """),
+            {"d": dispatch_id, "doc": documento},
+        )
+        await handlers.documento_de_despacho_listo(
+            session,
+            _evento_de_outbox(
+                aggregate_id=documento,
+                payload={"document_type_code": "BL", "resource_id": str(dispatch_id)},
+            ),
+        )
+        return documento
+
+    async def test_el_bl_llega_adjunto(
+        self,
+        session: AsyncSession,
+        correo_de_prueba: str,
+        storage_de_prueba: str,
+        tmp_path: Path,
+    ) -> None:
+        """Enmienda de ADR-0008 (2026-09-25): el BL viaja en el correo, como en
+        el sistema anterior. El PDF que llega es byte a byte el del storage."""
+        contenido = b"%PDF-1.4 bill of lading de prueba"
+        await self._bl_en_storage(session, contenido, tmp_path)
+
+        mensaje = _mensajes(correo_de_prueba)[0]
+        cuerpo = _cuerpo(correo_de_prueba, mensaje["ID"])
+
+        assert [a["FileName"] for a in cuerpo["Attachments"]] == ["BL-0001.pdf"]
+        assert cuerpo["Attachments"][0]["ContentType"] == "application/pdf"
+        assert cuerpo["Attachments"][0]["Size"] == len(contenido)
+        assert "Adjuntamos el Bill of Lading (BL-0001.pdf)." in cuerpo["Text"]
+        assert "no lleva documentos adjuntos" not in cuerpo["Text"]
+
+    async def test_un_bl_demasiado_grande_no_se_adjunta_y_se_dice(
+        self,
+        session: AsyncSession,
+        correo_de_prueba: str,
+        storage_de_prueba: str,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(correo, "TOPE_ADJUNTOS_BYTES", 10)
+        await self._bl_en_storage(session, b"%PDF-1.4 este pesa mas de diez bytes", tmp_path)
+
+        cuerpo = _cuerpo(correo_de_prueba, _mensajes(correo_de_prueba)[0]["ID"])
+
+        assert cuerpo["Attachments"] == []
+        assert "demasiado grande para adjuntarlo" in cuerpo["Text"]
 
     async def test_el_identificador_sale_pero_el_detalle_comercial_no(
         self, session: AsyncSession, correo_de_prueba: str
@@ -1141,7 +1251,7 @@ class TestFlujoDesdeElOutbox:
         pagina = await service.listar(session, user_id=cliente.user_id, limite=25, cursor=None)
 
         assert len(pagina.items) == 1
-        assert pagina.items[0].event_code == "shipment.status_changed"
+        assert pagina.items[0].event_code == "shipment.received"
         assert pagina.items[0].resource_id == carga
         assert pagina.items[0].is_critical is False
 

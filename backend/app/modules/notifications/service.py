@@ -12,7 +12,7 @@ de la notificación: reprocesar no genera un segundo correo.
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -287,6 +287,8 @@ async def notificar(
     referencia: str | None = None,
     enlace: str | None = None,
     exigir_correo_verificado: bool = True,
+    adjuntos: Sequence[correo.Adjunto] = (),
+    nota: str | None = None,
 ) -> list[UUID]:
     """Avisa a un conjunto de personas por todos los canales que correspondan.
 
@@ -333,6 +335,8 @@ async def notificar(
                 referencia=referencia,
                 enlace=enlace,
                 exigir_correo_verificado=exigir_correo_verificado,
+                adjuntos=adjuntos,
+                nota=nota,
             )
             continue
 
@@ -358,6 +362,8 @@ async def notificar(
             referencia=referencia,
             enlace=enlace,
             exigir_correo_verificado=exigir_correo_verificado,
+            adjuntos=adjuntos,
+            nota=nota,
         )
 
     return creadas
@@ -374,6 +380,8 @@ async def _entregar_correo(
     referencia: str | None = None,
     enlace: str | None = None,
     exigir_correo_verificado: bool = True,
+    adjuntos: Sequence[correo.Adjunto] = (),
+    nota: str | None = None,
 ) -> None:
     metadatos: dict[str, object] = {
         "dedup_key": dedup_key,
@@ -404,10 +412,12 @@ async def _entregar_correo(
         resource_id=str(resource_id) if resource_id else None,
         referencia=referencia,
         enlace=enlace,
+        nota=nota,
+        con_adjuntos=bool(adjuntos),
     )
 
     try:
-        await correo.enviar(destinatario.email, compuesto)
+        await correo.enviar(destinatario.email, compuesto, adjuntos)
     except correo.EnvioFallido as error:
         await _registrar_entrega(
             session,
@@ -441,6 +451,8 @@ async def _reintentar_correo(
     referencia: str | None = None,
     enlace: str | None = None,
     exigir_correo_verificado: bool = True,
+    adjuntos: Sequence[correo.Adjunto] = (),
+    nota: str | None = None,
 ) -> None:
     """El aviso ya existía; solo falta ver si el correo quedó sin enviar."""
     pendiente = (
@@ -472,6 +484,8 @@ async def _reintentar_correo(
         referencia=referencia,
         enlace=enlace,
         exigir_correo_verificado=exigir_correo_verificado,
+        adjuntos=adjuntos,
+        nota=nota,
     )
 
 
