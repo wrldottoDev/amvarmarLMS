@@ -88,6 +88,16 @@ EVENTOS: dict[str, DefinicionEvento] = {
         con_referencia=f"Se registró la entrega de la carga {{ref}}. {_ENTRAR}",
         ruta="/shipments/{id}",
     ),
+    "shipment.cancelled": DefinicionEvento(
+        # Antes caía en `shipment.corrected`: una cancelación merece decirlo con
+        # todas las letras, no como "se corrigió el estado".
+        codigo="shipment.cancelled",
+        critico=True,
+        asunto="Su carga fue cancelada",
+        mensaje=f"Se canceló una de sus cargas. {_ENTRAR}",
+        con_referencia=f"Se canceló la carga {{ref}}. {_ENTRAR}",
+        ruta="/shipments/{id}",
+    ),
     "shipment.corrected": DefinicionEvento(
         codigo="shipment.corrected",
         critico=True,
@@ -188,9 +198,10 @@ EVENTOS: dict[str, DefinicionEvento] = {
         ruta="/despachos/{id}",
     ),
     "dispatch.bol_available": DefinicionEvento(
-        # Reemplaza `dispatch_bol.html`. El original adjuntaba los PDF del Bill
-        # of Lading; acá el correo avisa y los documentos se descargan desde el
-        # sistema, con enlaces firmados que vencen (ADR-0008).
+        # Reemplaza `dispatch_bol.html`. Como el original, adjunta el PDF del
+        # Bill of Lading (enmienda de ADR-0008 del 2026-09-25), hasta
+        # `TOPE_ADJUNTOS_BYTES`; si pesa más, el correo lo dice y se descarga
+        # desde el sistema.
         codigo="dispatch.bol_available",
         critico=True,
         asunto="Bill of Lading disponible",
@@ -243,6 +254,60 @@ EVENTOS: dict[str, DefinicionEvento] = {
         ruta="/verificar-correo?token={id}",
     ),
     # --- No críticos ---
+    #
+    # Un aviso por estado del recorrido de la carga (pedido de AMVARMAR,
+    # 2026-09-25): el cliente sigue su carga por correo de punta a punta. Los
+    # críticos de arriba cubren almacenada, despachada, entregada y cancelada.
+    "shipment.pre_alerted": DefinicionEvento(
+        # Sale al crear la carga en prealerta. Si Operaciones la da de alta
+        # directamente en un estado posterior, solo sale el aviso de ese estado.
+        codigo="shipment.pre_alerted",
+        critico=False,
+        asunto="Registramos una carga suya en prealerta",
+        mensaje=f"Registramos una carga suya en prealerta: la esperamos en bodega. {_ENTRAR}",
+        con_referencia=(
+            f"Registramos su carga {{ref}} en prealerta: la esperamos en bodega. {_ENTRAR}"
+        ),
+        ruta="/shipments/{id}",
+    ),
+    "shipment.in_transit": DefinicionEvento(
+        codigo="shipment.in_transit",
+        critico=False,
+        asunto="Su carga está en tránsito",
+        mensaje=f"Una de sus cargas está en tránsito hacia la bodega. {_ENTRAR}",
+        con_referencia=f"Su carga {{ref}} está en tránsito hacia la bodega. {_ENTRAR}",
+        ruta="/shipments/{id}",
+    ),
+    "shipment.received": DefinicionEvento(
+        codigo="shipment.received",
+        critico=False,
+        asunto="Recibimos su carga en bodega",
+        mensaje=(
+            "Recibimos una de sus cargas en bodega y la estamos revisando para "
+            f"almacenarla. {_ENTRAR}"
+        ),
+        con_referencia=(
+            f"Recibimos su carga {{ref}} en bodega y la estamos revisando para "
+            f"almacenarla. {_ENTRAR}"
+        ),
+        ruta="/shipments/{id}",
+    ),
+    "shipment.dispatch_requested": DefinicionEvento(
+        codigo="shipment.dispatch_requested",
+        critico=False,
+        asunto="Su carga tiene un despacho solicitado",
+        mensaje=f"Una de sus cargas quedó incluida en una solicitud de despacho. {_ENTRAR}",
+        con_referencia=(f"Su carga {{ref}} quedó incluida en una solicitud de despacho. {_ENTRAR}"),
+        ruta="/shipments/{id}",
+    ),
+    "shipment.preparing": DefinicionEvento(
+        codigo="shipment.preparing",
+        critico=False,
+        asunto="Estamos preparando su carga para despacho",
+        mensaje=f"Estamos preparando una de sus cargas para despacharla. {_ENTRAR}",
+        con_referencia=f"Estamos preparando su carga {{ref}} para despacharla. {_ENTRAR}",
+        ruta="/shipments/{id}",
+    ),
     "shipment.status_changed": DefinicionEvento(
         codigo="shipment.status_changed",
         critico=False,

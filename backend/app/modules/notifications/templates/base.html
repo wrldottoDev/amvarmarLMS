@@ -16,6 +16,7 @@
       <tr>
         <td style="padding:8px 28px 24px;">
           <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">{{ mensaje }}</p>
+          {% if nota %}<p style="margin:0 0 20px;font-size:15px;line-height:1.6;">{{ nota }}</p>{% endif %}
           <a href="{{ enlace }}" style="display:inline-block;padding:11px 20px;background:#1f2430;color:#ffffff;text-decoration:none;border-radius:6px;font-size:15px;">Entrar al sistema</a>
           <p style="margin:20px 0 0;font-size:12px;color:#6b7280;word-break:break-all;">Si el botón no funciona: {{ enlace }}</p>
         </td>
@@ -24,7 +25,7 @@
         <td style="padding:0 28px 24px;border-top:1px solid #e5e7eb;">
           <p style="margin:16px 0 0;font-size:12px;line-height:1.5;color:#6b7280;">
             Mensaje automático; no responda a esta dirección.
-            Por seguridad, este correo no lleva documentos adjuntos ni el detalle de sus cargas: eso vive dentro del sistema.
+            {% if con_adjuntos %}Por seguridad, este correo no lleva el detalle de sus cargas: eso vive dentro del sistema.{% else %}Por seguridad, este correo no lleva documentos adjuntos ni el detalle de sus cargas: eso vive dentro del sistema.{% endif %}
           </p>
         </td>
       </tr>

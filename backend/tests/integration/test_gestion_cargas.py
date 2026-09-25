@@ -1311,3 +1311,51 @@ class TestOcultar:
             )
         ).scalar_one()
         assert referencias > 0
+
+
+class TestAvisosDelAlta:
+    """Qué correo recibe la empresa al dar de alta una carga (pedido de AMVARMAR,
+    2026-09-25): uno por el estado en que quedó, nunca uno por paso intermedio."""
+
+    async def _codigos_del_cliente(self, session: AsyncSession, entorno) -> list[str]:
+        from app.modules.audit.outbox import procesar_lote
+        from app.workers.tasks.outbox import construir_manejador
+
+        await procesar_lote(session, construir_manejador(session), limite=200)
+        return list(
+            (
+                await session.execute(
+                    text("""
+                        SELECT event_code FROM notifications
+                        WHERE user_id = :u ORDER BY created_at
+                    """),
+                    {"u": entorno["cliente"]},
+                )
+            ).scalars()
+        )
+
+    async def test_nacer_en_prealerta_avisa_la_carga_nueva(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        await gestion.crear(
+            session,
+            datos=_datos(entorno),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert await self._codigos_del_cliente(session, entorno) == ["shipment.pre_alerted"]
+
+    async def test_alta_directa_en_un_estado_posterior_avisa_una_sola_vez(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Recibida recorre prealerta → tránsito → recibida: sin el corte serían
+        dos correos (tránsito y recibida) por un solo hecho."""
+        await gestion.crear(
+            session,
+            datos=_datos(entorno, initial_status=ShipmentStatus.RECEIVED.value),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert await self._codigos_del_cliente(session, entorno) == ["shipment.received"]

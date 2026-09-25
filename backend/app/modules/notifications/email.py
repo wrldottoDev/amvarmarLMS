@@ -5,11 +5,14 @@ Dos responsabilidades separadas: `componer()` arma el mensaje y no toca la red;
 servidor SMTP, y el envío se puede probar contra Mailpit sin volver a armar el
 mensaje.
 
-ADR-0008 y su enmienda del 25-08-2026: el correo lleva el texto del catálogo,
-el identificador de la carga o del despacho, y un enlace al sistema. Nunca lleva
-adjuntos, credenciales, ni el detalle comercial (shipper, carrier, pesos).
+ADR-0008 y sus enmiendas: el correo lleva el texto del catálogo, el
+identificador de la carga o del despacho, y un enlace al sistema. Nunca lleva
+credenciales ni el detalle comercial (shipper, carrier, pesos). Desde el
+2026-09-25 el aviso del Bill of Lading adjunta el PDF, como el sistema anterior,
+hasta `TOPE_ADJUNTOS_BYTES`; ningún otro aviso lleva adjuntos.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
@@ -23,7 +26,13 @@ from app.modules.notifications.catalog import texto as texto_del_evento
 
 # Versión de las plantillas. Se guarda en cada entrega para poder saber con qué
 # texto se envió un correo viejo, incluso después de rediseñar la plantilla.
-PLANTILLA_VERSION = "2"
+PLANTILLA_VERSION = "3"
+
+# Tope del total adjunto a un correo. Gmail y Outlook rechazan por encima de
+# ~20-25 MB, y el base64 del adjunto suma un tercio: 10 MB de archivo son ~14
+# MB de mensaje, con margen. Si el archivo pesa más, el correo lo dice y se
+# descarga desde el sistema.
+TOPE_ADJUNTOS_BYTES = 10 * 1024 * 1024
 
 _DIRECTORIO = Path(__file__).parent / "templates"
 
@@ -40,6 +49,13 @@ _entorno = Environment(
 
 class EnvioFallido(Exception):
     """El relay rechazó el mensaje o no respondió."""
+
+
+@dataclass(frozen=True)
+class Adjunto:
+    nombre: str
+    media_type: str
+    contenido: bytes
 
 
 @dataclass(frozen=True)
@@ -73,8 +89,13 @@ def componer(
     resource_id: str | None,
     referencia: str | None = None,
     enlace: str | None = None,
+    nota: str | None = None,
+    con_adjuntos: bool = False,
 ) -> CorreoCompuesto:
     """Arma el correo. No toca la red.
+
+    `nota` es un párrafo extra (hoy, qué se adjuntó o por qué no), y
+    `con_adjuntos` cambia el pie, que si no promete que no hay adjuntos.
 
     `referencia` es el identificador que el cliente reconoce —WR, número de
     factura, número de solicitud—. `enlace` solo se pasa cuando no se puede
@@ -90,6 +111,8 @@ def componer(
         "asunto": asunto,
         "mensaje": texto_del_evento(evento, referencia),
         "enlace": enlace,
+        "nota": nota,
+        "con_adjuntos": con_adjuntos,
     }
 
     return CorreoCompuesto(
@@ -100,7 +123,9 @@ def componer(
     )
 
 
-def _armar_mensaje(destino: str, correo: CorreoCompuesto) -> EmailMessage:
+def _armar_mensaje(
+    destino: str, correo: CorreoCompuesto, adjuntos: Sequence[Adjunto] = ()
+) -> EmailMessage:
     settings = get_settings()
     mensaje = EmailMessage()
     mensaje["From"] = settings.email_from
@@ -111,16 +136,24 @@ def _armar_mensaje(destino: str, correo: CorreoCompuesto) -> EmailMessage:
     mensaje["Auto-Submitted"] = "auto-generated"
     mensaje.set_content(correo.texto)
     mensaje.add_alternative(correo.html, subtype="html")
+    for adjunto in adjuntos:
+        principal, _, secundario = adjunto.media_type.partition("/")
+        mensaje.add_attachment(
+            adjunto.contenido,
+            maintype=principal or "application",
+            subtype=secundario or "octet-stream",
+            filename=adjunto.nombre,
+        )
     return mensaje
 
 
-async def enviar(destino: str, correo: CorreoCompuesto) -> None:
+async def enviar(destino: str, correo: CorreoCompuesto, adjuntos: Sequence[Adjunto] = ()) -> None:
     """Entrega al relay. Lanza `EnvioFallido` para que el outbox reintente."""
     settings = get_settings()
 
     try:
         await aiosmtplib.send(
-            _armar_mensaje(destino, correo),
+            _armar_mensaje(destino, correo, adjuntos),
             hostname=settings.smtp_host,
             port=settings.smtp_port,
             # `aiosmtplib` decide autenticar con `is not None`, no con
