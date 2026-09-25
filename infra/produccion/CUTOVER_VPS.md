@@ -161,8 +161,13 @@ puede liberar después de verificar C7.
 ```bash
 sudo rm /etc/nginx/sites-enabled/produccion-app.amvarmar.com.conf
 sudo ln -s /etc/nginx/sites-available/app.amvarmar.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/piloto-lms-8443.conf /etc/nginx/sites-enabled/   # opcional: el piloto de nuevo en 8443
 sudo nginx -t && sudo systemctl reload nginx
 sudo systemctl start gunicorn
 ```
+
+`gunicorn.service` ya estaba `disabled` antes del corte: no arranca solo al reiniciar la VPS. Después
+de un reinicio, el `start` manual es obligatorio (o `sudo systemctl enable gunicorn` si el viejo vuelve a
+ser el oficial).
 
 La base y los archivos del viejo no se tocaron: vuelve exactamente como estaba.
