@@ -57,6 +57,24 @@ INSERT INTO decisiones VALUES (8, 'ana@local.amvarmar.com', false,
 INSERT INTO decisiones VALUES (26, 'pprueba11@local.amvarmar.com', false,
     'Duplicado del correo real de la cuenta 1 (otto); pprueba11/pruenterprise es cuenta de prueba/demo propia con actividad real, se le da correo de prueba propio');
 
+-- ###########################################################################
+-- Decisiones tomadas 2026-09-25, al correr este script sobre la copia de
+-- producción en la VPS: dos pares de cuentas de cliente creadas después de la
+-- copia local ya comparten correo. Criterio (Otoniel Gonzalez): conserva el
+-- correo real la cuenta que se usa; la otra queda DESACTIVADA con un correo
+-- propio. Desactivar no alcanza: en el LMS `users.email` es único aunque la
+-- cuenta esté suspendida, y el migrador lleva también a las inactivas.
+--
+-- EECR: 38 (dchaves72) es con la que la persona entra; 37 (dchaves57) nunca
+-- entró. Su única carga no se pierde: es de la empresa, y 38 la sigue viendo.
+-- EXTREME TECH: ninguna de las dos se usó; queda 42 (calfaro86), la primera.
+-- ###########################################################################
+
+INSERT INTO decisiones VALUES (37, 'dchaves57@local.amvarmar.com', true,
+    'Duplicado del correo de la cuenta 38 (dchaves72), que es la que se usa; desactivada con correo propio, decisión de Otoniel Gonzalez');
+INSERT INTO decisiones VALUES (43, 'calfaro15@local.amvarmar.com', true,
+    'Duplicado del correo de la cuenta 42 (calfaro86); ninguna se usó, se conserva la primera; desactivada con correo propio, decisión de Otoniel Gonzalez');
+
 -- Nada que hacer sin decisiones: mejor abortar que dejar la impresión de que se
 -- corrigió algo.
 DO $$
