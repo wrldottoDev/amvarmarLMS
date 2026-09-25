@@ -1,4 +1,4 @@
-"""Storage privado S3-compatible (MinIO en local, S3 o equivalente en producción).
+"""Storage privado S3-compatible (Garage en local y en producción; cualquier S3 sirve).
 
 El bucket NO tiene lectura pública. Todo acceso pasa por una URL firmada de
 corta duración que el backend emite tras verificar permisos: sin eso, conocer
@@ -48,7 +48,7 @@ def _cliente() -> Any:
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
-        # `s3v4` es obligatorio para que MinIO acepte las URLs firmadas.
+        # `s3v4`: la única firma que aceptan Garage (y MinIO) en las URLs firmadas.
         config=Config(signature_version="s3v4"),
     )
 
@@ -234,8 +234,8 @@ def asegurar_bucket_privado() -> None:
         cliente.create_bucket(Bucket=bucket)
 
     # `PutPublicAccessBlock` y `PutBucketEncryption` son extensiones de AWS S3.
-    # MinIO no las implementa: sus buckets nacen privados y sin política
-    # anónima, que es la misma garantía por otro camino.
+    # Garage (como antes MinIO) no las implementa: sus buckets nacen privados
+    # y sin acceso anónimo, que es la misma garantía por otro camino.
     #
     # Se intentan igual y se ignora solo el "no soportado": en S3 real sí
     # aplican, y silenciar un fallo distinto dejaría un bucket público sin que
