@@ -86,3 +86,13 @@ def test_outbox_cierra_el_pool_en_el_loop_de_la_tarea(monkeypatch) -> None:
 
     assert resultado == {"entregados": 2, "reintentar": 1, "agotados": 0}
     assert eventos[0][1] is eventos[1][1]
+
+
+def test_el_outbox_esta_programado_en_beat() -> None:
+    """Sin esta entrada nadie procesa el outbox y no sale ningún aviso por
+    evento: pasó en producción hasta el 2026-09-25."""
+    from app.workers.app import celery_app
+
+    tareas = {entrada["task"] for entrada in celery_app.conf.beat_schedule.values()}
+
+    assert "outbox.procesar_pendientes" in tareas
