@@ -1,5 +1,9 @@
 # Cutover en la VPS: el LMS pasa a app.amvarmar.com
 
+> **Ejecutado el 2026-09-25**, C0 a C9: el sistema viejo está borrado. Respaldos en `/opt/respaldos`
+> (incluido `legacy-extra/`, rescatado en C9) y en la Mac de Otto (`~/amvarmar-respaldos`). El storage
+> quedó en el mismo origen (`/amvarmar-documentos/`), no en el puerto 2053. "Volver atrás" ya no aplica.
+
 El sistema viejo se congela, se migra **desde cero** al LMS para que refleje su estado exacto, el dominio
 pasa al LMS y el viejo queda **apagado, sin borrar**. El borrado es un paso aparte (C9) y requiere la
 confirmación explícita de Otto después de verificar todo y de tener un respaldo fuera de la VPS.
