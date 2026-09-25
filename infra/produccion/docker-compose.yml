@@ -101,8 +101,11 @@ services:
     # la IP de la red de Docker, y el rate limit por IP del login y la
     # auditoría quedarían ciegos. Confiar en cualquier origen es seguro porque
     # el puerto solo escucha en 127.0.0.1: el único que llega es nginx.
+    # Sin el access log de uvicorn: escribe la URL cruda y dejaría en los logs
+    # el token de `GET /auth/invitation/{token}`. El middleware ya registra
+    # cada petición con la ruta en plantilla.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
-              "--proxy-headers", "--forwarded-allow-ips", "*"]
+              "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
     ports:
       - "127.0.0.1:${PUERTO_BACKEND:-58000}:8000"
 
