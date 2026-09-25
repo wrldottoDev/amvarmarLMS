@@ -144,6 +144,21 @@ def breaker_disponible() -> bool:
     return _obtener_breaker().disponible()
 
 
+def item_para_reenviar(item: Any) -> dict[str, Any]:
+    """Un ítem de salida tal como la API lo acepta de vuelta en `input`.
+
+    - `by_alias`: el SDK nombra `async_` al campo `async` de `function_call`,
+      y la API rechaza el nombre de Python con 400 ("Unknown parameter:
+      'input[N].async_'"). Verificado contra la API real en producción: la
+      segunda vuelta de cada turno con herramientas fallaba.
+    - Sin `status` ni campos en `None`: son de solo salida y la API los
+      rechaza si se reenvían ("Unknown parameter: 'input[N].status'").
+    """
+    datos: dict[str, Any] = item.model_dump(mode="json", by_alias=True, exclude_none=True)
+    datos.pop("status", None)
+    return datos
+
+
 class ProveedorOpenAI:
     """Implementación real. Responses API, `store=false`, sin `parallel_tool_calls`.
 
@@ -189,6 +204,10 @@ class ProveedorOpenAI:
                 max_output_tokens=self._max_tokens_salida,
                 store=False,
                 parallel_tool_calls=False,
+                # Con `store=false` el razonamiento no queda guardado del lado
+                # del proveedor: para reenviarlo en la vuelta siguiente tiene
+                # que venir cifrado dentro del ítem.
+                include=["reasoning.encrypted_content"],
             )
         except OpenAIError as error:
             breaker.registrar_fallo()
@@ -196,14 +215,8 @@ class ProveedorOpenAI:
 
         breaker.registrar_exito()
 
-        # `model_dump()` trae campos de SOLO-SALIDA (p.ej. `status`) que la
-        # API rechaza si se los reenvía tal cual dentro de `input` en la
-        # próxima vuelta — verificado contra la API real (ver ADR-0012,
-        # enmienda 2026-09): "Unknown parameter: 'input[N].status'".
-        items_salida = tuple(
-            {k: v for k, v in item.model_dump().items() if k != "status"}
-            for item in respuesta.output
-        )
+        # Se reenvían en la próxima vuelta: ver `item_para_reenviar`.
+        items_salida = tuple(item_para_reenviar(item) for item in respuesta.output)
         llamadas = tuple(
             LlamadaHerramienta(
                 call_id=item.call_id, nombre=item.name, argumentos_json=item.arguments
