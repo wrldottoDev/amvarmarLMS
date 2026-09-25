@@ -12,9 +12,11 @@ tanto es estable entre reintentos.
 import gzip
 from uuid import UUID
 
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import obtener_logger
 from app.infrastructure.storage import s3
 from app.modules.audit.outbox import EventoPendiente
 from app.modules.dispatches.models import DispatchStatus
@@ -22,6 +24,8 @@ from app.modules.notifications import email as correo
 from app.modules.notifications import service
 from app.modules.shipments import service as cargas
 from app.modules.shipments.models import ShipmentStatus
+
+_log = obtener_logger(__name__)
 
 # Estados de carga que ADR-0008 marca como aviso crítico propio. El resto cae
 # en `shipment.status_changed`, que es el avance rutinario.
@@ -282,21 +286,22 @@ async def _adjunto_del_documento(
     sin_adjunto = "Puede descargarlo desde el sistema."
     try:
         tamano = (await s3.describir_objeto(doc.storage_key)).size_bytes
-    except s3.ObjetoNoEncontrado:
-        # No debería pasar con un documento READY. Si pasa, el aviso sale igual:
-        # reintentar para siempre no traería el archivo de vuelta.
+        if tamano > correo.TOPE_ADJUNTOS_BYTES:
+            megas = tamano / (1024 * 1024)
+            return [], (
+                f"El archivo ({doc.original_name}, {megas:.1f} MB) es demasiado grande para "
+                "adjuntarlo: descárguelo desde el sistema."
+            )
+        contenido = bytearray()
+        async for fragmento in s3.iterar_chunks(doc.storage_key):
+            contenido.extend(fragmento)
+    except (s3.ObjetoNoEncontrado, ClientError, BotoCoreError) as error:
+        # El aviso importa más que el adjunto, y el BL se descarga desde el
+        # sistema: un storage que no responde no puede dejar al cliente sin
+        # enterarse (ni reintentar para siempre si el objeto no está).
+        _log.warning("bl_sin_adjunto", document_id=str(document_id), error=str(error)[:200])
         return [], sin_adjunto
 
-    if tamano > correo.TOPE_ADJUNTOS_BYTES:
-        megas = tamano / (1024 * 1024)
-        return [], (
-            f"El archivo ({doc.original_name}, {megas:.1f} MB) es demasiado grande para "
-            "adjuntarlo: descárguelo desde el sistema."
-        )
-
-    contenido = bytearray()
-    async for fragmento in s3.iterar_chunks(doc.storage_key):
-        contenido.extend(fragmento)
     datos = bytes(contenido)
     # Un documento archivado (ADR-0007) se guarda comprimido con gzip como
     # `Content-Encoding`: el navegador lo descomprime solo, el correo no.
