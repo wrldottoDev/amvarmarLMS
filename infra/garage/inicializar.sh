@@ -7,9 +7,7 @@
 #   cd infra/docker && ENV_FILE=../../backend/.env ../garage/inicializar.sh
 #
 # Lee del .env (ENV_FILE, por defecto ./.env):
-#   S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY          clave de la aplicación (lectura y escritura);
-#                                                    durante la migración desde MinIO se usan
-#                                                    GARAGE_S3_ACCESS_KEY/GARAGE_S3_SECRET_KEY
+#   S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY          clave de la aplicación (lectura y escritura)
 #   RESPALDO_S3_ACCESS_KEY, RESPALDO_S3_SECRET_KEY   clave del respaldo (solo lectura), opcional
 #   GARAGE_CAPACIDAD                                 capacidad declarada del nodo (por defecto 60G)
 #
@@ -24,12 +22,8 @@ leer_env() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
 
 S3_BUCKET="$(leer_env S3_BUCKET)"
 : "${S3_BUCKET:?falta S3_BUCKET en ${ENV_FILE}}"
-CLAVE_APP="$(leer_env GARAGE_S3_ACCESS_KEY)"
-SECRETO_APP="$(leer_env GARAGE_S3_SECRET_KEY)"
-if [[ -z "$CLAVE_APP" ]]; then
-  CLAVE_APP="$(leer_env S3_ACCESS_KEY)"
-  SECRETO_APP="$(leer_env S3_SECRET_KEY)"
-fi
+CLAVE_APP="$(leer_env S3_ACCESS_KEY)"
+SECRETO_APP="$(leer_env S3_SECRET_KEY)"
 [[ "$CLAVE_APP" == GK* && -n "$SECRETO_APP" ]] || {
   echo "ERROR: no hay una clave de Garage (GK...) en ${ENV_FILE}: correr generar_claves.sh" >&2
   exit 1
