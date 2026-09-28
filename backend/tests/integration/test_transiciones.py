@@ -182,6 +182,99 @@ def _todos_los_pares() -> list[tuple[str, str, bool]]:
     ]
 
 
+class TestTransicionMasiva:
+    async def test_aplica_motor_a_todas(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        primera = await _carga(session, ctx)
+        segunda = await _carga(session, ctx)
+
+        resultados = await service.transicionar_masivamente(
+            session,
+            cargas=[
+                service.CargaParaTransicionMasiva(id=primera, row_version=1),
+                service.CargaParaTransicionMasiva(id=segunda, row_version=1),
+            ],
+            to_status=ShipmentStatus.IN_TRANSIT,
+            note=None,
+            actor_user_id=ctx["user_id"],
+            permisos=await _permisos(session, redis, ctx),
+        )
+
+        assert len(resultados) == 2
+        estados = (
+            (
+                await session.execute(
+                    text("SELECT current_status_code FROM shipments WHERE id IN (:a, :b)"),
+                    {"a": primera, "b": segunda},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert estados == [ShipmentStatus.IN_TRANSIT, ShipmentStatus.IN_TRANSIT]
+        assert (
+            await session.execute(
+                text("SELECT count(*) FROM shipment_events WHERE shipment_id IN (:a, :b)"),
+                {"a": primera, "b": segunda},
+            )
+        ).scalar_one() == 2
+
+    async def test_una_falla_revierte_todo(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        valida = await _carga(session, ctx)
+        invalida = await _carga(session, ctx, estado=ShipmentStatus.RECEIVED)
+
+        with pytest.raises(service.TransicionMasivaInvalida) as error:
+            await service.transicionar_masivamente(
+                session,
+                cargas=[
+                    service.CargaParaTransicionMasiva(id=valida, row_version=1),
+                    service.CargaParaTransicionMasiva(id=invalida, row_version=1),
+                ],
+                to_status=ShipmentStatus.IN_TRANSIT,
+                note=None,
+                actor_user_id=ctx["user_id"],
+                permisos=await _permisos(session, redis, ctx),
+            )
+
+        assert error.value.details[0]["shipment_id"] == str(invalida)
+        assert (
+            await session.execute(
+                text("SELECT current_status_code FROM shipments WHERE id = :id"),
+                {"id": valida},
+            )
+        ).scalar_one() == ShipmentStatus.PRE_ALERT
+        assert (
+            await session.execute(
+                text("SELECT count(*) FROM shipment_events WHERE shipment_id = :id"),
+                {"id": valida},
+            )
+        ).scalar_one() == 0
+
+    async def test_version_desactualizada_revierte_todo(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        primera = await _carga(session, ctx)
+        segunda = await _carga(session, ctx)
+        with pytest.raises(service.TransicionMasivaInvalida):
+            await service.transicionar_masivamente(
+                session,
+                cargas=[
+                    service.CargaParaTransicionMasiva(id=primera, row_version=1),
+                    service.CargaParaTransicionMasiva(id=segunda, row_version=99),
+                ],
+                to_status=ShipmentStatus.IN_TRANSIT,
+                note=None,
+                actor_user_id=ctx["user_id"],
+                permisos=await _permisos(session, redis, ctx),
+            )
+        assert (
+            await session.execute(
+                text("SELECT count(*) FROM shipments WHERE id IN (:a, :b) AND row_version = 1"),
+                {"a": primera, "b": segunda},
+            )
+        ).scalar_one() == 2
+
+
 class TestMatrizCompleta:
     @pytest.mark.parametrize(("desde", "hacia", "es_valida"), _todos_los_pares())
     async def test_toda_combinacion_de_estados(

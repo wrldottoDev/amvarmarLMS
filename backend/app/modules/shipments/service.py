@@ -16,7 +16,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada, SinPermiso
+from app.core.errors import (
+    Conflicto,
+    ErrorDeAplicacion,
+    RecursoNoEncontrado,
+    ReglaDeNegocioViolada,
+    SinPermiso,
+)
 from app.modules.audit.outbox import publicar
 from app.modules.audit.service import registrar
 from app.modules.notifications import service as notificaciones
@@ -38,6 +44,10 @@ class TransicionInvalida(Conflicto):
 
 class VersionDesactualizada(Conflicto):
     code = "SHIPMENT_VERSION_CONFLICT"
+
+
+class TransicionMasivaInvalida(Conflicto):
+    code = "BULK_TRANSITION_INVALID"
 
 
 class MotivoRequerido(ReglaDeNegocioViolada):
@@ -132,6 +142,12 @@ class DatosTransicion:
     note: str | None = None
     location: str | None = None
     metadatos: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CargaParaTransicionMasiva:
+    id: UUID
+    row_version: int
 
 
 @dataclass(frozen=True)
@@ -373,6 +389,69 @@ async def transicionar(
         row_version=nueva_version,
         evento_id=evento_id,
     )
+
+
+async def transicionar_masivamente(
+    session: AsyncSession,
+    *,
+    cargas: list[CargaParaTransicionMasiva],
+    to_status: str,
+    note: str | None,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+    ip_address: str | None = None,
+) -> list[ResultadoTransicion]:
+    """Ejecuta el mismo motor por carga dentro de un savepoint atómico.
+
+    El savepoint permite deshacer eventos, auditoría, outbox y estados de las
+    cargas ya procesadas si una posterior falla. El router confirma únicamente
+    cuando todas terminaron; nunca existe un éxito parcial.
+    """
+    if not cargas:
+        raise TransicionMasivaInvalida("Seleccione al menos una carga.")
+    ids = [carga.id for carga in cargas]
+    if len(ids) != len(set(ids)):
+        raise TransicionMasivaInvalida("Una carga no puede aparecer más de una vez.")
+
+    savepoint = await session.begin_nested()
+    resultados: list[ResultadoTransicion] = []
+    carga_actual: CargaParaTransicionMasiva | None = None
+    try:
+        # El orden estable evita interbloqueos cuando dos lotes contienen las
+        # mismas cargas en distinto orden.
+        for carga_actual in sorted(cargas, key=lambda carga: str(carga.id)):
+            resultados.append(
+                await transicionar(
+                    session,
+                    shipment_id=carga_actual.id,
+                    datos=DatosTransicion(
+                        to_status=to_status,
+                        row_version=carga_actual.row_version,
+                        note=note,
+                        metadatos={"bulk_transition": True},
+                    ),
+                    actor_user_id=actor_user_id,
+                    permisos=permisos,
+                    ip_address=ip_address,
+                )
+            )
+    except (ErrorDeAplicacion, SinPermisoParaTransicion) as error:
+        await savepoint.rollback()
+        codigo = error.code if isinstance(error, ErrorDeAplicacion) else "SIN_PERMISO"
+        mensaje = error.message if isinstance(error, ErrorDeAplicacion) else "Carga no disponible."
+        raise TransicionMasivaInvalida(
+            "No se cambió ninguna carga porque una transición no es válida.",
+            details=[
+                {
+                    "shipment_id": str(carga_actual.id) if carga_actual else None,
+                    "code": codigo,
+                    "message": mensaje,
+                }
+            ],
+        ) from error
+    else:
+        await savepoint.commit()
+    return resultados
 
 
 async def transiciones_disponibles(

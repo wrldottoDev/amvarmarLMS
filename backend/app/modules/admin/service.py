@@ -76,9 +76,143 @@ class UsuarioResumen:
     email_verificado: bool
 
 
+@dataclass(frozen=True)
+class UbicacionResumen:
+    id: UUID
+    country_code: str
+    city_code: str
+    location_code: str
+    name: str
+    is_active: bool
+    created_at: datetime
+
+
 def _exigir(permisos: PermisosEfectivos, permiso: str, company_id: UUID | None = None) -> None:
     if not permisos.permite(permiso, company_id=company_id):
         raise SinPermiso(f"Le falta el permiso {permiso}.")
+
+
+# --- Ubicaciones ---
+
+
+async def listar_ubicaciones(
+    session: AsyncSession, *, permisos: PermisosEfectivos
+) -> list[UbicacionResumen]:
+    _exigir(permisos, Perm.LOCATIONS_MANAGE)
+    filas = (
+        await session.execute(
+            text("""
+                SELECT id, country_code, city_code, location_code, name, is_active, created_at
+                FROM locations
+                ORDER BY is_active DESC, country_code, name, id
+            """)
+        )
+    ).all()
+    return [UbicacionResumen(**dict(f._mapping)) for f in filas]
+
+
+async def crear_ubicacion(
+    session: AsyncSession,
+    *,
+    country_code: str,
+    city_code: str,
+    location_code: str,
+    name: str,
+    permisos: PermisosEfectivos,
+) -> UUID:
+    _exigir(permisos, Perm.LOCATIONS_MANAGE)
+    nombre = name.strip()
+    if not nombre:
+        raise DatosInvalidos("El nombre de la ubicación es obligatorio.")
+    try:
+        ubicacion_id: UUID = (
+            await session.execute(
+                text("""
+                    INSERT INTO locations (country_code, city_code, location_code, name)
+                    VALUES (:pais, :ciudad, :codigo, :nombre)
+                    RETURNING id
+                """),
+                {
+                    "pais": country_code,
+                    "ciudad": city_code,
+                    "codigo": location_code,
+                    "nombre": nombre,
+                },
+            )
+        ).scalar_one()
+        return ubicacion_id
+    except IntegrityError as error:
+        raise YaExiste(
+            "Ya existe una ubicación con ese código o con esa combinación de país y ciudad."
+        ) from error
+
+
+async def actualizar_ubicacion(
+    session: AsyncSession,
+    *,
+    location_id: UUID,
+    cambios: dict[str, Any],
+    permisos: PermisosEfectivos,
+) -> None:
+    _exigir(permisos, Perm.LOCATIONS_MANAGE)
+    if "name" in cambios:
+        nombre = str(cambios["name"]).strip()
+        if not nombre:
+            raise DatosInvalidos("El nombre de la ubicación es obligatorio.")
+        cambios["name"] = nombre
+    parametros = {**cambios, "id": location_id}
+    asignaciones = ", ".join(f"{campo} = :{campo}" for campo in cambios)
+    try:
+        encontrada = (
+            await session.execute(
+                text(f"""
+                    UPDATE locations SET {asignaciones}, updated_at = now()
+                    WHERE id = :id
+                    RETURNING id
+                """),  # noqa: S608  # nosec B608
+                parametros,
+            )
+        ).scalar_one_or_none()
+    except IntegrityError as error:
+        raise YaExiste(
+            "Ya existe una ubicación con ese código o con esa combinación de país y ciudad."
+        ) from error
+    if encontrada is None:
+        raise RecursoNoEncontrado("Ubicación no encontrada.")
+
+
+async def cambiar_estado_ubicacion(
+    session: AsyncSession,
+    *,
+    location_id: UUID,
+    activar: bool,
+    permisos: PermisosEfectivos,
+) -> None:
+    _exigir(permisos, Perm.LOCATIONS_MANAGE)
+    if not activar:
+        bodega_activa = (
+            await session.execute(
+                text("SELECT 1 FROM facilities WHERE location_id = :id AND is_active LIMIT 1"),
+                {"id": location_id},
+            )
+        ).scalar_one_or_none()
+        if bodega_activa is not None:
+            raise DatosInvalidos(
+                "No se puede desactivar una ubicación que tiene una bodega activa."
+            )
+
+    encontrada = (
+        await session.execute(
+            text("""
+                UPDATE locations SET is_active = :activa, updated_at = now()
+                WHERE id = :id
+                RETURNING id
+            """),
+            {"id": location_id, "activa": activar},
+        )
+    ).scalar_one_or_none()
+    if encontrada is None:
+        raise RecursoNoEncontrado("Ubicación no encontrada.")
 
 
 # --- Empresas ---

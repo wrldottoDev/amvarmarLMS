@@ -562,6 +562,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shipments/bulk-transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transicionar Masivamente */
+        post: operations["transicionar_masivamente_api_v1_shipments_bulk_transition_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/transitions/available": {
         parameters: {
             query?: never;
@@ -1218,6 +1235,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listar Ubicaciones Admin */
+        get: operations["listar_ubicaciones_admin_api_v1_admin_locations_get"];
+        put?: never;
+        /** Crear Ubicacion */
+        post: operations["crear_ubicacion_api_v1_admin_locations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/locations/{location_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Actualizar Ubicacion */
+        patch: operations["actualizar_ubicacion_api_v1_admin_locations__location_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/locations/{location_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Desactivar Ubicacion */
+        post: operations["desactivar_ubicacion_api_v1_admin_locations__location_id__deactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/locations/{location_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activar Ubicacion */
+        post: operations["activar_ubicacion_api_v1_admin_locations__location_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/companies": {
         parameters: {
             query?: never;
@@ -1538,6 +1624,17 @@ export interface components {
             /** Phone */
             phone?: string | null;
         };
+        /** ActualizarUbicacionRequest */
+        ActualizarUbicacionRequest: {
+            /** Country Code */
+            country_code?: string | null;
+            /** City Code */
+            city_code?: string | null;
+            /** Location Code */
+            location_code?: string | null;
+            /** Name */
+            name?: string | null;
+        };
         /** ActualizarUsuarioRequest */
         ActualizarUsuarioRequest: {
             /** First Name */
@@ -1598,6 +1695,31 @@ export interface components {
             location_id: string;
             /** Uses Warehouse Receipt */
             uses_warehouse_receipt: boolean;
+        };
+        /** BulkTransitionItemRequest */
+        BulkTransitionItemRequest: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Row Version */
+            row_version: number;
+        };
+        /** BulkTransitionRequest */
+        BulkTransitionRequest: {
+            /** Shipments */
+            shipments: components["schemas"]["BulkTransitionItemRequest"][];
+            to_status: components["schemas"]["ShipmentStatus"];
+            /** Note */
+            note?: string | null;
+        };
+        /** BulkTransitionResponse */
+        BulkTransitionResponse: {
+            /** Updated */
+            updated: number;
+            /** Shipments */
+            shipments: components["schemas"]["TransitionResponse"][];
         };
         /** BultoRequest */
         BultoRequest: {
@@ -1881,6 +2003,17 @@ export interface components {
             instructions?: string | null;
             /** Requested Pickup Date */
             requested_pickup_date?: string | null;
+        };
+        /** CrearUbicacionRequest */
+        CrearUbicacionRequest: {
+            /** Country Code */
+            country_code: string;
+            /** City Code */
+            city_code: string;
+            /** Location Code */
+            location_code: string;
+            /** Name */
+            name: string;
         };
         /** CrearUsuarioRequest */
         CrearUsuarioRequest: {
@@ -2899,6 +3032,29 @@ export interface components {
              */
             event_id: string;
         };
+        /** UbicacionAdminResponse */
+        UbicacionAdminResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Country Code */
+            country_code: string;
+            /** City Code */
+            city_code: string;
+            /** Location Code */
+            location_code: string;
+            /** Name */
+            name: string;
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** UbicacionCatalogoResponse */
         UbicacionCatalogoResponse: {
             /**
@@ -3902,6 +4058,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransitionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transicionar_masivamente_api_v1_shipments_bulk_transition_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkTransitionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5083,6 +5272,150 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MarcadasResponse"];
+                };
+            };
+        };
+    };
+    listar_ubicaciones_admin_api_v1_admin_locations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UbicacionAdminResponse"][];
+                };
+            };
+        };
+    };
+    crear_ubicacion_api_v1_admin_locations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrearUbicacionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreadoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actualizar_ubicacion_api_v1_admin_locations__location_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualizarUbicacionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    desactivar_ubicacion_api_v1_admin_locations__location_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activar_ubicacion_api_v1_admin_locations__location_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

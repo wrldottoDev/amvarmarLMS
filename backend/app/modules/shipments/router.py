@@ -53,6 +53,22 @@ class TransitionResponse(BaseModel):
     event_id: UUID
 
 
+class BulkTransitionItemRequest(BaseModel):
+    id: UUID
+    row_version: int = Field(ge=1)
+
+
+class BulkTransitionRequest(BaseModel):
+    shipments: Annotated[list[BulkTransitionItemRequest], Field(min_length=1, max_length=100)]
+    to_status: ShipmentStatus
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class BulkTransitionResponse(BaseModel):
+    updated: int
+    shipments: list[TransitionResponse]
+
+
 class TransitionBlockerResponse(BaseModel):
     code: str
     message: str
@@ -684,6 +700,43 @@ async def transicionar(
         to_status=resultado.hacia,
         row_version=resultado.row_version,
         event_id=resultado.evento_id,
+    )
+
+
+@router.post("/bulk-transition", response_model=BulkTransitionResponse)
+async def transicionar_masivamente(
+    datos: BulkTransitionRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> BulkTransitionResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    resultados = await service.transicionar_masivamente(
+        db,
+        cargas=[
+            service.CargaParaTransicionMasiva(id=carga.id, row_version=carga.row_version)
+            for carga in datos.shipments
+        ],
+        to_status=datos.to_status.value,
+        note=datos.note,
+        actor_user_id=actor.user_id,
+        permisos=permisos,
+        ip_address=_ip(request),
+    )
+    await db.commit()
+    return BulkTransitionResponse(
+        updated=len(resultados),
+        shipments=[
+            TransitionResponse(
+                shipment_id=resultado.shipment_id,
+                from_status=resultado.desde,
+                to_status=resultado.hacia,
+                row_version=resultado.row_version,
+                event_id=resultado.evento_id,
+            )
+            for resultado in resultados
+        ],
     )
 
 

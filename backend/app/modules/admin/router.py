@@ -71,6 +71,138 @@ class CreadoResponse(BaseModel):
     id: UUID
 
 
+# --- Ubicaciones ---
+
+
+class UbicacionAdminResponse(BaseModel):
+    id: UUID
+    country_code: str
+    city_code: str
+    location_code: str
+    name: str
+    is_active: bool
+    created_at: datetime
+
+
+class CrearUbicacionRequest(BaseModel):
+    country_code: str = Field(pattern=r"^[A-Z]{2}$")
+    city_code: str = Field(min_length=2, max_length=10, pattern=r"^[A-Z0-9]+$")
+    location_code: str = Field(min_length=4, max_length=16, pattern=r"^[A-Z0-9]+(?:-[A-Z0-9]+)+$")
+    name: str = Field(min_length=1, max_length=120)
+
+
+class ActualizarUbicacionRequest(BaseModel):
+    country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    city_code: str | None = Field(default=None, min_length=2, max_length=10, pattern=r"^[A-Z0-9]+$")
+    location_code: str | None = Field(
+        default=None, min_length=4, max_length=16, pattern=r"^[A-Z0-9]+(?:-[A-Z0-9]+)+$"
+    )
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+@router.get("/locations", response_model=list[UbicacionAdminResponse])
+async def listar_ubicaciones_admin(
+    actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> list[UbicacionAdminResponse]:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    filas = await service.listar_ubicaciones(db, permisos=permisos)
+    return [UbicacionAdminResponse(**vars(fila)) for fila in filas]
+
+
+@router.post("/locations", response_model=CreadoResponse, status_code=status.HTTP_201_CREATED)
+async def crear_ubicacion(
+    datos: CrearUbicacionRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> CreadoResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    ubicacion_id = await service.crear_ubicacion(db, **datos.model_dump(), permisos=permisos)
+    await registrar(
+        db,
+        action="location.created",
+        resource_type="location",
+        resource_id=ubicacion_id,
+        actor_user_id=actor.user_id,
+        after_data=datos.model_dump(),
+        ip_address=_ip(request),
+    )
+    await db.commit()
+    return CreadoResponse(id=ubicacion_id)
+
+
+@router.patch("/locations/{location_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def actualizar_ubicacion(
+    location_id: UUID,
+    datos: ActualizarUbicacionRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> None:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    cambios = datos.model_dump(exclude_unset=True)
+    if not cambios:
+        raise service.DatosInvalidos("No hay ningún campo editable en la solicitud.")
+    await service.actualizar_ubicacion(
+        db, location_id=location_id, cambios=cambios, permisos=permisos
+    )
+    await registrar(
+        db,
+        action="location.updated",
+        resource_type="location",
+        resource_id=location_id,
+        actor_user_id=actor.user_id,
+        after_data={"campos": sorted(cambios)},
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+
+async def _cambiar_estado_ubicacion(
+    *,
+    location_id: UUID,
+    activar: bool,
+    request: Request,
+    actor: Actor,
+    db: AsyncSession,
+    redis: Redis,
+) -> None:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    await service.cambiar_estado_ubicacion(
+        db, location_id=location_id, activar=activar, permisos=permisos
+    )
+    await registrar(
+        db,
+        action=f"location.{'activated' if activar else 'deactivated'}",
+        resource_type="location",
+        resource_id=location_id,
+        actor_user_id=actor.user_id,
+        after_data={"is_active": activar},
+        ip_address=_ip(request),
+    )
+    await db.commit()
+
+
+@router.post("/locations/{location_id}/deactivate", status_code=status.HTTP_204_NO_CONTENT)
+async def desactivar_ubicacion(
+    location_id: UUID, request: Request, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> None:
+    await _cambiar_estado_ubicacion(
+        location_id=location_id, activar=False, request=request, actor=actor, db=db, redis=redis
+    )
+
+
+@router.post("/locations/{location_id}/activate", status_code=status.HTTP_204_NO_CONTENT)
+async def activar_ubicacion(
+    location_id: UUID, request: Request, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> None:
+    await _cambiar_estado_ubicacion(
+        location_id=location_id, activar=True, request=request, actor=actor, db=db, redis=redis
+    )
+
+
 @router.get("/companies", response_model=PaginaEmpresas)
 async def listar_empresas(
     actor: ActorDep,
