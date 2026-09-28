@@ -195,6 +195,7 @@ _ADMIN_PERMS: frozenset[str] = frozenset(
         Perm.DOCUMENTS_VERIFY,
         Perm.DOCUMENTS_INVALIDATE,
         Perm.COMPANIES_MANAGE,
+        Perm.LOCATIONS_MANAGE,
         Perm.USERS_CREATE_INTERNAL,
         Perm.USERS_MANAGE,
         Perm.AUDIT_LOGS_READ,
