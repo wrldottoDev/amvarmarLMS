@@ -189,12 +189,22 @@ class TestUbicaciones:
         assert creada.name == "Shanghái"
         assert not creada.is_active
 
-    @pytest.mark.parametrize("rol", [RoleCode.ADMIN, RoleCode.CLIENTE])
-    async def test_solo_super_admin_puede_gestionar(
-        self, session: AsyncSession, redis, entorno, rol: str
+    async def test_admin_tambien_puede_gestionar(
+        self, session: AsyncSession, redis, entorno
     ) -> None:
-        usuario = entorno["ops"] if rol == RoleCode.ADMIN else entorno["cliente_alfa"]
-        permisos = await _permisos(session, redis, usuario)
+        permisos = await _permisos(session, redis, entorno["ops"])
+        ubicacion_id = await service.crear_ubicacion(
+            session,
+            country_code="CR",
+            city_code="LIO",
+            location_code="CR-LIO",
+            name="Limón",
+            permisos=permisos,
+        )
+        assert ubicacion_id is not None
+
+    async def test_cliente_no_puede_gestionar(self, session: AsyncSession, redis, entorno) -> None:
+        permisos = await _permisos(session, redis, entorno["cliente_alfa"])
         with pytest.raises(SinPermiso):
             await service.listar_ubicaciones(session, permisos=permisos)
 
