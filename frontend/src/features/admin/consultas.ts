@@ -7,11 +7,14 @@ import type {
   CrearEmpresa,
   CrearUsuario,
   EmpresaAdmin,
+  CrearUbicacion,
+  UbicacionAdmin,
   UsuarioAdmin,
 } from "@/lib/api/tipos";
 
 export const claveEmpresas = ["admin", "empresas"] as const;
 export const claveUsuarios = ["admin", "usuarios"] as const;
+export const claveUbicacionesAdmin = ["admin", "ubicaciones"] as const;
 
 // Para selectores y filtros que necesitan "todas las empresas" en una sola
 // lista, no una página: el tope duro del servidor (ver `LIMITE_MAXIMO` en
@@ -171,6 +174,77 @@ export function useUbicaciones() {
     // Puertos y ciudades: cambian una vez al año, no hace falta refrescarlos.
     staleTime: 30 * 60 * 1000,
   });
+}
+
+export function useUbicacionesAdmin() {
+  return useQuery({
+    queryKey: claveUbicacionesAdmin,
+    queryFn: async (): Promise<UbicacionAdmin[]> =>
+      exigirDatos(await api.GET("/api/v1/admin/locations")),
+  });
+}
+
+export function useCrearUbicacion() {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async (datos: CrearUbicacion) =>
+      exigirDatos(await api.POST("/api/v1/admin/locations", { body: datos })),
+    onSuccess: async () => {
+      await Promise.all([
+        cliente.invalidateQueries({ queryKey: claveUbicacionesAdmin }),
+        cliente.invalidateQueries({ queryKey: ["catalogos", "ubicaciones"] }),
+      ]);
+    },
+  });
+}
+
+export function useActualizarUbicacion() {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: { id: string } & Partial<CrearUbicacion>) =>
+      exigirDatos(
+        await api.PATCH("/api/v1/admin/locations/{location_id}", {
+          params: { path: { location_id: id } },
+          body,
+        }),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        cliente.invalidateQueries({ queryKey: claveUbicacionesAdmin }),
+        cliente.invalidateQueries({ queryKey: ["catalogos", "ubicaciones"] }),
+      ]);
+    },
+  });
+}
+
+function useCambiarEstadoUbicacion(activar: boolean) {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      exigirDatos(
+        activar
+          ? await api.POST("/api/v1/admin/locations/{location_id}/activate", {
+              params: { path: { location_id: id } },
+            })
+          : await api.POST("/api/v1/admin/locations/{location_id}/deactivate", {
+              params: { path: { location_id: id } },
+            }),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        cliente.invalidateQueries({ queryKey: claveUbicacionesAdmin }),
+        cliente.invalidateQueries({ queryKey: ["catalogos", "ubicaciones"] }),
+      ]);
+    },
+  });
+}
+
+export function useActivarUbicacion() {
+  return useCambiarEstadoUbicacion(true);
+}
+
+export function useDesactivarUbicacion() {
+  return useCambiarEstadoUbicacion(false);
 }
 
 export function useBodegas() {

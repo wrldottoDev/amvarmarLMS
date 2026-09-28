@@ -61,6 +61,22 @@ async def sembrar_roles(session: AsyncSession) -> None:
 async def sembrar_role_permissions(session: AsyncSession) -> None:
     for code, definicion in ROLES.items():
         codigos = sorted(definicion.permissions)
+        actuales = set(
+            (
+                await session.execute(
+                    text("""
+                        SELECT p.code
+                        FROM role_permissions rp
+                        JOIN roles r ON r.id = rp.role_id
+                        JOIN permissions p ON p.id = rp.permission_id
+                        WHERE r.code = :role_code
+                    """),
+                    {"role_code": str(code)},
+                )
+            )
+            .scalars()
+            .all()
+        )
 
         await session.execute(
             text("""
@@ -73,6 +89,24 @@ async def sembrar_role_permissions(session: AsyncSession) -> None:
             """),
             {"role_code": str(code), "permission_codes": codigos},
         )
+
+        if actuales != set(codigos):
+            # El catálogo cambió: las claves Redis de quienes tienen este rol
+            # aún contienen la matriz anterior. Subir la versión las invalida
+            # en el mismo commit que actualiza las relaciones.
+            await session.execute(
+                text("""
+                    UPDATE users u
+                    SET authz_version = authz_version + 1, updated_at = now()
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM user_role_assignments ura
+                        JOIN roles r ON r.id = ura.role_id
+                        WHERE ura.user_id = u.id AND r.code = :role_code
+                    )
+                """),
+                {"role_code": str(code)},
+            )
 
         # Retirar lo que el catálogo ya no otorga.
         await session.execute(

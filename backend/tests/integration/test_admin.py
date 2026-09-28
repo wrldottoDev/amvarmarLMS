@@ -161,6 +161,64 @@ class TestEmpresas:
         assert fila.status == "CLOSED"
 
 
+class TestUbicaciones:
+    async def test_super_admin_crea_edita_y_desactiva(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        permisos = await _permisos(session, redis, entorno["super"])
+        ubicacion_id = await service.crear_ubicacion(
+            session,
+            country_code="CN",
+            city_code="SHA",
+            location_code="CN-SHA",
+            name="Shanghai",
+            permisos=permisos,
+        )
+        await service.actualizar_ubicacion(
+            session,
+            location_id=ubicacion_id,
+            cambios={"name": "Shanghái"},
+            permisos=permisos,
+        )
+        await service.cambiar_estado_ubicacion(
+            session, location_id=ubicacion_id, activar=False, permisos=permisos
+        )
+
+        ubicaciones = await service.listar_ubicaciones(session, permisos=permisos)
+        creada = next(ubicacion for ubicacion in ubicaciones if ubicacion.id == ubicacion_id)
+        assert creada.name == "Shanghái"
+        assert not creada.is_active
+
+    @pytest.mark.parametrize("rol", [RoleCode.ADMIN, RoleCode.CLIENTE])
+    async def test_solo_super_admin_puede_gestionar(
+        self, session: AsyncSession, redis, entorno, rol: str
+    ) -> None:
+        usuario = entorno["ops"] if rol == RoleCode.ADMIN else entorno["cliente_alfa"]
+        permisos = await _permisos(session, redis, usuario)
+        with pytest.raises(SinPermiso):
+            await service.listar_ubicaciones(session, permisos=permisos)
+
+    async def test_rechaza_duplicados(self, session: AsyncSession, redis, entorno) -> None:
+        permisos = await _permisos(session, redis, entorno["super"])
+        await service.crear_ubicacion(
+            session,
+            country_code="PA",
+            city_code="PTY",
+            location_code="PA-PTY",
+            name="Panamá",
+            permisos=permisos,
+        )
+        with pytest.raises(service.YaExiste):
+            await service.crear_ubicacion(
+                session,
+                country_code="PA",
+                city_code="PTY",
+                location_code="PA-OTRO",
+                name="Duplicada",
+                permisos=permisos,
+            )
+
+
 class TestUsuarios:
     async def test_crear_usuario_de_cliente_con_contrasena_temporal(
         self, session: AsyncSession, redis, entorno

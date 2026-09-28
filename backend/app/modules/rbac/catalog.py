@@ -63,6 +63,7 @@ class Perm:
     DOCUMENTS_INVALIDATE = "documents.invalidate"
 
     COMPANIES_MANAGE = "companies.manage"
+    LOCATIONS_MANAGE = "locations.manage"
     USERS_CREATE_INTERNAL = "users.create.internal"
     USERS_MANAGE = "users.manage"
     RBAC_MANAGE = "rbac.manage"
@@ -110,6 +111,7 @@ PERMISSIONS: dict[str, str] = {
     Perm.DOCUMENTS_VERIFY: "Verificar o rechazar documentos",
     Perm.DOCUMENTS_INVALIDATE: "Invalidar documentos (no elimina el archivo)",
     Perm.COMPANIES_MANAGE: "Gestionar empresas cliente",
+    Perm.LOCATIONS_MANAGE: "Gestionar ubicaciones operativas",
     Perm.USERS_CREATE_INTERNAL: "Crear usuarios internos de AMVARMAR",
     Perm.USERS_MANAGE: "Gestionar usuarios (el alcance define de qué empresa)",
     Perm.RBAC_MANAGE: "Gestionar roles y permisos",

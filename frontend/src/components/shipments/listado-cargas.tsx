@@ -32,6 +32,9 @@ export function ListadoCargas({
   esCliente,
   empresaVisible = false,
   soloLectura = false,
+  seleccionadas,
+  alternarSeleccion,
+  alternarTodas,
 }: {
   cargas: CargaResumen[];
   esCliente: boolean;
@@ -39,6 +42,9 @@ export function ListadoCargas({
   /** Historial de despachos (ADR-0007): una carga archivada no admite cambios
    * de estado, así que el badge de estado no abre el modal de transición. */
   soloLectura?: boolean;
+  seleccionadas?: ReadonlySet<string>;
+  alternarSeleccion?: (carga: CargaResumen) => void;
+  alternarTodas?: () => void;
 }) {
   const { data: preferencia } = usePreferenciaColumnas();
 
@@ -49,6 +55,8 @@ export function ListadoCargas({
 
   // Un cliente ve una sola empresa: la columna sería la misma en cada fila.
   const columnas = visibles.filter((c) => c !== "empresa" || (empresaVisible && !esCliente));
+  const seleccionHabilitada = Boolean(seleccionadas && alternarSeleccion && alternarTodas);
+  const todasSeleccionadas = cargas.length > 0 && cargas.every((carga) => seleccionadas?.has(carga.id));
 
   return (
     <>
@@ -57,6 +65,11 @@ export function ListadoCargas({
           <table className="w-full border-collapse text-left">
             <thead className="border-b bg-[var(--hover)] text-xs font-bold uppercase text-[var(--texto-secundario)]">
               <tr>
+                {seleccionHabilitada ? (
+                  <th className="w-12 px-4 py-3">
+                    <input type="checkbox" className="size-4 accent-[var(--mar)]" checked={todasSeleccionadas} onChange={alternarTodas} aria-label="Seleccionar todas las cargas visibles" />
+                  </th>
+                ) : null}
                 {columnas.map((clave) => (
                   <th
                     key={clave}
@@ -79,6 +92,11 @@ export function ListadoCargas({
                   key={carga.id}
                   className={clases("group hover:bg-[var(--hover)]", carga.hidden_at && "opacity-55")}
                 >
+                  {seleccionHabilitada ? (
+                    <td className="px-4 py-3.5">
+                      <input type="checkbox" className="size-4 accent-[var(--mar)]" checked={seleccionadas?.has(carga.id) ?? false} onChange={() => alternarSeleccion?.(carga)} aria-label={`Seleccionar carga ${referencia(carga)}`} />
+                    </td>
+                  ) : null}
                   {columnas.map((clave) => (
                     <td
                       key={clave}
@@ -118,6 +136,9 @@ export function ListadoCargas({
                 carga.hidden_at && "opacity-55",
               )}
             >
+              {seleccionHabilitada ? (
+                <input type="checkbox" className="size-4 shrink-0 accent-[var(--mar)]" checked={seleccionadas?.has(carga.id) ?? false} onChange={() => alternarSeleccion?.(carga)} aria-label={`Seleccionar carga ${referencia(carga)}`} />
+              ) : null}
               <Link href={`/shipments/${carga.id}`} className="min-w-0 flex-1">
                 <strong className="block text-sm">{referencia(carga)}</strong>
                 <span className="block text-xs text-[var(--texto-secundario)]">

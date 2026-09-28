@@ -5,6 +5,7 @@ import { Boxes, Download, PackagePlus } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useMemo, useState } from "react";
+import { AccionesMasivas } from "@/components/shipments/acciones-masivas";
 import {
   FiltrosCargas,
   filtrosDesdeParametros,
@@ -18,6 +19,8 @@ import { Boton } from "@/components/ui/boton";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
+import type { CargaResumen } from "@/lib/api/tipos";
+import { alternarCarga, alternarCargasVisibles } from "@/features/shipments/seleccion-masiva";
 
 function inicioDia(valor: string) {
   return valor ? new Date(`${valor}T00:00:00`).toISOString() : undefined;
@@ -59,9 +62,11 @@ function ContenidoCargas({
     [cadenaParametros],
   );
   const [verOcultas, setVerOcultas] = useState(false);
+  const [seleccionadas, setSeleccionadas] = useState<Map<string, CargaResumen>>(new Map());
   const { usuario } = useSesion();
   const esCliente = Boolean(usuario?.empresa);
   const puedeCrear = usuario?.permisos.includes("shipments.create");
+  const puedeCambiarEstado = usuario?.permisos.some((permiso) => permiso.startsWith("shipments.transition.") || permiso.startsWith("shipments.cancel.") || permiso === "shipments.reopen");
 
   const aplicarFiltros = useCallback(
     (nuevos: FiltrosCarga) => {
@@ -106,6 +111,21 @@ function ContenidoCargas({
   });
 
   const cargas = useMemo(() => consulta.data?.pages.flatMap((pagina) => pagina.items) ?? [], [consulta.data]);
+  const idsSeleccionados = useMemo(() => new Set(seleccionadas.keys()), [seleccionadas]);
+  const cargasSeleccionadas = useMemo(() => {
+    // El conjunto no cambia al refrescar, pero cada carga visible usa el
+    // row_version recién recibido para evitar enviar una copia obsoleta.
+    const actuales = new Map(cargas.map((carga) => [carga.id, carga]));
+    return [...seleccionadas.values()].map((carga) => actuales.get(carga.id) ?? carga);
+  }, [cargas, seleccionadas]);
+
+  function alternarSeleccion(carga: CargaResumen) {
+    setSeleccionadas((actual) => alternarCarga(actual, carga));
+  }
+
+  function alternarTodasVisibles() {
+    setSeleccionadas((actual) => alternarCargasVisibles(actual, cargas));
+  }
 
   return (
     <div className="space-y-6">
@@ -185,7 +205,14 @@ function ContenidoCargas({
           esCliente={esCliente}
           empresaVisible={!esCliente}
           soloLectura={archivadas}
+          seleccionadas={!archivadas && puedeCambiarEstado ? idsSeleccionados : undefined}
+          alternarSeleccion={!archivadas && puedeCambiarEstado ? alternarSeleccion : undefined}
+          alternarTodas={!archivadas && puedeCambiarEstado ? alternarTodasVisibles : undefined}
         />
+      ) : null}
+
+      {seleccionadas.size ? (
+        <AccionesMasivas cargas={cargasSeleccionadas} limpiar={() => setSeleccionadas(new Map())} />
       ) : null}
 
       {consulta.hasNextPage ? (

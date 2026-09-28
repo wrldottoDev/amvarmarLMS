@@ -17,6 +17,7 @@ import {
   UserRound,
   UsersRound,
   Warehouse,
+  MapPin,
   X,
 } from "lucide-react";
 import Image from "next/image";
@@ -75,6 +76,9 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
           { href: "/inventario", etiqueta: "Inventario", icono: Warehouse },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },
           { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
+          ...(usuario.permisos.includes("locations.manage")
+            ? [{ href: "/locations", etiqueta: "Ubicaciones", icono: MapPin }]
+            : []),
         ]),
     { href: "/sesiones", etiqueta: "Sesiones", icono: MonitorSmartphone },
   ];
