@@ -324,6 +324,45 @@ class TestCursor:
 
 
 class TestFiltros:
+    async def test_separa_miami_de_transito_por_la_bodega_que_emite_wr(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        bodega = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:ubicacion, 'MIA-TEST-WR', 'WAREHOUSE', true)
+                    RETURNING id
+                """),
+                {"ubicacion": ctx["origen"]},
+            )
+        ).scalar_one()
+        miami = await _carga(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET origin_facility_id = :bodega WHERE id = :id"),
+            {"bodega": bodega, "id": miami},
+        )
+        transito = await _carga(session, ctx)
+        permisos = await _permisos(session, redis, ctx["cliente_a"])
+
+        pagina_miami = await queries.listar_shipments(
+            session,
+            permisos=permisos,
+            filtros=queries.FiltrosListado(tipo_origen="MIAMI"),
+            limite=50,
+        )
+        pagina_transito = await queries.listar_shipments(
+            session,
+            permisos=permisos,
+            filtros=queries.FiltrosListado(tipo_origen="TRANSIT"),
+            limite=50,
+        )
+
+        assert [carga.id for carga in pagina_miami.items] == [miami]
+        assert [carga.id for carga in pagina_transito.items] == [transito]
+
     async def test_filtra_por_estado(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         en_transito = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)

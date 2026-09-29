@@ -1010,6 +1010,7 @@ class ShipmentResumenResponse(BaseModel):
     shipper: str | None = None
     carrier: str | None = None
     foots_cft: Decimal | None = None
+    volume_m3: Decimal | None = None
     # Los dos pesos, no uno calculado del otro: en el sistema viejo se anotaban
     # por separado y no siempre convierten exacto.
     weight_kg: Decimal | None = None
@@ -1076,6 +1077,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         shipper=fila.shipper,
         carrier=fila.carrier,
         foots_cft=fila.foots_cft,
+        volume_m3=fila.volume_m3,
         weight_kg=fila.weight_kg,
         weight_lb=fila.weight_lb,
         weight_source_unit=fila.weight_source_unit,
@@ -1124,6 +1126,7 @@ async def listar_shipments(
     reference_type: ReferenceType | None = None,
     archived: bool = False,
     only_archived: bool = False,
+    origin_kind: Literal["MIAMI", "TRANSIT"] | None = None,
 ) -> PaginaShipments:
     """Listado con filtros y paginación por cursor.
 
@@ -1150,6 +1153,7 @@ async def listar_shipments(
             incluir_archivadas=archived,
             solo_archivadas=only_archived,
             incluir_ocultas=incluir_ocultas,
+            tipo_origen=origin_kind,
         ),
         limite=normalizar_limite(limit),
         cursor=Cursor.decodificar(cursor) if cursor else None,

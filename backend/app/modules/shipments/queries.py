@@ -7,7 +7,7 @@ expuso al proceso, y un `LIMIT` mal puesto las devolvería.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -72,6 +72,9 @@ class FiltrosListado:
     # El "eliminar" del sistema viejo. Por defecto no se listan; Operaciones
     # puede pedirlas para revisarlas o recuperarlas.
     incluir_ocultas: bool = False
+    # Miami se define por la regla de negocio de la bodega que emite WR, no
+    # por comparar códigos de ciudad (ADR-0005). Tránsito es su complemento.
+    tipo_origen: Literal["MIAMI", "TRANSIT"] | None = None
 
 
 # Columnas del listado. Explícitas y no `SELECT *`: agregar una columna a
@@ -91,6 +94,7 @@ _COLUMNAS_LISTADO = """
     s.weight_source_unit,
     s.row_version,
     s.foots_cft,
+    s.volume_m3,
     s.shipper,
     s.carrier,
     s.hidden_at,
@@ -187,6 +191,17 @@ async def listar_shipments(
     if filtros.estados:
         condiciones.append("s.current_status_code = ANY(:estados)")
         parametros["estados"] = filtros.estados
+
+    if filtros.tipo_origen == "MIAMI":
+        condiciones.append("""EXISTS (
+            SELECT 1 FROM facilities f
+            WHERE f.id = s.origin_facility_id AND f.uses_warehouse_receipt
+        )""")
+    elif filtros.tipo_origen == "TRANSIT":
+        condiciones.append("""NOT EXISTS (
+            SELECT 1 FROM facilities f
+            WHERE f.id = s.origin_facility_id AND f.uses_warehouse_receipt
+        )""")
 
     if filtros.eta_desde is not None:
         condiciones.append("s.estimated_arrival_at >= :eta_desde")
@@ -288,7 +303,7 @@ async def obtener_shipment(
         SELECT {_COLUMNAS_LISTADO},
                s.row_version,
                s.description,
-               s.volumetric_weight_kg, s.volume_m3,
+               s.volumetric_weight_kg,
                s.received_at, s.stored_at, s.dispatched_at, s.delivered_at,
                s.destination_address
         FROM shipments s

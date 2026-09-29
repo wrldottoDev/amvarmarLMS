@@ -35,6 +35,7 @@ export function ListadoCargas({
   seleccionadas,
   alternarSeleccion,
   alternarTodas,
+  tipoOrigen,
 }: {
   cargas: CargaResumen[];
   esCliente: boolean;
@@ -45,6 +46,7 @@ export function ListadoCargas({
   seleccionadas?: ReadonlySet<string>;
   alternarSeleccion?: (carga: CargaResumen) => void;
   alternarTodas?: () => void;
+  tipoOrigen?: "MIAMI" | "TRANSIT";
 }) {
   const { data: preferencia } = usePreferenciaColumnas();
 
@@ -78,7 +80,9 @@ export function ListadoCargas({
                       columnasNumericas.has(clave) && "text-right",
                     )}
                   >
-                    {etiquetas.get(clave) ?? clave}
+                    {tipoOrigen === "TRANSIT" && clave === "foots_cft"
+                      ? "Metro cúbico (m³)"
+                      : etiquetas.get(clave) ?? clave}
                   </th>
                 ))}
                 <th className="w-12 px-3 py-3">
@@ -105,7 +109,7 @@ export function ListadoCargas({
                         columnasNumericas.has(clave) && "text-right tabular-nums",
                       )}
                     >
-                      <Celda clave={clave} carga={carga} esCliente={esCliente} soloLectura={soloLectura} />
+                      <Celda clave={clave} carga={carga} esCliente={esCliente} soloLectura={soloLectura} tipoOrigen={tipoOrigen} />
                     </td>
                   ))}
                   <td className="px-3 py-3.5">
@@ -169,11 +173,13 @@ function Celda({
   carga,
   esCliente,
   soloLectura,
+  tipoOrigen,
 }: {
   clave: string;
   carga: CargaResumen;
   esCliente: boolean;
   soloLectura: boolean;
+  tipoOrigen?: "MIAMI" | "TRANSIT";
 }) {
   if (clave === "identificador") {
     return (
@@ -208,6 +214,10 @@ function Celda({
   }
   if (clave === "pendientes")
     return <BadgePendientes cantidad={cantidadPendiente(carga, esCliente)} />;
+
+  if (clave === "foots_cft" && tipoOrigen === "TRANSIT") {
+    return <span>{carga.volume_m3 != null ? `${carga.volume_m3} m³` : "—"}</span>;
+  }
 
   const valor = contenidoColumna[clave]?.(carga) ?? "—";
   return <span className={valor === "—" ? "text-[var(--texto-secundario)]" : ""}>{valor}</span>;

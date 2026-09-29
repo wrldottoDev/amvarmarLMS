@@ -12,7 +12,7 @@ import { clases } from "@/lib/utilidades";
  * quien rastrea mira tracking y WR. Obligar a los dos a la misma vista hace que
  * ninguno la tenga cómoda.
  */
-export function SelectorColumnas() {
+export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANSIT" }) {
   const [abierto, setAbierto] = useState(false);
   const contenedor = useRef<HTMLDivElement>(null);
   const { data } = usePreferenciaColumnas();
@@ -80,7 +80,9 @@ export function SelectorColumnas() {
                     disabled={columna.fija}
                     onChange={() => alternar(columna.clave)}
                   />
-                  {columna.etiqueta}
+                  {tipoOrigen === "TRANSIT" && columna.clave === "foots_cft"
+                    ? "Metro cúbico (m³)"
+                    : columna.etiqueta}
                 </label>
               </li>
             ))}
