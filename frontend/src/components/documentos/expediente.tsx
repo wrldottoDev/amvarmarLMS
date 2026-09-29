@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Clock, Download, FileText, Pencil, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, Clock, Download, FileText, Pencil, Trash2, Upload, UploadCloud, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { ExportacionCarga } from "@/components/documentos/progreso-exportacion";
 import {
@@ -77,6 +77,11 @@ export function Expediente({
     nombre: string;
   } | null>(null);
   const [motivoRechazo, setMotivoRechazo] = useState("");
+  const [arrastrando, setArrastrando] = useState(false);
+  const [lote, setLote] = useState<
+    { clave: string; nombre: string; estado: "pendiente" | "subiendo" | "listo" | "error"; progreso: number; error?: string }[]
+  >([]);
+  const entradaLote = useRef<HTMLInputElement>(null);
 
   // Renombrar y quitar son de personal interno, igual que `edit_files` del
   // sistema viejo, que estaba bajo `@staff_member_required`.
@@ -148,6 +153,59 @@ export function Expediente({
       setSubiendo(null);
       setProgreso(0);
     }
+  }
+
+  async function subirLote(archivos: File[]) {
+    if (!tipoLibreSeleccionado || !emisorLibreEfectivo || archivos.length === 0) return;
+    const pendientes = archivos.map((archivo, indice) => ({
+      clave: `${archivo.name}-${archivo.size}-${archivo.lastModified}-${indice}`,
+      nombre: archivo.name,
+      estado: "pendiente" as const,
+      progreso: 0,
+    }));
+    setLote(pendientes);
+    setSubiendo("lote");
+
+    for (let indice = 0; indice < archivos.length; indice += 1) {
+      const archivo = archivos[indice];
+      const clave = pendientes[indice].clave;
+      setLote((actual) =>
+        actual.map((item) =>
+          item.clave === clave ? { ...item, estado: "subiendo", progreso: 0 } : item,
+        ),
+      );
+      try {
+        await subir.mutateAsync({
+          archivo,
+          tipoId: tipoLibreSeleccionado.id,
+          issuedBy: emisorLibreEfectivo,
+          onProgress: (valor) =>
+            setLote((actual) =>
+              actual.map((item) =>
+                item.clave === clave ? { ...item, progreso: valor } : item,
+              ),
+            ),
+        });
+        setLote((actual) =>
+          actual.map((item) =>
+            item.clave === clave ? { ...item, estado: "listo", progreso: 100 } : item,
+          ),
+        );
+      } catch (error) {
+        setLote((actual) =>
+          actual.map((item) =>
+            item.clave === clave
+              ? {
+                  ...item,
+                  estado: "error",
+                  error: error instanceof Error ? error.message : "No se pudo subir.",
+                }
+              : item,
+          ),
+        );
+      }
+    }
+    setSubiendo(null);
   }
 
   return (
@@ -322,7 +380,8 @@ export function Expediente({
       )}
 
       {data.tipos.length > 0 && !soloLectura ? (
-        <div className="flex flex-wrap items-end gap-2 border-y bg-[var(--superficie)] px-4 py-3">
+        <div className="space-y-3 border-y bg-[var(--superficie)] px-4 py-3">
+          <div className="flex flex-wrap items-end gap-2">
           <label className="min-w-56 flex-1">
             <span className="mb-1 block text-sm font-medium">Adjuntar otro documento</span>
             <select
@@ -366,6 +425,75 @@ export function Expediente({
             onElegir={(archivo) => void alElegirArchivoLibre(archivo)}
             deshabilitado={!tipoLibreSeleccionado || !emisorLibreEfectivo}
           />
+          </div>
+
+          <input
+            ref={entradaLote}
+            type="file"
+            multiple
+            className="hidden"
+            accept={(tipoLibreSeleccionado?.allowed_formats ?? [])
+              .map((formato) => `.${formato.toLowerCase()}`)
+              .join(",")}
+            onChange={(evento) => {
+              void subirLote(Array.from(evento.target.files ?? []));
+              evento.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className={clases(
+              "flex w-full flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-7 text-center transition-colors",
+              arrastrando ? "border-[var(--marca)] bg-[var(--marca-tenue)]" : "hover:bg-[var(--hover)]",
+              (!tipoLibreSeleccionado || !emisorLibreEfectivo || subiendo === "lote") &&
+                "cursor-not-allowed opacity-60",
+            )}
+            disabled={!tipoLibreSeleccionado || !emisorLibreEfectivo || subiendo === "lote"}
+            onClick={() => entradaLote.current?.click()}
+            onDragEnter={(evento) => {
+              evento.preventDefault();
+              setArrastrando(true);
+            }}
+            onDragOver={(evento) => evento.preventDefault()}
+            onDragLeave={() => setArrastrando(false)}
+            onDrop={(evento) => {
+              evento.preventDefault();
+              setArrastrando(false);
+              void subirLote(Array.from(evento.dataTransfer.files));
+            }}
+          >
+            <UploadCloud className="mb-2 size-7 text-[var(--marca)]" aria-hidden="true" />
+            <strong className="text-sm">Arrastrá varios archivos aquí</strong>
+            <span className="mt-1 text-xs text-[var(--texto-secundario)]">
+              Primero seleccioná el tipo documental. También podés hacer clic para elegirlos.
+            </span>
+          </button>
+
+          {lote.length > 0 ? (
+            <ul className="space-y-1" aria-label="Resultado de la carga de archivos">
+              {lote.map((archivo) => (
+                <li key={archivo.clave} className="flex items-center gap-2 text-xs">
+                  {archivo.estado === "listo" ? (
+                    <Check className="size-3.5 text-[var(--exito)]" aria-hidden="true" />
+                  ) : archivo.estado === "error" ? (
+                    <AlertTriangle className="size-3.5 text-[var(--peligro)]" aria-hidden="true" />
+                  ) : (
+                    <Clock className="size-3.5 text-[var(--texto-secundario)]" aria-hidden="true" />
+                  )}
+                  <span className="truncate font-medium">{archivo.nombre}</span>
+                  <span className="text-[var(--texto-secundario)]">
+                    {archivo.estado === "subiendo"
+                      ? `Subiendo ${archivo.progreso}%`
+                      : archivo.estado === "listo"
+                        ? "Listo"
+                        : archivo.estado === "error"
+                          ? archivo.error
+                          : "En espera"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
 

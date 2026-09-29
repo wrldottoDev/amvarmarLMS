@@ -2768,6 +2768,8 @@ export interface components {
             carrier?: string | null;
             /** Foots Cft */
             foots_cft?: string | null;
+            /** Volume M3 */
+            volume_m3: string | null;
             /** Weight Kg */
             weight_kg?: string | null;
             /** Weight Lb */
@@ -2807,8 +2809,6 @@ export interface components {
             destination_address: string | null;
             /** Volumetric Weight Kg */
             volumetric_weight_kg: string | null;
-            /** Volume M3 */
-            volume_m3: string | null;
             /** Received At */
             received_at: string | null;
             /** Stored At */
@@ -2865,6 +2865,8 @@ export interface components {
             carrier?: string | null;
             /** Foots Cft */
             foots_cft?: string | null;
+            /** Volume M3 */
+            volume_m3?: string | null;
             /** Weight Kg */
             weight_kg?: string | null;
             /** Weight Lb */
@@ -3696,6 +3698,7 @@ export interface operations {
                 reference_type?: components["schemas"]["ReferenceType"] | null;
                 archived?: boolean;
                 only_archived?: boolean;
+                origin_kind?: ("MIAMI" | "TRANSIT") | null;
             };
             header?: never;
             path?: never;

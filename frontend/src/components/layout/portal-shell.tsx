@@ -12,6 +12,7 @@ import {
   MonitorSmartphone,
   Moon,
   Settings,
+  Ship,
   Sun,
   Truck,
   UserRound,
@@ -67,13 +68,14 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
   // no cargas que él dio de alta.
   const navegacion: ElementoNavegacion[] = [
     { href: inicio, etiqueta: esCliente ? "Resumen" : "Operaciones", icono: Gauge },
-    { href: "/shipments", etiqueta: esCliente ? "Inventario" : "Cargas", icono: Boxes },
+    { href: "/miami", etiqueta: "Miami", icono: Warehouse },
+    { href: "/transito", etiqueta: "Tránsito", icono: Ship },
     { href: "/despachos", etiqueta: "Despachos", icono: Truck },
     { href: "/avisos", etiqueta: "Avisos", icono: Bell },
     ...(esCliente
       ? [{ href: "/shipments/historial", etiqueta: "Historial", icono: Archive }]
       : [
-          { href: "/inventario", etiqueta: "Inventario", icono: Warehouse },
+          { href: "/inventario", etiqueta: "Inventario", icono: Boxes },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },
           { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
           ...(usuario.permisos.includes("locations.manage")

@@ -33,15 +33,17 @@ function finalDia(valor: string) {
 export default function PaginaCargas({
   inventario = false,
   archivadas = false,
+  tipoOrigen,
 }: {
   inventario?: boolean;
   /** Historial de despachos (ADR-0007): solo cargas ya archivadas, de solo
    * lectura — sin alta, sin cambio de estado. */
   archivadas?: boolean;
+  tipoOrigen?: "MIAMI" | "TRANSIT";
 }) {
   return (
     <Suspense fallback={<CargandoPagina texto="Preparando cargas" />}>
-      <ContenidoCargas inventario={inventario} archivadas={archivadas} />
+      <ContenidoCargas inventario={inventario} archivadas={archivadas} tipoOrigen={tipoOrigen} />
     </Suspense>
   );
 }
@@ -49,9 +51,11 @@ export default function PaginaCargas({
 function ContenidoCargas({
   inventario,
   archivadas,
+  tipoOrigen,
 }: {
   inventario: boolean;
   archivadas: boolean;
+  tipoOrigen?: "MIAMI" | "TRANSIT";
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -77,7 +81,7 @@ function ContenidoCargas({
   );
 
   const consulta = useInfiniteQuery({
-    queryKey: ["cargas", filtros, inventario, archivadas, verOcultas],
+    queryKey: ["cargas", filtros, inventario, archivadas, verOcultas, tipoOrigen],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) =>
       exigirDatos(
@@ -102,6 +106,7 @@ function ContenidoCargas({
               reference_type: filtros.referenceType || undefined,
               company_id: filtros.companyId || undefined,
               only_archived: archivadas || undefined,
+              origin_kind: tipoOrigen,
             },
           },
         }),
@@ -118,6 +123,7 @@ function ContenidoCargas({
     const actuales = new Map(cargas.map((carga) => [carga.id, carga]));
     return [...seleccionadas.values()].map((carga) => actuales.get(carga.id) ?? carga);
   }, [cargas, seleccionadas]);
+  const tituloOrigen = tipoOrigen === "MIAMI" ? "Miami" : tipoOrigen === "TRANSIT" ? "Tránsito" : null;
 
   function alternarSeleccion(carga: CargaResumen) {
     setSeleccionadas((actual) => alternarCarga(actual, carga));
@@ -132,10 +138,10 @@ function ContenidoCargas({
       <header className="flex items-end justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase text-[var(--marca)]">
-            {archivadas ? "Historial" : inventario ? "Inventario" : "Seguimiento"}
+            {archivadas ? "Historial" : inventario ? "Inventario" : tituloOrigen ?? "Seguimiento"}
           </p>
           <h1 className="mt-1 text-2xl font-bold">
-            {archivadas ? "Historial de despachos" : inventario ? "Inventario" : "Cargas"}
+            {archivadas ? "Historial de despachos" : inventario ? "Inventario" : tituloOrigen ?? "Cargas"}
           </h1>
           <p className="mt-1 text-sm text-[var(--texto-secundario)]">
             {archivadas
@@ -153,7 +159,7 @@ function ContenidoCargas({
           // Operaciones alimenta el sistema: el alta va donde ya está mirando
           // las cargas, no escondida en otro menú.
           <Link
-            href="/cargas/nueva"
+            href={tipoOrigen ? `/cargas/nueva?origen=${tipoOrigen.toLowerCase()}` : "/cargas/nueva"}
             className="flex h-10 shrink-0 items-center gap-2 rounded-md bg-[var(--mar)] px-4 text-sm font-semibold text-white hover:opacity-90"
           >
             <PackagePlus className="size-4" aria-hidden="true" />
@@ -186,7 +192,7 @@ function ContenidoCargas({
               Ver ocultas
             </label>
           )}
-          <SelectorColumnas />
+          <SelectorColumnas tipoOrigen={tipoOrigen} />
         </div>
       </div>
 
@@ -205,6 +211,7 @@ function ContenidoCargas({
           esCliente={esCliente}
           empresaVisible={!esCliente}
           soloLectura={archivadas}
+          tipoOrigen={tipoOrigen}
           seleccionadas={!archivadas && puedeCambiarEstado ? idsSeleccionados : undefined}
           alternarSeleccion={!archivadas && puedeCambiarEstado ? alternarSeleccion : undefined}
           alternarTodas={!archivadas && puedeCambiarEstado ? alternarTodasVisibles : undefined}

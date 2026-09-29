@@ -85,6 +85,7 @@ export default function PaginaDetalleCarga() {
   const medidas = [
     carga.weight_kg ? `${carga.weight_kg} kg` : null,
     carga.weight_lb ? `${carga.weight_lb} lb` : null,
+    carga.volume_m3 ? `${carga.volume_m3} m³` : null,
     carga.foots_cft ? `${carga.foots_cft} CFT` : null,
   ].filter(Boolean);
 

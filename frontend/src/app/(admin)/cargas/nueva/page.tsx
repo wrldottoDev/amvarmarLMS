@@ -2,8 +2,8 @@
 
 import { ArrowLeft, PackagePlus } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { SelectorEmpresa } from "@/components/admin/selector-empresa";
 import {
   aPayload,
@@ -34,7 +34,16 @@ const ESTADOS_INICIALES = [
 ] as const;
 
 export default function PaginaNuevaCarga() {
+  return (
+    <Suspense fallback={<CargandoPagina texto="Preparando formulario" />}>
+      <FormularioNuevaCarga />
+    </Suspense>
+  );
+}
+
+function FormularioNuevaCarga() {
   const router = useRouter();
+  const parametros = useSearchParams();
   const { usuario, estado: estadoSesion } = useSesion();
   const esCliente = Boolean(usuario?.empresa);
   const empresas = useEmpresas(false, estadoSesion === "autenticada" && !esCliente);
@@ -45,7 +54,11 @@ export default function PaginaNuevaCarga() {
   // La pregunta que decide todo lo demás. `null` = todavía sin responder: no se
   // muestra el resto del formulario hasta que se elija, porque de la respuesta
   // depende si la carga se identifica por WR o por factura.
-  const [desdeMiami, setDesdeMiami] = useState<boolean | null>(null);
+  const tipoSolicitado = parametros.get("origen");
+  const origenFijado = tipoSolicitado === "miami" || tipoSolicitado === "transit";
+  const [desdeMiami, setDesdeMiami] = useState<boolean | null>(() =>
+    tipoSolicitado === "miami" ? true : tipoSolicitado === "transit" ? false : null,
+  );
 
   const [empresa, setEmpresa] = useState("");
   const [origen, setOrigen] = useState("");
@@ -57,6 +70,7 @@ export default function PaginaNuevaCarga() {
   const [peso, setPeso] = useState<PesoEditable>(pesoVacio);
   const [pesoVol, setPesoVol] = useState("");
   const [cft, setCft] = useState("");
+  const [volumenM3, setVolumenM3] = useState("");
   const [transporte, setTransporte] = useState<"SEA" | "AIR" | "LAND">("SEA");
   const [wr, setWr] = useState("");
   const [factura, setFactura] = useState("");
@@ -115,7 +129,8 @@ export default function PaginaNuevaCarga() {
       estimated_arrival_at: eta ? new Date(`${eta}T12:00:00`).toISOString() : null,
       weight: pesoParaApi(peso)!,
       volumetric_weight_kg: pesoVol || null,
-      foots_cft: cft || null,
+      volume_m3: desdeMiami === false ? volumenM3 || null : null,
+      foots_cft: desdeMiami ? cft || null : null,
       transport_mode: transporte,
       shipper: shipper.trim() || null,
       carrier: carrier.trim() || null,
@@ -133,6 +148,13 @@ export default function PaginaNuevaCarga() {
     router.push(`/cargas/${creada.id}/archivos`);
   }
 
+  const camposDeVolumen: ReadonlyArray<readonly [string, string, (valor: string) => void]> = [
+    ["Volumétrico (kg)", pesoVol, setPesoVol],
+    desdeMiami
+      ? ["Pies cúbicos (CFT)", cft, setCft]
+      : ["Metro cúbico (m³)", volumenM3, setVolumenM3],
+  ];
+
   return (
     <section className="mx-auto max-w-4xl space-y-4">
       <Link
@@ -143,11 +165,27 @@ export default function PaginaNuevaCarga() {
         Volver a cargas
       </Link>
 
-      <h1 className="text-2xl font-bold text-[var(--mar)]">Nueva carga</h1>
+      <h1 className="text-2xl font-bold text-[var(--mar)]">
+        {desdeMiami === true && origenFijado
+          ? "Nueva carga de Miami"
+          : desdeMiami === false && origenFijado
+            ? "Nueva carga de Tránsito"
+            : "Nueva carga"}
+      </h1>
 
       {/* La pregunta de arranque. Va primero y sola porque de ella depende cómo
           se identifica la carga, y responderla al final obligaría a rehacer lo
           que ya se escribió. */}
+      {origenFijado ? (
+        <div className="rounded-lg border bg-[var(--marca-tenue)] px-4 py-3 text-sm">
+          <strong>{desdeMiami ? "Carga de Miami" : "Carga de Tránsito"}</strong>
+          <p className="mt-1 text-[var(--texto-secundario)]">
+            {desdeMiami
+              ? "Sale de una bodega que emite Warehouse Receipt."
+              : "Sale de otro origen y se identifica por factura."}
+          </p>
+        </div>
+      ) : (
       <div className="rounded-lg border bg-[var(--superficie)]">
         <div className="border-b px-4 py-2.5 font-semibold">¿De dónde sale la carga?</div>
         <div className="grid gap-3 p-4 sm:grid-cols-2">
@@ -193,6 +231,7 @@ export default function PaginaNuevaCarga() {
           </p>
         ) : null}
       </div>
+      )}
 
       {desdeMiami === null ? (
         <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-[var(--texto-secundario)]">
@@ -375,12 +414,7 @@ export default function PaginaNuevaCarga() {
             <EditorPeso valor={peso} alCambiar={setPeso} mostrarError={!hayPeso} />
 
             <div className="grid gap-3 sm:grid-cols-2">
-              {(
-                [
-                  ["Volumétrico (kg)", pesoVol, setPesoVol],
-                  ["Pies cúbicos (CFT)", cft, setCft],
-                ] as const
-              ).map(([etiqueta, valor, asignar]) => (
+              {camposDeVolumen.map(([etiqueta, valor, asignar]) => (
                 <label className="block" key={etiqueta}>
                   <span className="mb-1 block text-sm font-medium">{etiqueta}</span>
                   <input
