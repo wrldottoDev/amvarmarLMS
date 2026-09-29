@@ -324,6 +324,26 @@ class TestCursor:
 
 
 class TestFiltros:
+    async def test_filtra_por_pais_de_origen(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        desde_estados_unidos = await _carga(session, ctx)
+        origen_china = await _ubicacion(session, "CN", "SHA", "Shanghái")
+        desde_china = await _carga(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET origin_location_id = :origen WHERE id = :id"),
+            {"origen": origen_china, "id": desde_china},
+        )
+
+        pagina = await queries.listar_shipments(
+            session,
+            permisos=await _permisos(session, redis, ctx["operaciones"]),
+            filtros=queries.FiltrosListado(pais_origen="CN"),
+            limite=50,
+        )
+
+        assert [carga.id for carga in pagina.items] == [desde_china]
+        assert desde_estados_unidos not in {carga.id for carga in pagina.items}
+
     async def test_separa_miami_de_transito_por_la_bodega_que_emite_wr(
         self, session: AsyncSession, redis
     ) -> None:

@@ -19,6 +19,7 @@ describe("filtros de cargas", () => {
       estados: ["IN_TRANSIT", "STORED"],
       etaDesde: "2026-08-01",
       etaHasta: "2026-08-31",
+      originCountry: "CN",
     };
 
     const parametros = parametrosDeFiltros(filtros);
@@ -55,6 +56,7 @@ describe("filtros de cargas", () => {
       estados: [],
       etaDesde: "",
       etaHasta: "",
+      originCountry: "",
     });
 
     expect(parametros.toString()).toBe("");

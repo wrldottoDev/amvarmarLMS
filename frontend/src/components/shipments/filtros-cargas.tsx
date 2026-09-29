@@ -5,6 +5,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { SelectorEmpresa } from "@/components/admin/selector-empresa";
 import { Boton } from "@/components/ui/boton";
 import { estadosCarga, etiquetaEstado } from "@/features/shipments/catalogo-estados";
+import { useUbicaciones } from "@/features/admin/consultas";
 import type { components } from "@/lib/api/generated";
 import type { EstadoCarga } from "@/lib/api/tipos";
 
@@ -22,6 +23,7 @@ export interface FiltrosCarga {
   estados: EstadoCarga[];
   etaDesde: string;
   etaHasta: string;
+  originCountry: string;
 }
 
 export const filtrosIniciales: FiltrosCarga = {
@@ -36,6 +38,7 @@ export const filtrosIniciales: FiltrosCarga = {
   estados: [],
   etaDesde: "",
   etaHasta: "",
+  originCountry: "",
 };
 
 const referencias: { valor: TipoReferencia; etiqueta: string }[] = [
@@ -67,6 +70,7 @@ export function filtrosDesdeParametros(parametros: URLSearchParams): FiltrosCarg
     estados,
     etaDesde: parametros.get("eta_from") ?? "",
     etaHasta: parametros.get("eta_to") ?? "",
+    originCountry: parametros.get("origin_country") ?? "",
   };
 }
 
@@ -83,6 +87,7 @@ export function parametrosDeFiltros(filtros: FiltrosCarga): URLSearchParams {
     ["company_id", filtros.companyId],
     ["eta_from", filtros.etaDesde],
     ["eta_to", filtros.etaHasta],
+    ["origin_country", filtros.originCountry],
   ];
   for (const [clave, valor] of valores) if (valor) parametros.set(clave, valor);
   for (const estado of filtros.estados) parametros.append("status", estado);
@@ -105,13 +110,19 @@ export function FiltrosCargas({
   valor,
   aplicar,
   mostrarEmpresa,
+  mostrarPaisOrigen = false,
 }: {
   valor: FiltrosCarga;
   aplicar: (filtros: FiltrosCarga) => void;
   mostrarEmpresa: boolean;
+  mostrarPaisOrigen?: boolean;
 }) {
+  const ubicaciones = useUbicaciones(mostrarPaisOrigen);
   const [borrador, setBorrador] = useState<FiltrosCarga>(valor);
   const ultimoQ = useRef(valor.q);
+  const nombresPaises = new Intl.DisplayNames(["es"], { type: "region" });
+  const paises = [...new Set((ubicaciones.data ?? []).map((ubicacion) => ubicacion.country_code))]
+    .sort((a, b) => (nombresPaises.of(a) ?? a).localeCompare(nombresPaises.of(b) ?? b));
 
   useEffect(() => {
     const q = borrador.q.trim();
@@ -171,6 +182,14 @@ export function FiltrosCargas({
       : []),
     ...(valor.companyId
       ? [{ clave: "companyId" as const, etiqueta: "Empresa seleccionada" }]
+      : []),
+    ...(valor.originCountry
+      ? [
+          {
+            clave: "originCountry" as const,
+            etiqueta: `Origen: ${nombresPaises.of(valor.originCountry) ?? valor.originCountry}`,
+          },
+        ]
       : []),
     ...(valor.etaDesde
       ? [{ clave: "etaDesde" as const, etiqueta: `ETA desde: ${valor.etaDesde}` }]
@@ -259,6 +278,29 @@ export function FiltrosCargas({
                       setBorrador((actual) => ({ ...actual, companyId }))
                     }
                   />
+                </label>
+              ) : null}
+
+              {mostrarPaisOrigen ? (
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium">País de origen</span>
+                  <select
+                    className="h-10 w-full rounded-md border px-3 text-sm"
+                    value={borrador.originCountry}
+                    onChange={(evento) =>
+                      setBorrador((actual) => ({
+                        ...actual,
+                        originCountry: evento.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Todos los países</option>
+                    {paises.map((codigo) => (
+                      <option key={codigo} value={codigo}>
+                        {nombresPaises.of(codigo) ?? codigo} ({codigo})
+                      </option>
+                    ))}
+                  </select>
                 </label>
               ) : null}
 

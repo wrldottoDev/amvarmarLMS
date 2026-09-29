@@ -75,6 +75,7 @@ class FiltrosListado:
     # Miami se define por la regla de negocio de la bodega que emite WR, no
     # por comparar códigos de ciudad (ADR-0005). Tránsito es su complemento.
     tipo_origen: Literal["MIAMI", "TRANSIT"] | None = None
+    pais_origen: str | None = None
 
 
 # Columnas del listado. Explícitas y no `SELECT *`: agregar una columna a
@@ -202,6 +203,10 @@ async def listar_shipments(
             SELECT 1 FROM facilities f
             WHERE f.id = s.origin_facility_id AND f.uses_warehouse_receipt
         )""")
+
+    if filtros.pais_origen:
+        condiciones.append("origen.country_code = :pais_origen")
+        parametros["pais_origen"] = filtros.pais_origen
 
     if filtros.eta_desde is not None:
         condiciones.append("s.estimated_arrival_at >= :eta_desde")

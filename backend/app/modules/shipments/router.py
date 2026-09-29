@@ -1127,6 +1127,7 @@ async def listar_shipments(
     archived: bool = False,
     only_archived: bool = False,
     origin_kind: Literal["MIAMI", "TRANSIT"] | None = None,
+    origin_country: Annotated[str | None, Query(pattern=r"^[A-Z]{2}$")] = None,
 ) -> PaginaShipments:
     """Listado con filtros y paginación por cursor.
 
@@ -1154,6 +1155,7 @@ async def listar_shipments(
             solo_archivadas=only_archived,
             incluir_ocultas=incluir_ocultas,
             tipo_origen=origin_kind,
+            pais_origen=origin_country,
         ),
         limite=normalizar_limite(limit),
         cursor=Cursor.decodificar(cursor) if cursor else None,
@@ -1204,7 +1206,6 @@ async def obtener_shipment(
         description=fila.description,
         destination_address=fila.destination_address,
         volumetric_weight_kg=fila.volumetric_weight_kg,
-        volume_m3=fila.volume_m3,
         received_at=fila.received_at,
         stored_at=fila.stored_at,
         dispatched_at=fila.dispatched_at,

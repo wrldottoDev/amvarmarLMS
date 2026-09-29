@@ -107,6 +107,7 @@ function ContenidoCargas({
               company_id: filtros.companyId || undefined,
               only_archived: archivadas || undefined,
               origin_kind: tipoOrigen,
+              origin_country: filtros.originCountry || undefined,
             },
           },
         }),
@@ -175,6 +176,7 @@ function ContenidoCargas({
             valor={filtros}
             aplicar={aplicarFiltros}
             mostrarEmpresa={!esCliente}
+            mostrarPaisOrigen={inventario}
           />
         </div>
         <div className="flex items-center gap-2">

@@ -166,13 +166,14 @@ export function useDesactivarUsuario() {
   });
 }
 
-export function useUbicaciones() {
+export function useUbicaciones(habilitada = true) {
   return useQuery({
     queryKey: ["catalogos", "ubicaciones"],
     queryFn: async () =>
       exigirDatos(await api.GET("/api/v1/shipments/catalogos/locations", {})),
     // Puertos y ciudades: cambian una vez al año, no hace falta refrescarlos.
     staleTime: 30 * 60 * 1000,
+    enabled: habilitada,
   });
 }
 

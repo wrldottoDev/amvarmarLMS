@@ -3699,6 +3699,7 @@ export interface operations {
                 archived?: boolean;
                 only_archived?: boolean;
                 origin_kind?: ("MIAMI" | "TRANSIT") | null;
+                origin_country?: string | null;
             };
             header?: never;
             path?: never;
