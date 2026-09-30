@@ -17,12 +17,12 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.drop_constraint(
-        "ck_shipment_references_reference_type_valido",
+        op.f("ck_shipment_references_reference_type_valido"),
         "shipment_references",
         type_="check",
     )
     op.create_check_constraint(
-        "reference_type_valido",
+        op.f("ck_shipment_references_reference_type_valido"),
         "shipment_references",
         "reference_type IN ('INVOICE', 'WR', 'PO', 'TRACKING', 'CONTAINER', 'BL', 'AMAR', 'OTHER')",
     )
@@ -80,14 +80,16 @@ def downgrade() -> None:
           AND amar.shipment_id = otra.shipment_id
           AND amar.value = otra.value
     """)
-    op.execute("UPDATE shipment_references SET reference_type = 'OTHER' WHERE reference_type = 'AMAR'")
+    op.execute(
+        "UPDATE shipment_references SET reference_type = 'OTHER' WHERE reference_type = 'AMAR'"
+    )
     op.drop_constraint(
-        "ck_shipment_references_reference_type_valido",
+        op.f("ck_shipment_references_reference_type_valido"),
         "shipment_references",
         type_="check",
     )
     op.create_check_constraint(
-        "reference_type_valido",
+        op.f("ck_shipment_references_reference_type_valido"),
         "shipment_references",
         "reference_type IN ('INVOICE', 'WR', 'PO', 'TRACKING', 'CONTAINER', 'BL', 'OTHER')",
     )
