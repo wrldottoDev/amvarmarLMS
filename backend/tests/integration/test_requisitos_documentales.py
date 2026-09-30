@@ -229,6 +229,24 @@ async def _documento_listo(
 class TestAperturaDesdeElCatalogo:
     """`required_before_status` deja de ser configuración muerta."""
 
+    async def test_transito_abre_la_factura_antes_de_solicitar_despacho(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga(session, ctx, estado=ShipmentStatus.PRE_ALERT)
+
+        await cargas.transicionar(
+            session,
+            shipment_id=carga,
+            datos=cargas.DatosTransicion(to_status=ShipmentStatus.IN_TRANSIT, row_version=1),
+            actor_user_id=ctx["admin"],
+            permisos=await _permisos(session, redis, ctx["admin"]),
+        )
+
+        abiertos = await _requisitos(session, carga)
+        assert abiertos["COMMERCIAL_INVOICE"] == RequirementStatus.PENDING
+        assert "SLI" not in abiertos
+
     async def test_recibir_abre_los_requisitos_obligatorios(
         self, session: AsyncSession, redis
     ) -> None:

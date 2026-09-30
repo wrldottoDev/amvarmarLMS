@@ -90,7 +90,7 @@ class SinPermisoParaTransicion(Exception):
 # no puedan divergir.
 # Estados al entrar a los cuales se abren los requisitos del catálogo.
 _SINCRONIZAN_REQUISITOS: frozenset[str] = frozenset(
-    {ShipmentStatus.RECEIVED, ShipmentStatus.STORED}
+    {ShipmentStatus.IN_TRANSIT, ShipmentStatus.RECEIVED, ShipmentStatus.STORED}
 )
 
 _COLUMNA_DE_FECHA: dict[str, str] = {
@@ -526,6 +526,24 @@ async def _validar_politicas(
     if hacia == ShipmentStatus.STORED:
         # ADR-0005: una bodega que emite WR lo exige antes de almacenar.
         await validar_wr_presente_para_almacenar(session, shipment_id)
+
+    if {desde, hacia} == {ShipmentStatus.IN_TRANSIT, ShipmentStatus.DISPATCH_REQUESTED}:
+        usa_wr = (
+            await session.execute(
+                text("""
+                    SELECT COALESCE(f.uses_warehouse_receipt, false)
+                    FROM shipments s
+                    LEFT JOIN facilities f ON f.id = s.origin_facility_id
+                    WHERE s.id = :id
+                """),
+                {"id": shipment_id},
+            )
+        ).scalar_one()
+        if usa_wr:
+            raise ReglaDeNegocioViolada(
+                "Las cargas con Warehouse Receipt deben almacenarse antes de solicitar despacho.",
+                code="TRANSIT_DIRECT_DISPATCH_NOT_ALLOWED",
+            )
 
     await _validar_requisitos_resueltos(session, [shipment_id], hacia)
 
@@ -1356,7 +1374,15 @@ _SQL_SINCRONIZAR_REQUISITOS = f"""
          required_from, status, blocks_dispatch, created_by)
     SELECT s.id, 'DOCUMENT', dt.id, dt.label, dt.description,
            CASE WHEN dt.provided_by = 'STAFF' THEN 'STAFF' ELSE 'CLIENT' END,
-           'PENDING', true, :actor
+           CASE WHEN EXISTS (
+               SELECT 1 FROM shipment_documents sd
+               JOIN documents d ON d.id = sd.document_id
+               WHERE sd.shipment_id = s.id
+                 AND sd.document_type_id = dt.id
+                 AND d.deleted_at IS NULL
+                 AND d.upload_status = 'READY'
+           ) THEN 'UPLOADED' ELSE 'PENDING' END,
+           true, :actor
     FROM shipments s
     LEFT JOIN facilities f ON f.id = s.origin_facility_id
     JOIN document_types dt ON dt.is_active

@@ -29,17 +29,29 @@ export default function PaginaNuevoDespacho() {
   const [instrucciones, setInstrucciones] = useState("");
   const [confirmando, setConfirmando] = useState(false);
 
-  // Solo se pueden despachar cargas almacenadas. Se filtra acá en vez de
-  // mostrarlas todas y rechazar al enviar: ofrecer algo que va a fallar hace
-  // que la persona crea que hizo algo mal.
+  // Miami se despacha una vez almacenada. Las cargas de otros orígenes pueden
+  // solicitarse mientras están en tránsito porque no ingresan a esa bodega.
   const disponibles = useQuery({
     queryKey: ["cargas", "disponibles-para-despacho"],
-    queryFn: async () =>
-      exigirDatos(
-        await api.GET("/api/v1/shipments", {
+    queryFn: async () => {
+      const [almacenadas, transito] = await Promise.all([
+        api.GET("/api/v1/shipments", {
           params: { query: { limit: 100, status: ["STORED"], archived: false } },
         }),
-      ),
+        api.GET("/api/v1/shipments", {
+          params: {
+            query: {
+              limit: 100,
+              status: ["IN_TRANSIT"],
+              origin_kind: "TRANSIT",
+              archived: false,
+            },
+          },
+        }),
+      ]);
+      const todas = [...exigirDatos(almacenadas).items, ...exigirDatos(transito).items];
+      return [...new Map(todas.map((carga) => [carga.id, carga])).values()];
+    },
   });
 
   const crear = useCrearDespacho(empresaId);
@@ -73,7 +85,7 @@ export default function PaginaNuevoDespacho() {
     router.push(`/despachos/${resultado.id}`);
   }
 
-  const cargas = disponibles.data?.items ?? [];
+  const cargas = disponibles.data ?? [];
   const cargasElegidas = cargas.filter((carga) => seleccionadas.includes(carga.id));
   const piezasElegidas = cargasElegidas.reduce(
     (total, carga) => total + carga.package_count,
@@ -112,8 +124,8 @@ export default function PaginaNuevoDespacho() {
           />
           <p className="mt-3 text-sm font-medium">No tenés cargas listas para despachar.</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--texto-secundario)]">
-            Solo se pueden despachar las cargas que ya están almacenadas en bodega. Cuando alguna
-            llegue, aparece acá.
+            Las cargas de Miami aparecen cuando están almacenadas. Las de otros orígenes aparecen
+            mientras están en tránsito.
           </p>
           <Link
             href="/shipments"

@@ -82,6 +82,21 @@ def _construir_transiciones() -> tuple[DefinicionTransicion, ...]:
                 )
             )
 
+    # Las cargas de otros orígenes no ingresan a la bodega de Miami: pueden
+    # solicitar despacho mientras siguen en tránsito. La política de dominio
+    # impide usar este atajo en una carga que sí usa Warehouse Receipt.
+    transiciones.append(
+        DefinicionTransicion(S.IN_TRANSIT, S.DISPATCH_REQUESTED, Perm.SHIPMENTS_TRANSITION_FORWARD)
+    )
+    transiciones.append(
+        DefinicionTransicion(
+            S.DISPATCH_REQUESTED,
+            S.IN_TRANSIT,
+            Perm.SHIPMENTS_TRANSITION_BACKWARD,
+            requiere_motivo=True,
+        )
+    )
+
     # Cancelación: solo desde PRE_ALERT o IN_TRANSIT. Desde RECEIVED en adelante
     # la carga ya existe físicamente y no se cancela — si se cancela el despacho,
     # se modifica `dispatch_requests`, no el estado de la carga.

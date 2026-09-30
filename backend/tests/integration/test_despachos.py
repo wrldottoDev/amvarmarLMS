@@ -260,6 +260,21 @@ class TestCreacion:
         for carga in cargas:
             assert await _estado_carga(session, carga) == ShipmentStatus.DISPATCH_REQUESTED
 
+    async def test_una_carga_de_transito_se_puede_solicitar_sin_almacenarla(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga_almacenada(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET current_status_code = 'IN_TRANSIT' WHERE id = :id"),
+            {"id": carga},
+        )
+
+        solicitud = await _crear(session, redis, ctx, [carga])
+
+        assert solicitud.status == DispatchStatus.PENDING
+        assert await _estado_carga(session, carga) == ShipmentStatus.DISPATCH_REQUESTED
+
     async def test_deja_evento_en_la_solicitud(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         solicitud = await _crear(session, redis, ctx, [await _carga_almacenada(session, ctx)])
@@ -299,13 +314,30 @@ class TestCreacion:
         assert detalle.shipments[0].status == ShipmentStatus.DISPATCH_REQUESTED
         assert detalle.shipments[0].package_count == 1
 
-    async def test_una_carga_no_almacenada_se_rechaza(self, session: AsyncSession, redis) -> None:
-        """Solo se despacha lo que está en bodega."""
+    async def test_una_carga_miami_no_almacenada_se_rechaza(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """La excepción de tránsito no permite saltar la bodega de Miami."""
         ctx = await _entorno(session)
         carga = await _carga_almacenada(session, ctx)
+        bodega = (
+            await session.execute(
+                text("""
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:ubicacion, :codigo, 'WAREHOUSE', true)
+                    RETURNING id
+                """),
+                {"ubicacion": ctx["origen"], "codigo": f"MIA-{uuid.uuid4().hex[:8]}"},
+            )
+        ).scalar_one()
         await session.execute(
-            text("UPDATE shipments SET current_status_code = 'IN_TRANSIT' WHERE id = :id"),
-            {"id": carga},
+            text("""
+                UPDATE shipments
+                SET current_status_code = 'IN_TRANSIT', origin_facility_id = :bodega
+                WHERE id = :id
+            """),
+            {"id": carga, "bodega": bodega},
         )
 
         with pytest.raises(service.TransicionDeDespachoInvalida) as error:
@@ -629,6 +661,28 @@ class TestCancelacion:
 
         assert resultado.hacia == DispatchStatus.CANCELLED
         assert await _estado_carga(session, carga) == ShipmentStatus.STORED
+
+    async def test_cancelar_transito_lo_devuelve_a_en_transito(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga_almacenada(session, ctx)
+        await session.execute(
+            text("UPDATE shipments SET current_status_code = 'IN_TRANSIT' WHERE id = :id"),
+            {"id": carga},
+        )
+        solicitud = await _crear(session, redis, ctx, [carga], actor="cliente")
+
+        await service.cancelar(
+            session,
+            dispatch_id=solicitud.id,
+            actor_user_id=ctx["cliente"],
+            permisos=await _permisos(session, redis, ctx["cliente"]),
+            company_ids=[ctx["empresa"]],
+            motivo="Ya no lo necesito.",
+        )
+
+        assert await _estado_carga(session, carga) == ShipmentStatus.IN_TRANSIT
 
     async def test_el_cliente_no_cancela_una_solicitud_aprobada(
         self, session: AsyncSession, redis

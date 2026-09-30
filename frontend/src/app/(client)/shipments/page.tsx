@@ -93,7 +93,11 @@ function ContenidoCargas({
               // La vista Inventario ignora el filtro de estado a propósito:
               // es "todo lo que existe", que es como se usaba en el sistema
               // viejo para buscar algo sin saber en qué punto estaba.
-              status: !inventario && !archivadas && filtros.estados.length ? filtros.estados : undefined,
+              status: archivadas
+                ? ["DISPATCHED", "DELIVERED"]
+                : !inventario && filtros.estados.length
+                  ? filtros.estados
+                  : undefined,
               incluir_ocultas: verOcultas || undefined,
               eta_from: inicioDia(filtros.etaDesde),
               eta_to: finalDia(filtros.etaHasta),
@@ -105,7 +109,7 @@ function ContenidoCargas({
               reference: filtros.reference || undefined,
               reference_type: filtros.referenceType || undefined,
               company_id: filtros.companyId || undefined,
-              only_archived: archivadas || undefined,
+              archived: archivadas || undefined,
               origin_kind: tipoOrigen,
               origin_country: filtros.originCountry || undefined,
             },
@@ -146,7 +150,7 @@ function ContenidoCargas({
           </h1>
           <p className="mt-1 text-sm text-[var(--texto-secundario)]">
             {archivadas
-              ? "Cargas archivadas, de solo lectura. Cumplieron su retención y ya no admiten cambios."
+              ? "Cargas de Miami y tránsito que ya fueron despachadas o entregadas."
               : inventario
                 ? "Todas las cargas, sin filtrar por estado."
                 : `${cargas.length} cargadas en esta vista`}

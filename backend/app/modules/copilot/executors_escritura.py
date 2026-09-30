@@ -388,7 +388,12 @@ async def _cargas_por_referencia_exacta(
         await session.execute(
             text("""
                 SELECT s.id, s.shipment_number, s.company_id, s.current_status_code,
-                       s.row_version, c.legal_name AS company_name
+                       s.row_version, c.legal_name AS company_name,
+                       NOT EXISTS (
+                           SELECT 1 FROM facilities f
+                           WHERE f.id = s.origin_facility_id
+                             AND f.uses_warehouse_receipt
+                       ) AS es_transito
                 FROM shipments s
                 JOIN companies c ON c.id = s.company_id
                 WHERE s.deleted_at IS NULL
@@ -397,7 +402,8 @@ async def _cargas_por_referencia_exacta(
                     OR CAST(s.id AS text) = lower(:ref)
                     OR EXISTS (
                         SELECT 1 FROM shipment_references r
-                        WHERE r.shipment_id = s.id AND r.reference_type = 'INVOICE'
+                        WHERE r.shipment_id = s.id
+                          AND r.reference_type IN ('INVOICE', 'WR')
                           AND lower(trim(r.value)) = lower(:ref)
                     )
                   )
@@ -638,14 +644,17 @@ async def proponer_despacho(
     if not permisos.permite(Perm.DISPATCH_REQUESTS_CREATE, company_id=empresa):
         return sin_propuesta("Tu cuenta no puede solicitar despachos para esta empresa.")
 
-    no_almacenadas = [c for c in cargas if c.current_status_code != ShipmentStatus.STORED]
-    if no_almacenadas:
+    no_disponibles = [
+        c
+        for c in cargas
+        if c.current_status_code != ShipmentStatus.STORED
+        and not (c.es_transito and c.current_status_code == ShipmentStatus.IN_TRANSIT)
+    ]
+    if no_disponibles:
         detalle = ", ".join(
-            f"{c.shipment_number} ({_etiqueta(c.current_status_code)})" for c in no_almacenadas
+            f"{c.shipment_number} ({_etiqueta(c.current_status_code)})" for c in no_disponibles
         )
-        return sin_propuesta(
-            f"Solo se despachan cargas almacenadas y {detalle} todavía no lo está."
-        )
+        return sin_propuesta(f"Estas cargas todavía no están disponibles para despacho: {detalle}.")
 
     metodo = str(argumentos["metodo"])
     fecha = _fecha(argumentos.get("fecha_retiro"))

@@ -187,10 +187,15 @@ async def crear(
         (
             await session.execute(
                 text("""
-                    SELECT id, company_id, current_status_code, shipment_number
-                    FROM shipments
-                    WHERE id = ANY(:ids) AND deleted_at IS NULL
-                    ORDER BY id
+                    SELECT s.id, s.company_id, s.current_status_code, s.shipment_number,
+                           NOT EXISTS (
+                               SELECT 1 FROM facilities f
+                               WHERE f.id = s.origin_facility_id
+                                 AND f.uses_warehouse_receipt
+                           ) AS es_transito
+                    FROM shipments s
+                    WHERE s.id = ANY(:ids) AND s.deleted_at IS NULL
+                    ORDER BY s.id
                     FOR UPDATE
                 """),
                 {"ids": ordenadas},
@@ -205,10 +210,13 @@ async def crear(
         if carga.company_id != company_id:
             # Mezclar empresas en un despacho expondría datos de una a la otra.
             raise RecursoNoEncontrado("Alguna de las cargas no existe.")
-        if carga.current_status_code != ShipmentStatus.STORED:
+        disponible = carga.current_status_code == ShipmentStatus.STORED or (
+            carga.es_transito and carga.current_status_code == ShipmentStatus.IN_TRANSIT
+        )
+        if not disponible:
             raise TransicionDeDespachoInvalida(
                 f"La carga {carga.shipment_number} está en "
-                f"{carga.current_status_code} y solo se despachan las almacenadas.",
+                f"{carga.current_status_code} y todavía no está disponible para despacho.",
                 details=[
                     {
                         "shipment_number": carga.shipment_number,
@@ -482,15 +490,14 @@ async def _cambiar_estado(
         await _liberar_cargas(session, dispatch_id)
 
     if hacia in {DispatchStatus.REJECTED, DispatchStatus.CANCELLED}:
-        # Las cargas vuelven a estar disponibles: regresan a STORED para poder
-        # incluirse en otra solicitud. La nota lleva el número de la solicitud
-        # para que en la línea de tiempo de la carga se vea la causa.
+        # Las cargas vuelven al estado desde el que se solicitaron: STORED para
+        # Miami e IN_TRANSIT cuando vienen de otro origen.
         permisos_devolucion = _permisos_de_la_accion(
             permisos, solicitud.company_id, Perm.SHIPMENTS_TRANSITION_BACKWARD
         )
         etiqueta = "rechazado" if hacia == DispatchStatus.REJECTED else "cancelado"
         for shipment_id in cargas:
-            await _devolver_carga_a_stored(
+            await _devolver_carga_al_estado_disponible(
                 session,
                 shipment_id=shipment_id,
                 actor_user_id=actor_user_id,
@@ -578,7 +585,7 @@ async def _validar_bl_listo(session: AsyncSession, dispatch_id: UUID) -> None:
         )
 
 
-async def _devolver_carga_a_stored(
+async def _devolver_carga_al_estado_disponible(
     session: AsyncSession,
     *,
     shipment_id: UUID,
@@ -586,7 +593,23 @@ async def _devolver_carga_a_stored(
     permisos: PermisosEfectivos,
     nota: str,
 ) -> None:
-    """Retrocede por el grafo normal; cada paso conserva evento y auditoría."""
+    """Devuelve la carga al estado desde el que pidió este despacho."""
+    estado_anterior = (
+        await session.execute(
+            text("""
+                SELECT from_status_code FROM shipment_events
+                WHERE shipment_id = :id AND to_status_code = 'DISPATCH_REQUESTED'
+                ORDER BY recorded_at DESC, id DESC
+                LIMIT 1
+            """),
+            {"id": shipment_id},
+        )
+    ).scalar_one_or_none()
+    destino_final = (
+        ShipmentStatus.IN_TRANSIT
+        if estado_anterior == ShipmentStatus.IN_TRANSIT
+        else ShipmentStatus.STORED
+    )
     while True:
         estado = (
             await session.execute(
@@ -594,16 +617,16 @@ async def _devolver_carga_a_stored(
                 {"id": shipment_id},
             )
         ).scalar_one()
-        if estado == ShipmentStatus.STORED:
+        if estado == destino_final:
             return
         destinos = {
             ShipmentStatus.PREPARING: ShipmentStatus.DISPATCH_REQUESTED,
-            ShipmentStatus.DISPATCH_REQUESTED: ShipmentStatus.STORED,
+            ShipmentStatus.DISPATCH_REQUESTED: destino_final,
         }
         destino = destinos.get(estado)
         if destino is None:
             raise TransicionDeDespachoInvalida(
-                f"No se puede devolver una carga en {estado} a STORED."
+                f"No se puede devolver una carga en {estado} a {destino_final}."
             )
         await _mover_carga(
             session,
@@ -789,7 +812,7 @@ async def cancelar(
     motivo: str | None = None,
     row_version: int | None = None,
 ) -> ResultadoAccion:
-    """Cancela la solicitud y devuelve sus cargas a STORED.
+    """Cancela la solicitud y devuelve sus cargas a su estado disponible anterior.
 
     `company_ids is None` identifica a Operaciones (alcance global), que puede
     cancelar hasta `PREPARING`. Un cliente solo antes de la aprobación
