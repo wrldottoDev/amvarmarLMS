@@ -149,6 +149,7 @@ export default function PaginaDetalleCarga() {
   const carga = consulta.data;
   const esCliente = Boolean(usuario?.empresa);
   const esTransito = carga.origin_kind === "TRANSIT";
+  const ocultarDatosLogisticos = esCliente && esTransito;
   const pendientes = usuario?.empresa ? carga.client_action_required_count : carga.open_requirements_count;
   const identificador = identificadorCarga(carga);
 
@@ -163,11 +164,9 @@ export default function PaginaDetalleCarga() {
 
   const tieneDatosComerciales = Boolean(
     carga.shipper ||
-      carga.carrier ||
-      carga.container ||
-      carga.tracking ||
-      carga.po ||
       carga.amvar ||
+      (!ocultarDatosLogisticos &&
+        (carga.carrier || carga.container || carga.tracking || carga.po)) ||
       medidas.length > 0,
   );
 
@@ -356,12 +355,20 @@ export default function PaginaDetalleCarga() {
               <dl className="grid grid-cols-2 divide-x border-b">
                 <div className="pr-5">
                   <Dato etiqueta="Proveedor" valor={carga.shipper} />
-                  <Dato etiqueta="Carrier" valor={carga.carrier} />
-                  <Dato etiqueta="Contenedor" valor={carga.container} />
+                  {!ocultarDatosLogisticos ? (
+                    <>
+                      <Dato etiqueta="Carrier" valor={carga.carrier} />
+                      <Dato etiqueta="Contenedor" valor={carga.container} />
+                    </>
+                  ) : null}
                 </div>
                 <div className="pl-5">
-                  <Dato etiqueta="Tracking" valor={carga.tracking} />
-                  <Dato etiqueta="Orden de compra" valor={carga.po} />
+                  {!ocultarDatosLogisticos ? (
+                    <>
+                      <Dato etiqueta="Tracking" valor={carga.tracking} />
+                      <Dato etiqueta="Orden de compra" valor={carga.po} />
+                    </>
+                  ) : null}
                   <Dato etiqueta="Número AMVAR" valor={carga.amvar} />
                   <Dato
                     etiqueta="Peso y volumen"
