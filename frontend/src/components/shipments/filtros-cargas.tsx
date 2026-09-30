@@ -48,7 +48,7 @@ const referencias: { valor: TipoReferencia; etiqueta: string }[] = [
   { valor: "TRACKING", etiqueta: "Tracking" },
   { valor: "CONTAINER", etiqueta: "Contenedor" },
   { valor: "BL", etiqueta: "BL" },
-  { valor: "AMAR", etiqueta: "Número AMAR" },
+  { valor: "AMVAR", etiqueta: "Número AMVAR" },
   { valor: "OTHER", etiqueta: "Otra referencia" },
 ];
 

@@ -8,6 +8,36 @@ import { identificadorCarga } from "./identificador";
 
 const clave = ["preferencias", "columnas"] as const;
 
+const ocultasCliente = new Set(["tracking", "carrier", "po", "container"]);
+
+export function columnaPermitida(
+  columna: string,
+  esCliente: boolean,
+  tipoOrigen?: "MIAMI" | "TRANSIT",
+) {
+  if (esCliente && ocultasCliente.has(columna)) return false;
+  if (esCliente && tipoOrigen === "TRANSIT" && columna === "invoice") return false;
+  if (tipoOrigen === "TRANSIT" && columna === "fecha") return false;
+  if (tipoOrigen !== "TRANSIT" && columna === "eta") return false;
+  return true;
+}
+
+export function columnasParaListado(
+  visibles: string[],
+  esCliente: boolean,
+  tipoOrigen?: "MIAMI" | "TRANSIT",
+) {
+  const resultado = visibles.filter((columna) =>
+    columnaPermitida(columna, esCliente, tipoOrigen),
+  );
+  if (tipoOrigen !== "TRANSIT") return resultado;
+
+  if (esCliente && !resultado.includes("bl")) resultado.splice(1, 0, "bl");
+  if (!resultado.includes("shipper")) resultado.push("shipper");
+  if (!resultado.includes("eta")) resultado.push("eta");
+  return resultado;
+}
+
 export function usePreferenciaColumnas() {
   return useQuery({
     queryKey: clave,
@@ -43,7 +73,7 @@ export const contenidoColumna: Record<string, (carga: CargaResumen) => string> =
   empresa: () => "",
   invoice: (c) => c.invoice || "—",
   bl: (c) => c.bl || "—",
-  amar: (c) => c.amar || "—",
+  amvar: (c) => c.amvar || "—",
   estado: (c) => c.status,
   shipper: (c) => c.shipper || "—",
   carrier: (c) => c.carrier || "—",
@@ -59,6 +89,7 @@ export const contenidoColumna: Record<string, (carga: CargaResumen) => string> =
   bultos: (c) => `${c.package_count}`,
   pendientes: () => "",
   fecha: (c) => formatearFecha(c.created_at),
+  eta: (c) => formatearFecha(c.estimated_arrival_at),
 };
 
 /** Columnas que se alinean a la derecha por ser números. */

@@ -2,8 +2,27 @@
 
 import { Columns3, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useGuardarColumnas, usePreferenciaColumnas } from "@/features/shipments/columnas";
+import {
+  columnaPermitida,
+  columnasParaListado,
+  useGuardarColumnas,
+  usePreferenciaColumnas,
+} from "@/features/shipments/columnas";
 import { clases } from "@/lib/utilidades";
+
+function esFijaEnVista(
+  columna: { clave: string; fija: boolean },
+  esCliente: boolean,
+  tipoOrigen?: "MIAMI" | "TRANSIT",
+) {
+  return (
+    columna.fija ||
+    (tipoOrigen === "TRANSIT" &&
+      (columna.clave === "eta" ||
+        columna.clave === "shipper" ||
+        (esCliente && columna.clave === "bl")))
+  );
+}
 
 /**
  * Elegir qué columnas se ven, como en el sistema viejo.
@@ -35,12 +54,9 @@ export function SelectorColumnas({
 
   if (!data) return null;
 
-  const visibles = new Set(data.visibles);
-  const ocultasCliente = new Set(["tracking", "carrier", "po", "container"]);
-  const disponibles = data.disponibles.filter(
-    (columna) =>
-      (!esCliente || !ocultasCliente.has(columna.clave)) &&
-      !(esCliente && tipoOrigen === "TRANSIT" && columna.clave === "invoice"),
+  const visibles = new Set(columnasParaListado(data.visibles, esCliente, tipoOrigen));
+  const disponibles = data.disponibles.filter((columna) =>
+    columnaPermitida(columna.clave, esCliente, tipoOrigen),
   );
 
   function alternar(columna: string) {
@@ -76,30 +92,31 @@ export function SelectorColumnas({
           </p>
 
           <ul className="max-h-80 overflow-y-auto">
-            {disponibles.map((columna) => (
-              <li key={columna.clave}>
-                <label
-                  className={clases(
-                    "flex items-center gap-2 rounded px-2 py-2 text-sm",
-                    columna.fija ? "opacity-50" : "cursor-pointer hover:bg-[var(--hover)]",
-                  )}
-                  title={columna.fija ? "Sin esta columna el listado no se puede usar" : undefined}
-                >
-                  <input
-                    type="checkbox"
-                    className="size-4 accent-[var(--mar)]"
-                    checked={visibles.has(columna.clave)}
-                    disabled={columna.fija}
-                    onChange={() => alternar(columna.clave)}
-                  />
-                  {tipoOrigen === "TRANSIT" && columna.clave === "foots_cft"
-                    ? "Metro cúbico (m³)"
-                    : tipoOrigen === "TRANSIT" && columna.clave === "fecha"
-                      ? "ETA"
-                    : columna.etiqueta}
-                </label>
-              </li>
-            ))}
+            {disponibles.map((columna) => {
+              const fijaEnVista = esFijaEnVista(columna, esCliente, tipoOrigen);
+              return (
+                <li key={columna.clave}>
+                  <label
+                    className={clases(
+                      "flex items-center gap-2 rounded px-2 py-2 text-sm",
+                      fijaEnVista ? "opacity-50" : "cursor-pointer hover:bg-[var(--hover)]",
+                    )}
+                    title={fijaEnVista ? "Esta columna es necesaria en esta vista" : undefined}
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[var(--mar)]"
+                      checked={visibles.has(columna.clave)}
+                      disabled={fijaEnVista}
+                      onChange={() => alternar(columna.clave)}
+                    />
+                    {tipoOrigen === "TRANSIT" && columna.clave === "foots_cft"
+                      ? "Metro cúbico (m³)"
+                      : columna.etiqueta}
+                  </label>
+                </li>
+              );
+            })}
           </ul>
 
           <button

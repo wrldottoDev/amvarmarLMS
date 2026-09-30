@@ -362,7 +362,7 @@ class ReferenceType(StrEnum):
     TRACKING = "TRACKING"
     CONTAINER = "CONTAINER"
     BL = "BL"
-    AMAR = "AMAR"
+    AMVAR = "AMVAR"
     OTHER = "OTHER"
 
 
@@ -418,7 +418,7 @@ class ShipmentReference(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "reference_type IN ('INVOICE', 'WR', 'PO', 'TRACKING', 'CONTAINER', 'BL', 'AMAR', 'OTHER')",
+            "reference_type IN ('INVOICE', 'WR', 'PO', 'TRACKING', 'CONTAINER', 'BL', 'AMVAR', 'OTHER')",
             name="reference_type_valido",
         ),
         CheckConstraint("length(btrim(value)) > 0", name="valor_no_vacio"),

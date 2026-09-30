@@ -154,9 +154,9 @@ _COLUMNAS_LISTADO = """
     ) AS bl,
     (
         SELECT r.value FROM shipment_references r
-        WHERE r.shipment_id = s.id AND r.reference_type = 'AMAR'
+        WHERE r.shipment_id = s.id AND r.reference_type = 'AMVAR'
         ORDER BY r.is_primary DESC, r.created_at LIMIT 1
-    ) AS amar,
+    ) AS amvar,
     (
         SELECT count(*) FROM shipment_requirements q
         WHERE q.shipment_id = s.id

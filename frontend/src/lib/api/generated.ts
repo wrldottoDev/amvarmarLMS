@@ -1638,7 +1638,7 @@ export interface components {
             /** Bl */
             bl?: string | null;
             /** Amar */
-            amar?: string | null;
+            amvar?: string | null;
         };
         /** ActualizarDatosTransitoRequest */
         ActualizarDatosTransitoRequest: {
@@ -2032,7 +2032,7 @@ export interface components {
             /** Bl */
             bl?: string | null;
             /** Amar */
-            amar?: string | null;
+            amvar?: string | null;
             /** Packages */
             packages: components["schemas"]["BultoRequest"][];
             /** Initial Status */
@@ -2664,7 +2664,7 @@ export interface components {
          *     con bodega que lo use (ADR-0005).
          * @enum {string}
          */
-        ReferenceType: "INVOICE" | "WR" | "PO" | "TRACKING" | "CONTAINER" | "BL" | "AMAR" | "OTHER";
+        ReferenceType: "INVOICE" | "WR" | "PO" | "TRACKING" | "CONTAINER" | "BL" | "AMVAR" | "OTHER";
         /** RejectRequirementRequest */
         RejectRequirementRequest: {
             /**
@@ -2840,7 +2840,7 @@ export interface components {
             /** Bl */
             bl?: string | null;
             /** Amar */
-            amar?: string | null;
+            amvar?: string | null;
             /** Tracking */
             tracking?: string | null;
             /** Po */
@@ -2948,7 +2948,7 @@ export interface components {
             /** Bl */
             bl?: string | null;
             /** Amar */
-            amar?: string | null;
+            amvar?: string | null;
             /** Tracking */
             tracking?: string | null;
             /** Po */

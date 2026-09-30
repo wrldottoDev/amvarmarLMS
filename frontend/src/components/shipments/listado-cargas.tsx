@@ -5,6 +5,7 @@ import Link from "next/link";
 import { BadgeEstado, BadgePendientes } from "./badges-carga";
 import { TransicionCarga } from "./transicion-carga";
 import {
+  columnasParaListado,
   columnasNumericas,
   contenidoColumna,
   usePreferenciaColumnas,
@@ -57,18 +58,11 @@ export function ListadoCargas({
   const etiquetas = new Map(preferencia?.disponibles.map((c) => [c.clave, c.etiqueta]) ?? []);
 
   // Un cliente ve una sola empresa: la columna sería la misma en cada fila.
-  const ocultasCliente = new Set(["tracking", "carrier", "po", "container"]);
-  const columnasBase = visibles.filter(
-    (c) =>
-      (c !== "empresa" || (empresaVisible && !esCliente)) &&
-      (!esCliente || !ocultasCliente.has(c)) &&
-      !(esCliente && tipoOrigen === "TRANSIT" && c === "invoice"),
+  const columnas = columnasParaListado(
+    visibles.filter((c) => c !== "empresa" || (empresaVisible && !esCliente)),
+    esCliente,
+    tipoOrigen,
   );
-  const columnas = [...columnasBase];
-  if (tipoOrigen === "TRANSIT") {
-    if (esCliente && !columnas.includes("bl")) columnas.splice(1, 0, "bl");
-    if (!columnas.includes("shipper")) columnas.push("shipper");
-  }
   const seleccionHabilitada = Boolean(seleccionadas && alternarSeleccion && alternarTodas);
   const todasSeleccionadas = cargas.length > 0 && cargas.every((carga) => seleccionadas?.has(carga.id));
 
@@ -94,8 +88,6 @@ export function ListadoCargas({
                   >
                     {tipoOrigen === "TRANSIT" && clave === "foots_cft"
                       ? "Metro cúbico (m³)"
-                      : tipoOrigen === "TRANSIT" && clave === "fecha"
-                        ? "ETA"
                       : etiquetas.get(clave) ?? clave}
                   </th>
                 ))}
@@ -237,10 +229,6 @@ function Celda({
 
   if (clave === "foots_cft" && tipoOrigen === "TRANSIT") {
     return <span>{carga.volume_m3 != null ? `${carga.volume_m3} m³` : "—"}</span>;
-  }
-
-  if (clave === "fecha" && tipoOrigen === "TRANSIT") {
-    return <span>{formatearFecha(carga.estimated_arrival_at)}</span>;
   }
 
   const valor = contenidoColumna[clave]?.(carga) ?? "—";

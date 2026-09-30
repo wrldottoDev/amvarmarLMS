@@ -156,7 +156,7 @@ export default function PaginaEditarCarga({
             [
               ["wr", "Warehouse Receipt", datos.wr],
               ["bl", "Número de BL", datos.bl],
-              ["amar", "Número AMAR", datos.amar],
+              ["amvar", "Número AMVAR", datos.amvar],
               ["invoice", "Factura", datos.invoice],
               ["tracking", "Tracking", datos.tracking],
               ["po", "Orden de compra (PO)", datos.po],

@@ -167,7 +167,7 @@ export default function PaginaDetalleCarga() {
       carga.container ||
       carga.tracking ||
       carga.po ||
-      carga.amar ||
+      carga.amvar ||
       medidas.length > 0,
   );
 
@@ -362,7 +362,7 @@ export default function PaginaDetalleCarga() {
                 <div className="pl-5">
                   <Dato etiqueta="Tracking" valor={carga.tracking} />
                   <Dato etiqueta="Orden de compra" valor={carga.po} />
-                  <Dato etiqueta="Número AMAR" valor={carga.amar} />
+                  <Dato etiqueta="Número AMVAR" valor={carga.amvar} />
                   <Dato
                     etiqueta="Peso y volumen"
                     valor={medidas.length > 0 ? medidas.join(" · ") : null}

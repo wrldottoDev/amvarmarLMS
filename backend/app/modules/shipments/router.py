@@ -169,7 +169,7 @@ class CrearCargaRequest(BaseModel):
     # El Warehouse Receipt, cuando la carga sale de una bodega que lo emite.
     wr: str | None = Field(default=None, max_length=120)
     bl: str | None = Field(default=None, max_length=120)
-    amar: str | None = Field(default=None, max_length=120)
+    amvar: str | None = Field(default=None, max_length=120)
 
     # Las piezas del sistema viejo: la sección "Tipos de carga" del formulario
     # de alta. Van en el mismo cuerpo y no en una llamada aparte porque si la
@@ -247,7 +247,7 @@ class ActualizarCargaRequest(BaseModel):
     po: str | None = Field(default=None, max_length=120)
     container: str | None = Field(default=None, max_length=120)
     bl: str | None = Field(default=None, max_length=120)
-    amar: str | None = Field(default=None, max_length=120)
+    amvar: str | None = Field(default=None, max_length=120)
 
 
 class ActualizarDatosTransitoRequest(BaseModel):
@@ -354,7 +354,7 @@ async def crear_carga(
                 container=datos.container,
                 wr=datos.wr,
                 bl=datos.bl,
-                amar=datos.amar,
+                amvar=datos.amvar,
                 initial_status=datos.initial_status,
                 packages=_a_bultos(datos.packages),
             ),
@@ -1101,7 +1101,7 @@ class ShipmentResumenResponse(BaseModel):
     # listado y se busca por ellos todos los días.
     wr: str | None = None
     bl: str | None = None
-    amar: str | None = None
+    amvar: str | None = None
     tracking: str | None = None
     po: str | None = None
     container: str | None = None
@@ -1172,7 +1172,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         invoice=fila.factura,
         wr=fila.wr,
         bl=getattr(fila, "bl", None),
-        amar=getattr(fila, "amar", None),
+        amvar=getattr(fila, "amvar", None),
         tracking=fila.tracking,
         po=fila.po,
         container=fila.contenedor,

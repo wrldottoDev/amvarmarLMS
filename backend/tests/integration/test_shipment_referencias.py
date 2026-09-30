@@ -192,7 +192,7 @@ class TestReglaDeMiami:
             ReferenceType.TRACKING,
             ReferenceType.CONTAINER,
             ReferenceType.BL,
-            ReferenceType.AMAR,
+            ReferenceType.AMVAR,
             ReferenceType.OTHER,
         ],
     )

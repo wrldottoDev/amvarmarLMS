@@ -31,7 +31,7 @@ COLUMNAS_CARGAS: list[DefinicionColumna] = [
     # factura, y el listado viejo mostraba las dos columnas por separado.
     DefinicionColumna("invoice", "Invoice #"),
     DefinicionColumna("bl", "BL"),
-    DefinicionColumna("amar", "Número AMAR"),
+    DefinicionColumna("amvar", "Número AMVAR"),
     DefinicionColumna("estado", "Estado", fija=True),
     DefinicionColumna("shipper", "Proveedor"),
     DefinicionColumna("carrier", "Carrier"),
@@ -43,6 +43,7 @@ COLUMNAS_CARGAS: list[DefinicionColumna] = [
     DefinicionColumna("bultos", "Bultos"),
     DefinicionColumna("pendientes", "Pendientes"),
     DefinicionColumna("fecha", "Fecha"),
+    DefinicionColumna("eta", "ETA"),
 ]
 
 VISTAS: dict[str, list[DefinicionColumna]] = {"shipments": COLUMNAS_CARGAS}

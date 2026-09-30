@@ -121,7 +121,7 @@ class DatosDeCarga:
     container: str | None = None
     wr: str | None = None
     bl: str | None = None
-    amar: str | None = None
+    amvar: str | None = None
     # Los bultos que trae la carga. En el sistema viejo era la sección "Tipos de
     # carga (Piezas)" del formulario de alta, y se perdía si no se cargaba ahí.
     packages: tuple["DatosDeBulto", ...] = ()
@@ -423,7 +423,7 @@ async def _guardar_referencias(
         (ReferenceType.PO, datos.po),
         (ReferenceType.CONTAINER, datos.container),
         (ReferenceType.BL, datos.bl),
-        (ReferenceType.AMAR, datos.amar),
+        (ReferenceType.AMVAR, datos.amvar),
     ):
         limpio = (valor or "").strip()
         if not limpio:
@@ -451,7 +451,7 @@ _REFERENCIAS_EDITABLES: dict[str, ReferenceType] = {
     "po": ReferenceType.PO,
     "container": ReferenceType.CONTAINER,
     "bl": ReferenceType.BL,
-    "amar": ReferenceType.AMAR,
+    "amvar": ReferenceType.AMVAR,
 }
 
 _EDITABLES_CAMPOS: dict[str, str] = {

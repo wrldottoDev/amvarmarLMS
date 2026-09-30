@@ -74,7 +74,7 @@ function FormularioNuevaCarga() {
   const [transporte, setTransporte] = useState<"SEA" | "AIR" | "LAND">("SEA");
   const [wr, setWr] = useState("");
   const [bl, setBl] = useState("");
-  const [amar, setAmar] = useState("");
+  const [amvar, setAmvar] = useState("");
   const [factura, setFactura] = useState("");
   const [shipper, setShipper] = useState("");
   const [carrier, setCarrier] = useState("");
@@ -139,7 +139,7 @@ function FormularioNuevaCarga() {
       carrier: carrier.trim() || null,
       wr: desdeMiami ? wr.trim() || null : null,
       bl: desdeMiami === false ? bl.trim() || null : null,
-      amar: desdeMiami === false ? amar.trim() || null : null,
+      amvar: desdeMiami === false ? amvar.trim() || null : null,
       invoice: factura.trim() || null,
       container: contenedor.trim() || null,
       tracking: tracking.trim() || null,
@@ -474,7 +474,7 @@ function FormularioNuevaCarga() {
                 [
                   ["Proveedor", shipper, setShipper, "Quién envía la mercancía"],
                   ...(desdeMiami === false
-                    ? [["Número AMAR", amar, setAmar, "Número interno AMAR"]] as const
+                    ? [["Número AMVAR", amvar, setAmvar, "Número interno AMVAR"]] as const
                     : []),
                   ["Carrier", carrier, setCarrier, "Naviera o aerolínea"],
                   ["Contenedor", contenedor, setContenedor, "MSKU1234567"],
