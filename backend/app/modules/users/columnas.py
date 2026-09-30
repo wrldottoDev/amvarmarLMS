@@ -25,13 +25,15 @@ class DefinicionColumna:
 # Las mismas del sistema viejo, más las que el nuevo agrega. El orden es el que
 # aparece por defecto.
 COLUMNAS_CARGAS: list[DefinicionColumna] = [
-    DefinicionColumna("identificador", "WR / Factura", fija=True),
+    DefinicionColumna("identificador", "WR / BL", fija=True),
     DefinicionColumna("empresa", "Empresa"),
     # Además del identificador: una carga de Miami tiene WR **y** puede tener
     # factura, y el listado viejo mostraba las dos columnas por separado.
     DefinicionColumna("invoice", "Invoice #"),
+    DefinicionColumna("bl", "BL"),
+    DefinicionColumna("amar", "Número AMAR"),
     DefinicionColumna("estado", "Estado", fija=True),
-    DefinicionColumna("shipper", "Shipper"),
+    DefinicionColumna("shipper", "Proveedor"),
     DefinicionColumna("carrier", "Carrier"),
     DefinicionColumna("foots_cft", "CFTS"),
     DefinicionColumna("tracking", "Tracking"),

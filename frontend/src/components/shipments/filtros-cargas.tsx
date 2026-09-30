@@ -48,6 +48,7 @@ const referencias: { valor: TipoReferencia; etiqueta: string }[] = [
   { valor: "TRACKING", etiqueta: "Tracking" },
   { valor: "CONTAINER", etiqueta: "Contenedor" },
   { valor: "BL", etiqueta: "BL" },
+  { valor: "AMAR", etiqueta: "Número AMAR" },
   { valor: "OTHER", etiqueta: "Otra referencia" },
 ];
 
@@ -162,7 +163,7 @@ export function FiltrosCargas({
       : []),
     ...(valor.wr ? [{ clave: "wr" as const, etiqueta: `WR: ${valor.wr}` }] : []),
     ...(valor.shipper
-      ? [{ clave: "shipper" as const, etiqueta: `Shipper: ${valor.shipper}` }]
+      ? [{ clave: "shipper" as const, etiqueta: `Proveedor: ${valor.shipper}` }]
       : []),
     ...(valor.carrier
       ? [{ clave: "carrier" as const, etiqueta: `Carrier: ${valor.carrier}` }]
@@ -211,7 +212,7 @@ export function FiltrosCargas({
             onChange={(evento) =>
               setBorrador((actual) => ({ ...actual, q: evento.target.value }))
             }
-            placeholder="Factura, WR, shipper, carrier o referencia"
+            placeholder="Factura, WR, BL, proveedor o referencia"
           />
         </label>
 
@@ -226,7 +227,7 @@ export function FiltrosCargas({
               {(
                 [
                   ["wr", "Número WR", "WR105921"],
-                  ["shipper", "Shipper", "Remitente"],
+                  ["shipper", "Proveedor", "Nombre del proveedor"],
                   ["carrier", "Carrier", "Transportista"],
                   ["reference", "Referencia", "Factura, PO, tracking…"],
                 ] as const

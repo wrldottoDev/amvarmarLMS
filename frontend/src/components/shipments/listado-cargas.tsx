@@ -57,7 +57,10 @@ export function ListadoCargas({
   const etiquetas = new Map(preferencia?.disponibles.map((c) => [c.clave, c.etiqueta]) ?? []);
 
   // Un cliente ve una sola empresa: la columna sería la misma en cada fila.
-  const columnas = visibles.filter((c) => c !== "empresa" || (empresaVisible && !esCliente));
+  const columnasBase = visibles.filter((c) => c !== "empresa" || (empresaVisible && !esCliente));
+  const columnas = tipoOrigen === "TRANSIT" && !columnasBase.includes("shipper")
+    ? [...columnasBase, "shipper"]
+    : columnasBase;
   const seleccionHabilitada = Boolean(seleccionadas && alternarSeleccion && alternarTodas);
   const todasSeleccionadas = cargas.length > 0 && cargas.every((carga) => seleccionadas?.has(carga.id));
 
@@ -147,8 +150,9 @@ export function ListadoCargas({
               <Link href={`/shipments/${carga.id}`} className="min-w-0 flex-1">
                 <strong className="block text-sm">{referencia(carga)}</strong>
                 <span className="block text-xs text-[var(--texto-secundario)]">
-                  {carga.origin.location_code} → {carga.destination.location_code} ·{" "}
-                  {formatearFecha(carga.created_at)}
+                  {tipoOrigen === "TRANSIT"
+                    ? carga.shipper || "Proveedor sin indicar"
+                    : `${carga.origin.location_code} → ${carga.destination.location_code} · ${formatearFecha(carga.created_at)}`}
                 </span>
               </Link>
               {soloLectura ? (
@@ -214,7 +218,12 @@ function Celda({
     );
   }
   if (clave === "pendientes")
-    return <BadgePendientes cantidad={cantidadPendiente(carga, esCliente)} />;
+    return (
+      <BadgePendientes
+        cantidad={cantidadPendiente(carga, esCliente)}
+        etiqueta={esCliente && tipoOrigen !== "TRANSIT" ? "sugerido" : "pendiente"}
+      />
+    );
 
   if (clave === "foots_cft" && tipoOrigen === "TRANSIT") {
     return <span>{carga.volume_m3 != null ? `${carga.volume_m3} m³` : "—"}</span>;

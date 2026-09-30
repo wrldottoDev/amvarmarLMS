@@ -23,7 +23,7 @@ pide elegir la correcta.
 
 AMVI solo prepara la propuesta: el cambio se aplica cuando la persona pulsa **Confirmar** en el chat. Si la
 carga está varios estados antes, la propuesta incluye todos los pasos y se aplican juntos o ninguno. Si un
-paso está bloqueado (por ejemplo, falta el WR para almacenar en Miami o un documento obligatorio), AMVI
+paso está bloqueado (por ejemplo, falta el número WR para almacenar en Miami), AMVI
 explica qué falta y no propone nada.
 
 Retroceder, cancelar, despachar y entregar no se hacen desde AMVI: se hacen desde la carga.

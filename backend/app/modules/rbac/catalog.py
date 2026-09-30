@@ -27,6 +27,7 @@ class Perm:
     SHIPMENTS_READ = "shipments.read"
     SHIPMENTS_CREATE = "shipments.create"
     SHIPMENTS_UPDATE = "shipments.update"
+    SHIPMENTS_DELETE = "shipments.delete"
     SHIPMENTS_TRANSITION_FORWARD = "shipments.transition.forward"
     SHIPMENTS_TRANSITION_BACKWARD = "shipments.transition.backward"
     SHIPMENTS_TRANSITION_REVERT_DELIVERED = "shipments.transition.revert_delivered"
@@ -87,6 +88,7 @@ PERMISSIONS: dict[str, str] = {
     Perm.SHIPMENTS_READ: "Ver cargas (el alcance define si son todas o solo las de su empresa)",
     Perm.SHIPMENTS_CREATE: "Crear prealertas",
     Perm.SHIPMENTS_UPDATE: "Editar datos de una prealerta",
+    Perm.SHIPMENTS_DELETE: "Eliminar (ocultar) cargas con trazabilidad y recuperación",
     Perm.SHIPMENTS_TRANSITION_FORWARD: "Cambiar estados operativos, incluida la entrega",
     Perm.SHIPMENTS_TRANSITION_BACKWARD: "Corregir estados hacia atrás (exige justificación)",
     Perm.SHIPMENTS_TRANSITION_REVERT_DELIVERED: "Revertir una carga ya entregada",
@@ -165,68 +167,28 @@ _CLIENTE_PERMS: frozenset[str] = frozenset(
 # retroceder un estado o exonerar un requisito, pero AMVARMAR opera con un solo
 # equipo y elegir entre dos nombres no aportaba (ADR-0017).
 #
-# Sigue afuera lo que solo toca SUPER_ADMIN: revertir una entrega ya cerrada,
-# gestionar roles y permisos, y los ajustes de sistema.
-_ADMIN_PERMS: frozenset[str] = frozenset(
-    {
-        Perm.SHIPMENTS_READ,
-        Perm.SHIPMENTS_CREATE,
-        Perm.SHIPMENTS_UPDATE,
-        Perm.SHIPMENTS_TRANSITION_FORWARD,
-        Perm.SHIPMENTS_TRANSITION_BACKWARD,
-        Perm.SHIPMENTS_CANCEL_PREALERT,
-        Perm.SHIPMENTS_CANCEL_IN_TRANSIT,
-        Perm.SHIPMENTS_REOPEN,
-        Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE,
-        Perm.SHIPMENTS_LEGAL_HOLD_MANAGE,
-        Perm.SHIPMENTS_DISPUTE_CREATE,
-        Perm.SHIPMENTS_DISPUTE_RESOLVE,
-        Perm.SHIPMENTS_REQUIREMENT_MANAGE,
-        Perm.SHIPMENTS_REQUIREMENT_WAIVE,
-        Perm.DISPATCH_REQUESTS_CREATE,
-        Perm.DISPATCH_REQUESTS_APPROVE,
-        Perm.DISPATCH_REQUESTS_REJECT,
-        Perm.DISPATCH_REQUESTS_PREPARE,
-        Perm.DISPATCH_REQUESTS_DISPATCH,
-        Perm.DISPATCH_REQUESTS_COMPLETE,
-        Perm.DISPATCH_REQUESTS_CANCEL,
-        Perm.DOCUMENTS_UPLOAD_CLIENT,
-        Perm.DOCUMENTS_UPLOAD_INTERNAL,
-        Perm.DOCUMENTS_VERIFY,
-        Perm.DOCUMENTS_INVALIDATE,
-        Perm.COMPANIES_MANAGE,
-        Perm.LOCATIONS_MANAGE,
-        Perm.USERS_CREATE_INTERNAL,
-        Perm.USERS_MANAGE,
-        Perm.AUDIT_LOGS_READ,
-        Perm.REPORTS_EXPORT,
-        Perm.NOTIFICATIONS_PREFERENCES_OWN,
-        Perm.NOTIFICATIONS_PREFERENCES_COMPANY,
-        Perm.COPILOT_USE,
-        Perm.COPILOT_TOOLS_DRAFT,
-    }
-)
-
+# ADMIN y SUPER_ADMIN comparten permisos. Las operaciones sensibles mantienen
+# motivo, confirmación explícita y auditoría como controles de seguridad.
 # SUPER_ADMIN tiene todo. Se calcula, no se enumera: un permiso nuevo lo obtiene
 # automáticamente y no puede quedarse fuera por olvido.
 _SUPER_ADMIN_PERMS: frozenset[str] = frozenset(PERMISSIONS)
+# ADMIN comparte la matriz completa. Las operaciones delicadas se protegen con
+# confirmaciones explícitas en la interfaz y auditoría, no con errores 401.
+_ADMIN_PERMS: frozenset[str] = _SUPER_ADMIN_PERMS
 
 
 ROLES: dict[str, RoleDefinition] = {
     RoleCode.SUPER_ADMIN: RoleDefinition(
         name="Super administrador",
-        description=(
-            "Administrador técnico y de seguridad. No se usa para operación cotidiana. "
-            "Único rol que puede revertir una entrega y gestionar roles/permisos."
-        ),
+        description=("Administrador técnico y de seguridad con la matriz completa de permisos."),
         allowed_scopes=(ScopeType.GLOBAL,),
         permissions=_SUPER_ADMIN_PERMS,
     ),
     RoleCode.ADMIN: RoleDefinition(
         name="Administrador",
         description=(
-            "Personal de AMVARMAR. Registra las cargas que llegan a Miami, mueve la cadena "
-            "logística, aprueba despachos y exige, verifica e invalida documentos."
+            "Personal administrador de AMVARMAR con la misma matriz de permisos que "
+            "SUPER_ADMIN; las acciones delicadas exigen confirmación y quedan auditadas."
         ),
         allowed_scopes=(ScopeType.GLOBAL, ScopeType.ASSIGNED),
         permissions=_ADMIN_PERMS,

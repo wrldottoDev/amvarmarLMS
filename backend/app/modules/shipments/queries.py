@@ -142,6 +142,16 @@ _COLUMNAS_LISTADO = """
         ORDER BY r.is_primary DESC, r.created_at LIMIT 1
     ) AS wr,
     (
+        SELECT r.value FROM shipment_references r
+        WHERE r.shipment_id = s.id AND r.reference_type = 'BL'
+        ORDER BY r.is_primary DESC, r.created_at LIMIT 1
+    ) AS bl,
+    (
+        SELECT r.value FROM shipment_references r
+        WHERE r.shipment_id = s.id AND r.reference_type = 'AMAR'
+        ORDER BY r.is_primary DESC, r.created_at LIMIT 1
+    ) AS amar,
+    (
         SELECT count(*) FROM shipment_requirements q
         WHERE q.shipment_id = s.id
           AND q.status IN ('OPEN', 'PENDING', 'UPLOADED', 'REJECTED')
@@ -150,7 +160,7 @@ _COLUMNAS_LISTADO = """
         SELECT count(*) FROM shipment_requirements q
         WHERE q.shipment_id = s.id
           AND q.required_from = 'CLIENT'
-          AND q.status IN ('OPEN', 'PENDING', 'UPLOADED', 'REJECTED')
+          AND q.status IN ('OPEN', 'PENDING', 'REJECTED')
     ) AS requisitos_del_cliente
 """
 
@@ -407,6 +417,11 @@ async def tarjetas_dashboard(
         parametros["empresas"] = alcance.company_ids
 
     filtro_requisito = "AND q.required_from = 'CLIENT'" if solo_del_cliente else ""
+    estados_requisito = (
+        "('OPEN', 'PENDING', 'REJECTED')"
+        if solo_del_cliente
+        else "('OPEN', 'PENDING', 'UPLOADED', 'REJECTED')"
+    )
 
     fila = (
         await session.execute(
@@ -428,7 +443,7 @@ async def tarjetas_dashboard(
                         WHERE EXISTS (
                             SELECT 1 FROM shipment_requirements q
                             WHERE q.shipment_id = s.id
-                              AND q.status IN ('OPEN', 'PENDING', 'UPLOADED', 'REJECTED')
+                              AND q.status IN {estados_requisito}
                               {filtro_requisito}
                         )
                     ) AS requieren_accion,

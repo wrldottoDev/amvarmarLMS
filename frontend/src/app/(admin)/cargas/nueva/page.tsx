@@ -73,6 +73,8 @@ function FormularioNuevaCarga() {
   const [volumenM3, setVolumenM3] = useState("");
   const [transporte, setTransporte] = useState<"SEA" | "AIR" | "LAND">("SEA");
   const [wr, setWr] = useState("");
+  const [bl, setBl] = useState("");
+  const [amar, setAmar] = useState("");
   const [factura, setFactura] = useState("");
   const [shipper, setShipper] = useState("");
   const [carrier, setCarrier] = useState("");
@@ -114,7 +116,8 @@ function FormularioNuevaCarga() {
       origenEfectivo !== destino &&
       hayPeso &&
       problemaDePiezas(piezas) === null &&
-      (!exigeFactura || factura.trim()),
+      (!exigeFactura || factura.trim()) &&
+      (desdeMiami !== false || bl.trim()),
   );
 
   async function guardar() {
@@ -135,6 +138,8 @@ function FormularioNuevaCarga() {
       shipper: shipper.trim() || null,
       carrier: carrier.trim() || null,
       wr: desdeMiami ? wr.trim() || null : null,
+      bl: desdeMiami === false ? bl.trim() || null : null,
+      amar: desdeMiami === false ? amar.trim() || null : null,
       invoice: factura.trim() || null,
       container: contenedor.trim() || null,
       tracking: tracking.trim() || null,
@@ -169,7 +174,7 @@ function FormularioNuevaCarga() {
         {desdeMiami === true && origenFijado
           ? "Nueva carga de Miami"
           : desdeMiami === false && origenFijado
-            ? "Nueva carga de Tránsito"
+            ? "Nuevo reporte de tránsito"
             : "Nueva carga"}
       </h1>
 
@@ -178,7 +183,7 @@ function FormularioNuevaCarga() {
           que ya se escribió. */}
       {origenFijado ? (
         <div className="rounded-lg border bg-[var(--marca-tenue)] px-4 py-3 text-sm">
-          <strong>{desdeMiami ? "Carga de Miami" : "Carga de Tránsito"}</strong>
+          <strong>{desdeMiami ? "Carga de Miami" : "Reporte de tránsito"}</strong>
           <p className="mt-1 text-[var(--texto-secundario)]">
             {desdeMiami
               ? "Sale de una bodega que emite Warehouse Receipt."
@@ -326,6 +331,23 @@ function FormularioNuevaCarga() {
                 </label>
               ) : null}
 
+              {desdeMiami === false ? (
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium">
+                    Número de BL <span className="font-normal text-[var(--peligro)]">— obligatorio</span>
+                  </span>
+                  <input
+                    className={clases(
+                      "w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm",
+                      !bl.trim() && "border-[var(--peligro)]",
+                    )}
+                    value={bl}
+                    onChange={(evento) => setBl(evento.target.value)}
+                    placeholder="BL123456"
+                  />
+                </label>
+              ) : null}
+
               <label className="block">
                 <span className="mb-1 block text-sm font-medium">
                   Factura
@@ -450,7 +472,10 @@ function FormularioNuevaCarga() {
               </label>
               {(
                 [
-                  ["Shipper", shipper, setShipper, "Quién envía la mercancía"],
+                  ["Proveedor", shipper, setShipper, "Quién envía la mercancía"],
+                  ...(desdeMiami === false
+                    ? [["Número AMAR", amar, setAmar, "Número interno AMAR"]] as const
+                    : []),
                   ["Carrier", carrier, setCarrier, "Naviera o aerolínea"],
                   ["Contenedor", contenedor, setContenedor, "MSKU1234567"],
                   ["Tracking", tracking, setTracking, ""],

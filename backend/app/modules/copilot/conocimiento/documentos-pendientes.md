@@ -13,5 +13,5 @@ lista de requisitos, usá **Adjuntar otro documento**.
 - Los documentos habituales de una carga son factura comercial y packing list (en todas las cargas), SLI
   (solo si la carga sale de la bodega de Miami) y, si corresponde, un permiso especial. El BL pertenece
   al despacho, no a una carga individual.
-- Un requisito marcado como bloqueante tiene que resolverse antes del paso que protege (por ejemplo,
-  antes del despacho).
+- Los documentos son opcionales: ayudan a Operaciones a procesar y respaldar la carga, pero nunca
+  bloquean un cambio de estado ni una acción de despacho.

@@ -23,6 +23,7 @@ import {
   usePreparar,
   useRechazar,
 } from "@/features/despachos/consultas";
+import { identificadorDespacho } from "@/features/despachos/identificador";
 import { ErrorApi } from "@/lib/api/client";
 import { identificadorCarga } from "@/features/shipments/identificador";
 import { formatearFechaHora } from "@/lib/utilidades";
@@ -76,10 +77,15 @@ export default function PaginaDetalleDespacho() {
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold">{data.dispatch_number}</h1>
+          <h1 className="text-2xl font-bold">
+            {identificadorDespacho(data.shipments.map((carga) => identificadorCarga(carga)))}
+          </h1>
           <p className="mt-0.5 text-sm text-[var(--texto-secundario)]">
             {data.shipment_count === 1 ? "1 carga" : `${data.shipment_count} cargas`} ·{" "}
             {metodos.find((m) => m.valor === data.method)?.etiqueta ?? data.method}
+          </p>
+          <p className="mt-0.5 text-xs text-[var(--texto-secundario)]">
+            Referencia de despacho: {data.dispatch_number}
           </p>
         </div>
         <InsigniaDespacho estado={data.status} />

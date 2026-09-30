@@ -119,6 +119,8 @@ class DatosDeCarga:
     po: str | None = None
     container: str | None = None
     wr: str | None = None
+    bl: str | None = None
+    amar: str | None = None
     # Los bultos que trae la carga. En el sistema viejo era la sección "Tipos de
     # carga (Piezas)" del formulario de alta, y se perdía si no se cargaba ahí.
     packages: tuple["DatosDeBulto", ...] = ()
@@ -401,6 +403,8 @@ async def _guardar_referencias(
         (ReferenceType.TRACKING, datos.tracking),
         (ReferenceType.PO, datos.po),
         (ReferenceType.CONTAINER, datos.container),
+        (ReferenceType.BL, datos.bl),
+        (ReferenceType.AMAR, datos.amar),
     ):
         limpio = (valor or "").strip()
         if not limpio:
@@ -427,6 +431,8 @@ _REFERENCIAS_EDITABLES: dict[str, ReferenceType] = {
     "tracking": ReferenceType.TRACKING,
     "po": ReferenceType.PO,
     "container": ReferenceType.CONTAINER,
+    "bl": ReferenceType.BL,
+    "amar": ReferenceType.AMAR,
 }
 
 _EDITABLES_CAMPOS: dict[str, str] = {
@@ -864,8 +870,8 @@ async def ocultar(
     if carga is None:
         raise RecursoNoEncontrado("Carga no encontrada.")
 
-    if not permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=carga.company_id):
-        raise SinPermisoParaTransicion(Perm.SHIPMENTS_UPDATE)
+    if not permisos.permite(Perm.SHIPMENTS_DELETE, company_id=carga.company_id):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_DELETE)
 
     if carga.hidden_at is not None:
         raise NoSePuedeEditar("Esta carga ya está oculta.")

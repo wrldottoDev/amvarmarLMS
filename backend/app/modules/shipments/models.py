@@ -357,6 +357,7 @@ class ReferenceType(StrEnum):
     TRACKING = "TRACKING"
     CONTAINER = "CONTAINER"
     BL = "BL"
+    AMAR = "AMAR"
     OTHER = "OTHER"
 
 
@@ -412,7 +413,7 @@ class ShipmentReference(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "reference_type IN ('INVOICE', 'WR', 'PO', 'TRACKING', 'CONTAINER', 'BL', 'OTHER')",
+            "reference_type IN ('INVOICE', 'WR', 'PO', 'TRACKING', 'CONTAINER', 'BL', 'AMAR', 'OTHER')",
             name="reference_type_valido",
         ),
         CheckConstraint("length(btrim(value)) > 0", name="valor_no_vacio"),
@@ -600,8 +601,8 @@ class ShipmentRequirement(Base):
 
     status: Mapped[str] = mapped_column(String(20))
 
-    # Si es true, bloquea la transición declarada en el tipo de documento.
-    # Un requisito informativo no impide despachar.
+    # Solo los requisitos no documentales pueden bloquear una transición.
+    # Para DOCUMENT la base garantiza false: los archivos son opcionales.
     blocks_dispatch: Mapped[bool] = mapped_column(server_default=text("true"))
 
     due_at: Mapped[datetime | None]
@@ -632,6 +633,10 @@ class ShipmentRequirement(Base):
         CheckConstraint(
             "requirement_type <> 'DOCUMENT' OR document_type_id IS NOT NULL",
             name="documental_exige_tipo",
+        ),
+        CheckConstraint(
+            "requirement_type <> 'DOCUMENT' OR blocks_dispatch = false",
+            name="documentos_no_bloquean",
         ),
         # ADR-0003: cada tipo usa su propio juego de estados. El CHECK impide
         # que un requisito de pago quede en `VERIFIED`, que no significa nada ahí.

@@ -38,9 +38,8 @@ class DocumentTypeCode(StrEnum):
 class ProvidedBy(StrEnum):
     """Quién debe aportar el documento.
 
-    Distinto de "obligatorio para la carga": el packing list es obligatorio pero
-    lo carga Operaciones, así que el cliente no debe verlo como pendiente suyo
-    (ADR-0003).
+    El packing list, por ejemplo, lo carga Operaciones; el cliente no debe verlo
+    como una sugerencia pendiente suya (ADR-0003).
     """
 
     CLIENT = "CLIENT"
@@ -78,7 +77,7 @@ class DocumentType(Base, TimestampMixin):
     # solo el packing list admite hoja de cálculo.
     allowed_formats: Mapped[list[str]] = mapped_column(ARRAY(String(16)))
 
-    # Si es obligatorio, en qué estado se exige. NULL = no bloquea ninguna
+    # Momento recomendado para tenerlo. NULL = no está ligado a una transición.
     # transición (el BL se carga después del despacho).
     required_before_status: Mapped[str | None] = mapped_column(String(32))
 

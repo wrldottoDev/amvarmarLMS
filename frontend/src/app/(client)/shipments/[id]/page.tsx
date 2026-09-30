@@ -96,6 +96,7 @@ export default function PaginaDetalleCarga() {
       carga.container ||
       carga.tracking ||
       carga.po ||
+      carga.amar ||
       medidas.length > 0,
   );
 
@@ -110,7 +111,10 @@ export default function PaginaDetalleCarga() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <BadgeEstado estado={carga.status} />
-              <BadgePendientes cantidad={pendientes} />
+              <BadgePendientes
+                cantidad={pendientes}
+                etiqueta={usuario?.empresa && !carga.bl ? "sugerido" : "pendiente"}
+              />
               {carga.archived_at ? (
                 <span
                   className="inline-flex min-h-7 items-center gap-1.5 rounded bg-[var(--hover)] px-2.5 py-1 text-xs font-bold text-[var(--texto-secundario)]"
@@ -121,7 +125,7 @@ export default function PaginaDetalleCarga() {
                 </span>
               ) : null}
             </div>
-            {/* WR si sale de una bodega que lo emite; factura en los demás casos. */}
+            {/* WR para Miami; BL para reportes de tránsito. */}
             <h1 className="mt-3 text-2xl font-bold sm:text-3xl">{identificador}</h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -224,11 +228,11 @@ export default function PaginaDetalleCarga() {
               <Dato etiqueta="Modo de transporte" valor={<span className="inline-flex items-center gap-2"><Ship className="size-4 text-[var(--marca)]" />{carga.transport_mode ?? "No registrado"}</span>} />
               <Dato etiqueta="Paquetes" valor={<span className="inline-flex items-center gap-2"><Package className="size-4 text-[var(--marca)]" />{carga.package_count}</span>} />
               <Dato
-                etiqueta={carga.wr ? "Warehouse Receipt" : "Factura"}
+                etiqueta={carga.wr ? "Warehouse Receipt" : carga.bl ? "Número de BL" : "Factura"}
                 valor={
                   <span className="inline-flex items-center gap-2">
                     <Tag className="size-4 text-[var(--marca)]" />
-                    {carga.wr ?? carga.invoice ?? "No registrada"}
+                    {carga.wr ?? carga.bl ?? carga.invoice ?? "No registrada"}
                   </span>
                 }
               />
@@ -276,13 +280,14 @@ export default function PaginaDetalleCarga() {
               </h3>
               <dl className="grid grid-cols-2 divide-x border-b">
                 <div className="pr-5">
-                  <Dato etiqueta="Shipper" valor={carga.shipper} />
+                  <Dato etiqueta="Proveedor" valor={carga.shipper} />
                   <Dato etiqueta="Carrier" valor={carga.carrier} />
                   <Dato etiqueta="Contenedor" valor={carga.container} />
                 </div>
                 <div className="pl-5">
                   <Dato etiqueta="Tracking" valor={carga.tracking} />
                   <Dato etiqueta="Orden de compra" valor={carga.po} />
+                  <Dato etiqueta="Número AMAR" valor={carga.amar} />
                   <Dato
                     etiqueta="Peso y volumen"
                     valor={medidas.length > 0 ? medidas.join(" · ") : null}

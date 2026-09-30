@@ -36,7 +36,7 @@ export default function PaginaAvisos() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <div className="flex rounded-md border p-0.5" role="group" aria-label="Filtrar avisos">
             {[
               { valor: false, etiqueta: "Todos" },
@@ -79,7 +79,7 @@ export default function PaginaAvisos() {
               <Link
                 href={rutaDeRecurso(aviso)}
                 className={clases(
-                  "flex items-start gap-3 px-4 py-4 hover:bg-[var(--hover)]",
+                  "flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-4 hover:bg-[var(--hover)]",
                   aviso.read_at ? "" : "bg-[var(--marca-tenue)]",
                 )}
                 onClick={() => {
@@ -95,12 +95,12 @@ export default function PaginaAvisos() {
                 />
                 <span className="min-w-0 flex-1">
                   <strong className="block text-sm">{aviso.title}</strong>
-                  <span className="mt-0.5 block text-sm text-[var(--texto-secundario)]">
+                  <span className="mt-0.5 block break-words text-sm text-[var(--texto-secundario)]">
                     {aviso.body}
                   </span>
                 </span>
                 <time
-                  className="shrink-0 text-xs text-[var(--texto-secundario)]"
+                  className="ml-5 w-full shrink-0 text-xs text-[var(--texto-secundario)] sm:ml-0 sm:w-auto sm:text-right"
                   dateTime={aviso.created_at}
                   title={formatearFechaHora(aviso.created_at)}
                 >

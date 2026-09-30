@@ -113,7 +113,10 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
                   <p className="text-sm"><span className="mr-1 text-xs text-[var(--texto-secundario)]">ETA</span>{formatearFecha(carga.estimated_arrival_at)}</p>
                   <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <BadgeEstado estado={carga.status} />
-                    <BadgePendientes cantidad={pendientes} />
+                    <BadgePendientes
+                      cantidad={pendientes}
+                      etiqueta={vista === "client" ? "sugerido" : "pendiente"}
+                    />
                   </div>
                   <ArrowRight className="hidden size-4 text-[var(--texto-secundario)] sm:block" aria-hidden="true" />
                 </Link>

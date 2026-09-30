@@ -155,6 +155,8 @@ export default function PaginaEditarCarga({
           {(
             [
               ["wr", "Warehouse Receipt", datos.wr],
+              ["bl", "Número de BL", datos.bl],
+              ["amar", "Número AMAR", datos.amar],
               ["invoice", "Factura", datos.invoice],
               ["tracking", "Tracking", datos.tracking],
               ["po", "Orden de compra (PO)", datos.po],
@@ -191,7 +193,7 @@ export default function PaginaEditarCarga({
           </label>
           {(
             [
-              ["shipper", "Shipper", datos.shipper],
+              ["shipper", "Proveedor", datos.shipper],
               ["carrier", "Carrier", datos.carrier],
             ] as const
           ).map(([campo, etiqueta, actual]) => (

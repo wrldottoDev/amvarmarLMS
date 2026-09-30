@@ -59,6 +59,7 @@ class RechazoRequest(BaseModel):
 class SolicitudResponse(BaseModel):
     id: UUID
     dispatch_number: str
+    shipment_identifiers: list[str]
     status: str
     method: str
     company_id: UUID
@@ -71,7 +72,8 @@ class CargaIncluidaResponse(BaseModel):
     id: UUID
     shipment_number: str
     wr: str | None
-    invoice: str | None
+    bl: str | None = None
+    invoice: str | None = None
     status: str
     package_count: int
     weight_kg: Decimal | None
@@ -229,10 +231,21 @@ async def _detalle(
     # lectura del asistente la reusan, y dos copias de este SQL solo pueden
     # divergir con el tiempo.
     fila = await queries.detalle(db, dispatch_id=dispatch_id, empresas=empresas)
+    identificadores = [
+        f"WR {carga['wr']}"
+        if carga.get("wr")
+        else f"BL {carga['bl']}"
+        if carga.get("bl")
+        else f"Factura {carga['invoice']}"
+        if carga.get("invoice")
+        else "Sin WR, BL o factura"
+        for carga in fila.shipments
+    ]
 
     return DetalleSolicitudResponse(
         id=fila.id,
         dispatch_number=fila.dispatch_number,
+        shipment_identifiers=identificadores,
         status=fila.status,
         method=fila.method,
         company_id=fila.company_id,
@@ -276,6 +289,7 @@ async def listar(
             SolicitudResponse(
                 id=f.id,
                 dispatch_number=f.dispatch_number,
+                shipment_identifiers=list(f.shipment_identifiers),
                 status=f.status,
                 method=f.method,
                 company_id=f.company_id,

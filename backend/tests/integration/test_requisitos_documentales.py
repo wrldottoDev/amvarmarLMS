@@ -1,7 +1,7 @@
-"""Requisitos documentales enlazados (Paso 3.4).
+"""Recomendaciones documentales enlazadas (Paso 3.4).
 
-Un documento obligatorio del catálogo bloquea el avance hasta que Operaciones
-lo verifica o lo exonera. Subirlo NO alcanza (ADR-0003).
+Los archivos conservan su flujo de carga y revisión, pero nunca bloquean una
+transición ni una acción de despacho.
 """
 
 import uuid
@@ -14,7 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.dispatches import service as despachos
-from app.modules.dispatches.models import DispatchMethod
+from app.modules.dispatches.models import DispatchMethod, DispatchStatus
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import service as cargas
@@ -247,7 +247,7 @@ class TestAperturaDesdeElCatalogo:
         assert abiertos["COMMERCIAL_INVOICE"] == RequirementStatus.PENDING
         assert "SLI" not in abiertos
 
-    async def test_recibir_abre_los_requisitos_obligatorios(
+    async def test_recibir_abre_las_recomendaciones_documentales(
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
@@ -270,6 +270,16 @@ class TestAperturaDesdeElCatalogo:
         assert abiertos["COMMERCIAL_INVOICE"] == RequirementStatus.PENDING
         assert abiertos["PACKING_LIST"] == RequirementStatus.PENDING
         assert abiertos["PROOF_OF_DELIVERY"] == RequirementStatus.PENDING
+        bloqueantes = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM shipment_requirements "
+                    "WHERE shipment_id = :s AND blocks_dispatch"
+                ),
+                {"s": carga},
+            )
+        ).scalar_one()
+        assert bloqueantes == 0
         # El BL se carga después del despacho: nunca es un pendiente (ADR-0006).
         assert "BL" not in abiertos
 
@@ -359,8 +369,8 @@ class TestAperturaDesdeElCatalogo:
         assert segunda["COMMERCIAL_INVOICE"] == RequirementStatus.WAIVED
 
 
-class TestBloqueoDelDespacho:
-    """El gate del paso: no se aprueba un despacho sin los documentos."""
+class TestDocumentosOpcionalesEnDespacho:
+    """Los documentos se solicitan y revisan, pero no frenan el despacho."""
 
     async def _carga_con_pendiente(self, session: AsyncSession, ctx: dict) -> uuid.UUID:
         carga = await _carga(session, ctx)
@@ -369,7 +379,7 @@ class TestBloqueoDelDespacho:
         )
         return carga
 
-    async def test_aprobar_con_requisito_abierto_da_conflicto(
+    async def test_aprobar_con_requisito_abierto_es_valido(
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
@@ -383,23 +393,19 @@ class TestBloqueoDelDespacho:
             permisos=await _permisos(session, redis, ctx["admin"]),
         )
 
-        with pytest.raises(cargas.RequisitosPendientes) as error:
-            await despachos.aprobar(
-                session,
-                dispatch_id=solicitud.id,
-                actor_user_id=ctx["admin"],
-                permisos=await _permisos(session, redis, ctx["admin"]),
-                company_ids=None,
-            )
+        resultado = await despachos.aprobar(
+            session,
+            dispatch_id=solicitud.id,
+            actor_user_id=ctx["admin"],
+            permisos=await _permisos(session, redis, ctx["admin"]),
+            company_ids=None,
+        )
 
-        assert error.value.code == "SHIPMENT_REQUIREMENTS_PENDING"
-        titulos = {d["titulo"] for d in error.value.details}
-        assert "Factura comercial" in titulos
+        assert resultado.hacia == DispatchStatus.APPROVED
 
-    async def test_el_detalle_dice_de_que_carga_falta_cada_cosa(
+    async def test_varias_cargas_con_documentos_pendientes_se_aprueban(
         self, session: AsyncSession, redis
     ) -> None:
-        """Con varias cargas, "falta un documento" no basta para actuar."""
         ctx = await _entorno(session)
         una = await self._carga_con_pendiente(session, ctx)
         otra = await self._carga_con_pendiente(session, ctx)
@@ -412,17 +418,15 @@ class TestBloqueoDelDespacho:
             permisos=await _permisos(session, redis, ctx["admin"]),
         )
 
-        with pytest.raises(cargas.RequisitosPendientes) as error:
-            await despachos.aprobar(
-                session,
-                dispatch_id=solicitud.id,
-                actor_user_id=ctx["admin"],
-                permisos=await _permisos(session, redis, ctx["admin"]),
-                company_ids=None,
-            )
+        resultado = await despachos.aprobar(
+            session,
+            dispatch_id=solicitud.id,
+            actor_user_id=ctx["admin"],
+            permisos=await _permisos(session, redis, ctx["admin"]),
+            company_ids=None,
+        )
 
-        numeros = {d["carga"] for d in error.value.details}
-        assert len(numeros) == 2
+        assert resultado.hacia == DispatchStatus.APPROVED
 
     async def test_la_prueba_de_entrega_no_impide_despachar(
         self, session: AsyncSession, redis

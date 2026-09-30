@@ -30,9 +30,7 @@ export function QueHacer() {
 
   const cargas = documentos.data.items;
   const conDocumentosPendientes = cargas.filter((c) => c.client_action_required_count > 0);
-  const listasParaDespachar = cargas.filter(
-    (c) => c.status === "STORED" && c.client_action_required_count === 0,
-  );
+  const listasParaDespachar = cargas.filter((c) => c.status === "STORED");
 
   const pendientes = [
     conDocumentosPendientes.length > 0
@@ -42,9 +40,9 @@ export function QueHacer() {
           estilo: "border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] text-[var(--advertencia)]",
           titulo:
             conDocumentosPendientes.length === 1
-              ? "Falta un documento en una carga"
-              : `Faltan documentos en ${conDocumentosPendientes.length} cargas`,
-          detalle: "Sin ellos no podemos despachar.",
+              ? "Hay un documento sugerido en una carga"
+              : `Hay documentos sugeridos en ${conDocumentosPendientes.length} cargas`,
+          detalle: "Son opcionales y no impiden el despacho.",
           enlace: "/shipments?accion=documentos",
           accion: "Ver cuáles",
         }
@@ -70,7 +68,7 @@ export function QueHacer() {
       <div className="flex items-center gap-3 rounded-lg border border-[var(--exito-borde)] bg-[var(--exito-tenue)] px-4 py-3.5 text-sm text-[var(--exito)]">
         <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />
         <p>
-          <strong>Todo al día.</strong> No hay nada pendiente de tu lado.
+          <strong>Todo al día.</strong> No hay documentos sugeridos pendientes.
         </p>
       </div>
     );

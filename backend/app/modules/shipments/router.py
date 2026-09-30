@@ -89,7 +89,7 @@ class RequirementRequest(BaseModel):
     required_from: str = Field(pattern="^(CLIENT|STAFF)$")
     document_type_id: UUID | None = None
     description: str | None = Field(default=None, max_length=2000)
-    blocks_dispatch: bool = True
+    blocks_dispatch: bool = False
     due_at: datetime | None = None
 
 
@@ -167,6 +167,8 @@ class CrearCargaRequest(BaseModel):
     container: str | None = Field(default=None, max_length=120)
     # El Warehouse Receipt, cuando la carga sale de una bodega que lo emite.
     wr: str | None = Field(default=None, max_length=120)
+    bl: str | None = Field(default=None, max_length=120)
+    amar: str | None = Field(default=None, max_length=120)
 
     # Las piezas del sistema viejo: la sección "Tipos de carga" del formulario
     # de alta. Van en el mismo cuerpo y no en una llamada aparte porque si la
@@ -242,6 +244,8 @@ class ActualizarCargaRequest(BaseModel):
     tracking: str | None = Field(default=None, max_length=120)
     po: str | None = Field(default=None, max_length=120)
     container: str | None = Field(default=None, max_length=120)
+    bl: str | None = Field(default=None, max_length=120)
+    amar: str | None = Field(default=None, max_length=120)
 
 
 def _a_bultos(peticiones: list[BultoRequest]) -> tuple[gestion.DatosDeBulto, ...]:
@@ -340,6 +344,8 @@ async def crear_carga(
                 po=datos.po,
                 container=datos.container,
                 wr=datos.wr,
+                bl=datos.bl,
+                amar=datos.amar,
                 initial_status=datos.initial_status,
                 packages=_a_bultos(datos.packages),
             ),
@@ -576,6 +582,50 @@ class OcultarRequest(BaseModel):
     # Obligatorio: una carga que desaparece sin explicación es indistinguible de
     # una que se perdió.
     motivo: str = Field(min_length=3, max_length=2000)
+
+
+class OcultarMasivoRequest(BaseModel):
+    shipment_ids: Annotated[list[UUID], Field(min_length=1, max_length=100)]
+    motivo: str = Field(min_length=3, max_length=2000)
+
+
+class OcultarMasivoResponse(BaseModel):
+    updated: int
+
+
+@router.post("/bulk-hide", response_model=OcultarMasivoResponse)
+async def ocultar_cargas_masivamente(
+    datos: OcultarMasivoRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> OcultarMasivoResponse:
+    """Oculta varias cargas en una sola transacción auditable."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    ids = list(dict.fromkeys(datos.shipment_ids))
+    try:
+        for shipment_id in ids:
+            await gestion.ocultar(
+                db,
+                shipment_id=shipment_id,
+                motivo=datos.motivo,
+                actor_user_id=actor.user_id,
+                permisos=permisos,
+            )
+            await registrar(
+                db,
+                action="shipment.hidden",
+                resource_type="shipment",
+                resource_id=shipment_id,
+                actor_user_id=actor.user_id,
+                reason=datos.motivo,
+                ip_address=_ip(request),
+            )
+    except service.SinPermisoParaTransicion as error:
+        raise RecursoNoEncontrado("Carga no encontrada.") from error
+    await db.commit()
+    return OcultarMasivoResponse(updated=len(ids))
 
 
 @router.post("/{shipment_id}/ocultar", status_code=status.HTTP_204_NO_CONTENT)
@@ -1004,6 +1054,8 @@ class ShipmentResumenResponse(BaseModel):
     # Identificadores comerciales. El sistema viejo los tenía como columnas del
     # listado y se busca por ellos todos los días.
     wr: str | None = None
+    bl: str | None = None
+    amar: str | None = None
     tracking: str | None = None
     po: str | None = None
     container: str | None = None
@@ -1071,6 +1123,8 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         client_action_required_count=fila.requisitos_del_cliente,
         invoice=fila.factura,
         wr=fila.wr,
+        bl=getattr(fila, "bl", None),
+        amar=getattr(fila, "amar", None),
         tracking=fila.tracking,
         po=fila.po,
         container=fila.contenedor,

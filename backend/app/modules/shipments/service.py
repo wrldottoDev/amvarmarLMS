@@ -548,9 +548,9 @@ async def _validar_politicas(
     await _validar_requisitos_resueltos(session, [shipment_id], hacia)
 
 
-# Los requisitos documentales declaran su estado bloqueante en el tipo de
-# documento (`required_before_status`); los demás bloquean el despacho. Un
-# `COALESCE` los unifica sin agregar una columna que diría lo mismo dos veces.
+# `required_before_status` indica cuándo conviene tener el documento, pero los
+# requisitos DOCUMENT son siempre opcionales y nunca bloquean una transición.
+# Los requisitos no documentales sí pueden conservar su política bloqueante.
 _ESTADO_BLOQUEADO = "COALESCE(dt.required_before_status, 'DISPATCHED')"
 
 _SQL_REQUISITOS_PENDIENTES = f"""
@@ -560,6 +560,7 @@ _SQL_REQUISITOS_PENDIENTES = f"""
     LEFT JOIN document_types dt ON dt.id = r.document_type_id
     WHERE r.shipment_id = ANY(:cargas)
       AND r.blocks_dispatch
+      AND r.requirement_type <> 'DOCUMENT'
       AND {_ESTADO_BLOQUEADO} = :hacia
       AND r.status NOT IN
           ('FULFILLED', 'VERIFIED', 'NOT_APPLICABLE', 'WAIVED', 'CANCELLED')
@@ -568,10 +569,10 @@ _SQL_REQUISITOS_PENDIENTES = f"""
 
 
 async def lista_para_despachar(session: AsyncSession, shipment_id: UUID) -> bool:
-    """Almacenada, visible y sin requisitos que bloqueen el despacho.
+    """Almacenada, visible y sin requisitos no documentales bloqueantes.
 
-    Es lo que el cliente entiende por "ya puedo despachar": `STORED` solo no
-    alcanza si todavía falta un documento o un pago que frena `DISPATCHED`.
+    Es lo que el cliente entiende por "ya puedo despachar": los documentos no
+    influyen, aunque un requisito operativo no documental todavía podría frenar.
     """
     lista: bool = (
         await session.execute(
@@ -607,10 +608,10 @@ async def _publicar_requisito_resuelto(
 async def _validar_requisitos_resueltos(
     session: AsyncSession, shipment_ids: list[UUID], hacia: str
 ) -> None:
-    """No se avanza con requisitos bloqueantes abiertos (ADR-0003).
+    """No se avanza con requisitos no documentales bloqueantes abiertos.
 
-    Cada requisito bloquea UN estado, no siempre el despacho: la prueba de
-    entrega bloquea `DELIVERED` y no tendría sentido que impidiera despachar.
+    Los documentos nunca entran en esta validación. Otros tipos de requisito
+    pueden bloquear el estado configurado por la operación.
 
     Recibe una lista porque un despacho valida todas sus cargas a la vez, y
     quien lo pide necesita ver todo lo que falta de una, no el primer faltante
@@ -639,57 +640,10 @@ async def validar_requisitos_de_cargas(
 ) -> None:
     """Igual que la validación interna, expuesta para el módulo de despachos.
 
-    Un despacho comprueba lo mismo ANTES de aprobar, no solo al mover la carga:
-    descubrir que falta la factura recién al completar el despacho obliga a
-    deshacer trabajo ya coordinado.
+    Un despacho comprueba los requisitos operativos no documentales antes de
+    avanzar. Los documentos quedan fuera de esta regla.
     """
     await _validar_requisitos_resueltos(session, shipment_ids, hacia)
-
-
-async def validar_documentos_del_cliente_para_solicitar_despacho(
-    session: AsyncSession, shipment_ids: list[UUID]
-) -> None:
-    """El cliente debe aportar sus documentos antes de pedir el despacho.
-
-    `UPLOADED` alcanza para crear la solicitud: Operaciones todavía debe revisar
-    el archivo y la aprobación del despacho vuelve a exigir `VERIFIED`.
-    """
-    pendientes = list(
-        (
-            await session.execute(
-                text(f"""
-                    SELECT COALESCE(
-                               (SELECT r2.value FROM shipment_references r2
-                                WHERE r2.shipment_id = s.id
-                                  AND r2.reference_type IN ('WR', 'INVOICE')
-                                ORDER BY CASE r2.reference_type WHEN 'WR' THEN 0 ELSE 1 END,
-                                         r2.is_primary DESC, r2.created_at
-                                LIMIT 1),
-                               'Carga sin referencia comercial'
-                           ) AS referencia,
-                           r.title, r.status
-                    FROM shipment_requirements r
-                    JOIN shipments s ON s.id = r.shipment_id
-                    LEFT JOIN document_types dt ON dt.id = r.document_type_id
-                    WHERE r.shipment_id = ANY(:cargas)
-                      AND r.required_from = 'CLIENT'
-                      AND r.requirement_type = 'DOCUMENT'
-                      AND r.blocks_dispatch
-                      AND {_ESTADO_BLOQUEADO} = 'DISPATCHED'
-                      AND r.status IN ('PENDING', 'REJECTED', 'OPEN')
-                    ORDER BY referencia, r.created_at
-                """),  # noqa: S608  # nosec B608
-                {"cargas": shipment_ids},
-            )
-        ).all()
-    )
-    if pendientes:
-        raise RequisitosPendientes(
-            "Subí los documentos obligatorios antes de solicitar el despacho.",
-            details=[
-                {"carga": f.referencia, "titulo": f.title, "estado": f.status} for f in pendientes
-            ],
-        )
 
 
 # --- Requisitos ---
@@ -762,7 +716,7 @@ async def abrir_requisito(
                 "descripcion": description,
                 "required_from": required_from,
                 "estado": ESTADO_INICIAL[requirement_type],
-                "bloquea": blocks_dispatch,
+                "bloquea": blocks_dispatch and requirement_type != RequirementType.DOCUMENT,
                 "due_at": due_at,
                 "actor": actor_user_id,
             },
@@ -822,8 +776,8 @@ async def resolver_requisito(
             "Los requisitos documentales se verifican o rechazan seleccionando el archivo revisado."
         )
 
-    # Exonerar deja avanzar la carga SIN el documento obligatorio, así que pide
-    # su propio permiso: `manage` no alcanza (solo ADMIN y SUPER_ADMIN).
+    # Exonerar borra formalmente una solicitud del expediente, así que pide su
+    # propio permiso: `manage` no alcanza (solo ADMIN y SUPER_ADMIN).
     requerido = (
         Perm.SHIPMENTS_REQUIREMENT_WAIVE
         if nuevo_estado == RequirementStatus.WAIVED
@@ -1382,7 +1336,7 @@ _SQL_SINCRONIZAR_REQUISITOS = f"""
                  AND d.deleted_at IS NULL
                  AND d.upload_status = 'READY'
            ) THEN 'UPLOADED' ELSE 'PENDING' END,
-           true, :actor
+           false, :actor
     FROM shipments s
     LEFT JOIN facilities f ON f.id = s.origin_facility_id
     JOIN document_types dt ON dt.is_active
@@ -1407,11 +1361,11 @@ _SQL_SINCRONIZAR_REQUISITOS = f"""
 async def sincronizar_requisitos_del_catalogo(
     session: AsyncSession, *, shipment_id: UUID, actor_user_id: UUID
 ) -> list[UUID]:
-    """Abre los requisitos documentales que le corresponden a esta carga.
+    """Abre las recomendaciones documentales que le corresponden a esta carga.
 
     Sin esto, `document_types.required_before_status` sería configuración
-    muerta: nadie abriría los requisitos y "documento obligatorio" no obligaría
-    a nada.
+    muerta: sirve para mostrar los documentos sugeridos en el momento adecuado,
+    aunque nunca impidan avanzar la carga.
 
     Se llama desde el motor de transiciones al entrar a `RECEIVED` y a `STORED`,
     no antes: la SLI depende de la bodega de origen, que hasta que la carga no

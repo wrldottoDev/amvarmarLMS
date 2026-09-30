@@ -161,7 +161,7 @@ class TestMatrizPermisos:
         ).scalar_one()
         assert total == len(PERMISSIONS)
 
-    async def test_solo_super_admin_revierte_entregas(self, session: AsyncSession) -> None:
+    async def test_admin_y_super_admin_revierten_entregas(self, session: AsyncSession) -> None:
         await sembrar(session)
         roles = (
             (
@@ -178,7 +178,7 @@ class TestMatrizPermisos:
             .scalars()
             .all()
         )
-        assert set(roles) == {RoleCode.SUPER_ADMIN}
+        assert set(roles) == {RoleCode.SUPER_ADMIN, RoleCode.ADMIN}
 
     async def test_agente_no_cancela_en_transito(self, session: AsyncSession) -> None:
         """ADR-0004: ADMIN cancela desde PRE_ALERT, no desde IN_TRANSIT."""

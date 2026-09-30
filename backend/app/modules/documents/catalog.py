@@ -24,7 +24,7 @@ class DefinicionTipoDocumento:
     context: DocumentContext
     issued_by_options: list[IssuedBy]
     allowed_formats: list[str]
-    # En qué estado se exige. None = no bloquea ninguna transición.
+    # Momento recomendado para tenerlo disponible. Nunca bloquea la transición.
     required_before_status: str | None
 
 
@@ -32,7 +32,7 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
     DocumentTypeCode.COMMERCIAL_INVOICE: DefinicionTipoDocumento(
         label="Factura comercial",
         description=(
-            "Obligatoria para la carga. Si el proveedor la entrega directo a AMVARMAR, "
+            "Recomendada para la carga. Si el proveedor la entrega directo a AMVARMAR, "
             "Operaciones la carga y deja de ser una acción pendiente del cliente."
         ),
         provided_by=ProvidedBy.CLIENT_OR_STAFF,
@@ -44,7 +44,7 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
     DocumentTypeCode.SLI: DefinicionTipoDocumento(
         label="SLI",
         description=(
-            "Obligatoria solo para cargas originadas en una bodega que la exige "
+            "Recomendada para cargas originadas en una bodega que la solicita "
             "(aplicabilidad automática, ligada a ADR-0005)."
         ),
         provided_by=ProvidedBy.CLIENT_OR_STAFF,
@@ -79,8 +79,8 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
     DocumentTypeCode.SPECIAL_PERMIT: DefinicionTipoDocumento(
         label="Permiso especial",
         description=(
-            "Obligatorio solo si Operaciones determina que la mercancía requiere "
-            "inspección o autorización. El cliente no puede descartar la advertencia."
+            "Recomendado si Operaciones determina que la mercancía requiere "
+            "inspección o autorización. No impide que la carga avance."
         ),
         provided_by=ProvidedBy.CLIENT,
         context=DocumentContext.SHIPMENT,
@@ -112,7 +112,7 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
         label="Prueba de entrega",
         description=(
             "Documento firmado, fotografía, comprobante del transportista o "
-            "confirmación electrónica. Obligatoria para registrar la entrega."
+            "confirmación electrónica. Recomendada para respaldar la entrega."
         ),
         provided_by=ProvidedBy.STAFF,
         context=DocumentContext.SHIPMENT,

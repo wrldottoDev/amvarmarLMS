@@ -71,6 +71,7 @@ function ContenidoCargas({
   const esCliente = Boolean(usuario?.empresa);
   const puedeCrear = usuario?.permisos.includes("shipments.create");
   const puedeCambiarEstado = usuario?.permisos.some((permiso) => permiso.startsWith("shipments.transition.") || permiso.startsWith("shipments.cancel.") || permiso === "shipments.reopen");
+  const puedeEliminar = usuario?.permisos.includes("shipments.delete") ?? false;
 
   const aplicarFiltros = useCallback(
     (nuevos: FiltrosCarga) => {
@@ -128,7 +129,7 @@ function ContenidoCargas({
     const actuales = new Map(cargas.map((carga) => [carga.id, carga]));
     return [...seleccionadas.values()].map((carga) => actuales.get(carga.id) ?? carga);
   }, [cargas, seleccionadas]);
-  const tituloOrigen = tipoOrigen === "MIAMI" ? "Miami" : tipoOrigen === "TRANSIT" ? "Tránsito" : null;
+  const tituloOrigen = tipoOrigen === "MIAMI" ? "Miami" : tipoOrigen === "TRANSIT" ? "Reportes de tránsito" : null;
 
   function alternarSeleccion(carga: CargaResumen) {
     setSeleccionadas((actual) => alternarCarga(actual, carga));
@@ -218,14 +219,19 @@ function ContenidoCargas({
           empresaVisible={!esCliente}
           soloLectura={archivadas}
           tipoOrigen={tipoOrigen}
-          seleccionadas={!archivadas && puedeCambiarEstado ? idsSeleccionados : undefined}
-          alternarSeleccion={!archivadas && puedeCambiarEstado ? alternarSeleccion : undefined}
-          alternarTodas={!archivadas && puedeCambiarEstado ? alternarTodasVisibles : undefined}
+          seleccionadas={!archivadas && (puedeCambiarEstado || puedeEliminar) ? idsSeleccionados : undefined}
+          alternarSeleccion={!archivadas && (puedeCambiarEstado || puedeEliminar) ? alternarSeleccion : undefined}
+          alternarTodas={!archivadas && (puedeCambiarEstado || puedeEliminar) ? alternarTodasVisibles : undefined}
         />
       ) : null}
 
       {seleccionadas.size ? (
-        <AccionesMasivas cargas={cargasSeleccionadas} limpiar={() => setSeleccionadas(new Map())} />
+        <AccionesMasivas
+          cargas={cargasSeleccionadas}
+          limpiar={() => setSeleccionadas(new Map())}
+          puedeCambiarEstado={Boolean(puedeCambiarEstado)}
+          puedeEliminar={puedeEliminar}
+        />
       ) : null}
 
       {consulta.hasNextPage ? (

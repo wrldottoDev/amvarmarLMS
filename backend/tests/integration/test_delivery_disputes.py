@@ -21,7 +21,6 @@ from app.modules.shipments.models import ShipmentStatus
 from app.modules.shipments.service import (
     CargaArchivada,
     MotivoRequerido,
-    SinPermisoParaTransicion,
 )
 from tests.piezas import sembrar_pieza
 
@@ -331,31 +330,35 @@ class TestResolverInconformidad:
         ).scalar_one()
         assert estado_carga == ShipmentStatus.DISPATCHED
 
-    async def test_resolved_reverted_por_ops_admin_falla_controlado(
+    async def test_resolved_reverted_por_admin_revierte_la_entrega(
         self, session: AsyncSession, redis
     ) -> None:
-        """Revertir DELIVERED es exclusivo de SUPER_ADMIN — no cambia porque
-        el pedido venga de una inconformidad en vez de un PATCH directo."""
         ctx = await _entorno(session)
         dispute_id = await self._reportar(session, redis, ctx)
         permisos_ops = await _permisos(session, redis, ctx["ops_admin"])
 
-        with pytest.raises(SinPermisoParaTransicion):
-            await service.resolver_inconformidad(
-                session,
-                dispute_id=dispute_id,
-                nuevo_estado="RESOLVED_REVERTED",
-                actor_user_id=ctx["ops_admin"],
-                permisos=permisos_ops,
-                motivo="No debería poder.",
-            )
+        shipment_id = await service.resolver_inconformidad(
+            session,
+            dispute_id=dispute_id,
+            nuevo_estado="RESOLVED_REVERTED",
+            actor_user_id=ctx["ops_admin"],
+            permisos=permisos_ops,
+            motivo="Corrección confirmada por administración.",
+        )
 
         fila = (
             await session.execute(
                 text("SELECT status FROM delivery_disputes WHERE id = :id"), {"id": dispute_id}
             )
         ).scalar_one()
-        assert fila == "OPEN"
+        assert fila == "RESOLVED_REVERTED"
+        estado = (
+            await session.execute(
+                text("SELECT current_status_code FROM shipments WHERE id = :id"),
+                {"id": shipment_id},
+            )
+        ).scalar_one()
+        assert estado == ShipmentStatus.DISPATCHED
 
     async def test_reverted_sin_motivo_se_rechaza(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)

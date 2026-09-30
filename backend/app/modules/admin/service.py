@@ -189,18 +189,6 @@ async def cambiar_estado_ubicacion(
     permisos: PermisosEfectivos,
 ) -> None:
     _exigir(permisos, Perm.LOCATIONS_MANAGE)
-    if not activar:
-        bodega_activa = (
-            await session.execute(
-                text("SELECT 1 FROM facilities WHERE location_id = :id AND is_active LIMIT 1"),
-                {"id": location_id},
-            )
-        ).scalar_one_or_none()
-        if bodega_activa is not None:
-            raise DatosInvalidos(
-                "No se puede desactivar una ubicación que tiene una bodega activa."
-            )
-
     encontrada = (
         await session.execute(
             text("""
@@ -213,6 +201,18 @@ async def cambiar_estado_ubicacion(
     ).scalar_one_or_none()
     if encontrada is None:
         raise RecursoNoEncontrado("Ubicación no encontrada.")
+
+    # Una bodega no puede quedar disponible debajo de una ubicación inactiva.
+    # Se cambian juntas porque actualmente no existe una pantalla separada para
+    # administrar facilities; al reactivar la ubicación se restauran también.
+    await session.execute(
+        text("""
+            UPDATE facilities
+            SET is_active = :activa, updated_at = now()
+            WHERE location_id = :id
+        """),
+        {"id": location_id, "activa": activar},
+    )
 
 
 # --- Empresas ---

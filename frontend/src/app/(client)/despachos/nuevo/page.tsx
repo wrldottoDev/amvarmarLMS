@@ -29,36 +29,22 @@ export default function PaginaNuevoDespacho() {
   const [instrucciones, setInstrucciones] = useState("");
   const [confirmando, setConfirmando] = useState(false);
 
-  // Miami se despacha una vez almacenada. Las cargas de otros orígenes pueden
-  // solicitarse mientras están en tránsito porque no ingresan a esa bodega.
+  // Solo las cargas de Miami almacenadas se pueden despachar. Los reportes de
+  // tránsito conservan su expediente documental, pero no entran en este flujo.
   const disponibles = useQuery({
     queryKey: ["cargas", "disponibles-para-despacho"],
     queryFn: async () => {
-      const [almacenadas, transito] = await Promise.all([
-        api.GET("/api/v1/shipments", {
-          params: { query: { limit: 100, status: ["STORED"], archived: false } },
-        }),
-        api.GET("/api/v1/shipments", {
-          params: {
-            query: {
-              limit: 100,
-              status: ["IN_TRANSIT"],
-              origin_kind: "TRANSIT",
-              archived: false,
-            },
-          },
-        }),
-      ]);
-      const todas = [...exigirDatos(almacenadas).items, ...exigirDatos(transito).items];
-      return [...new Map(todas.map((carga) => [carga.id, carga])).values()];
+      const almacenadas = await api.GET("/api/v1/shipments", {
+        params: {
+          query: { limit: 100, status: ["STORED"], origin_kind: "MIAMI", archived: false },
+        },
+      });
+      return exigirDatos(almacenadas).items;
     },
   });
 
   const crear = useCrearDespacho(empresaId);
   const expedientes = useExpedientes(seleccionadas);
-  const documentosSinComprobar = expedientes.some(
-    (consulta) => consulta.isPending || consulta.isError,
-  );
   const faltanDocumentos = expedientes.some((consulta) =>
     consulta.data?.requisitos.some(
       (requisito) =>
@@ -124,8 +110,8 @@ export default function PaginaNuevoDespacho() {
           />
           <p className="mt-3 text-sm font-medium">No tenés cargas listas para despachar.</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--texto-secundario)]">
-            Las cargas de Miami aparecen cuando están almacenadas. Las de otros orígenes aparecen
-            mientras están en tránsito.
+            Las cargas de Miami aparecen cuando están almacenadas. Los reportes de tránsito no se
+            despachan desde el sistema.
           </p>
           <Link
             href="/shipments"
@@ -186,13 +172,13 @@ export default function PaginaNuevoDespacho() {
                             : `${carga.package_count} bultos`}
                         </span>
                       </span>
-                      {carga.open_requirements_count ? (
+                      {carga.client_action_required_count ? (
                         <span
                           className="flex items-center gap-1 rounded-full border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-2 py-0.5 text-[11px] font-semibold text-[var(--advertencia)]"
-                          title="Operaciones no puede aprobar el despacho hasta tener estos documentos."
+                          title="Estos documentos son opcionales, pero ayudan a procesar el despacho."
                         >
                           <AlertTriangle className="size-3" aria-hidden="true" />
-                          Faltan documentos
+                          Documentos sugeridos
                         </span>
                       ) : null}
                     </label>
@@ -205,10 +191,10 @@ export default function PaginaNuevoDespacho() {
           {cargasElegidas.length > 0 ? (
             <div className="space-y-3 rounded-md border bg-[var(--superficie)] px-4 py-4">
               <div>
-                <strong className="block text-sm">2. Documentos necesarios</strong>
+                <strong className="block text-sm">2. Documentos opcionales</strong>
                 <span className="text-xs text-[var(--texto-secundario)]">
-                  Subí aquí los documentos pendientes antes de enviar la solicitud. Operaciones los
-                  revisará después.
+                  Nos ayudaría que subieras estos documentos, pero podés continuar sin ellos.
+                  Operaciones los revisará si decidís adjuntarlos.
                 </span>
               </div>
               {cargasElegidas.map((carga) => (
@@ -301,16 +287,14 @@ export default function PaginaNuevoDespacho() {
             </p>
             <Boton
               onClick={() => setConfirmando(true)}
-              disabled={
-                seleccionadas.length === 0 || documentosSinComprobar || faltanDocumentos
-              }
+              disabled={seleccionadas.length === 0}
             >
               Revisar y enviar
             </Boton>
           </div>
           {seleccionadas.length > 0 && faltanDocumentos ? (
             <p className="text-sm text-[var(--advertencia)]">
-              Subí los documentos marcados como pendientes para continuar.
+              Hay documentos sugeridos pendientes. Podés subirlos o continuar sin ellos.
             </p>
           ) : null}
         </>
@@ -334,6 +318,16 @@ export default function PaginaNuevoDespacho() {
             {pesoElegidoKg.toFixed(3)} kg.
           </p>
 
+          {faltanDocumentos ? (
+            <div className="flex gap-2 rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-3 py-2.5 text-[var(--advertencia)]">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <p>
+                Nos ayudaría que subieras los documentos solicitados para procesar el despacho,
+                pero no son obligatorios. Podés volver para adjuntarlos o continuar sin subirlos.
+              </p>
+            </div>
+          ) : null}
+
           {/* ADR-0013: el cliente solo cancela antes de la aprobación. Se dice
               acá, cuando todavía puede echarse atrás, y no después. */}
           <div className="flex gap-2 rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-3 py-2.5 text-[var(--advertencia)]">
@@ -352,10 +346,10 @@ export default function PaginaNuevoDespacho() {
               className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
               onClick={() => setConfirmando(false)}
             >
-              Volver
+              {faltanDocumentos ? "Volver para subirlos" : "Volver"}
             </button>
             <Boton onClick={() => void confirmar()} cargando={crear.isPending}>
-              Sí, enviar solicitud
+              {faltanDocumentos ? "Continuar sin subirlos" : "Sí, enviar solicitud"}
             </Boton>
           </div>
         </div>

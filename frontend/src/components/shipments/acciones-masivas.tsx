@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { Check, RefreshCw, X } from "lucide-react";
+import { Check, RefreshCw, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
@@ -17,14 +17,22 @@ function nombreEstado(estado: string) {
 export function AccionesMasivas({
   cargas,
   limpiar,
+  puedeCambiarEstado,
+  puedeEliminar,
 }: {
   cargas: CargaResumen[];
   limpiar: () => void;
+  puedeCambiarEstado: boolean;
+  puedeEliminar: boolean;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [destino, setDestino] = useState<EstadoCarga | "">("");
   const [motivo, setMotivo] = useState("");
   const [confirmado, setConfirmado] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
+  const [pasoEliminar, setPasoEliminar] = useState<1 | 2>(1);
+  const [confirmacionEliminar, setConfirmacionEliminar] = useState("");
+  const [motivoEliminar, setMotivoEliminar] = useState("");
   const cliente = useQueryClient();
   const consultas = useQueries({
     queries: cargas.map((carga) => ({
@@ -35,7 +43,7 @@ export function AccionesMasivas({
             params: { path: { shipment_id: carga.id } },
           }),
         ),
-      enabled: abierto,
+      enabled: abierto && puedeCambiarEstado,
     })),
   });
 
@@ -84,6 +92,25 @@ export function AccionesMasivas({
       cerrar();
     },
   });
+  const eliminar = useMutation({
+    mutationFn: async () =>
+      exigirDatos(
+        await api.POST("/api/v1/shipments/bulk-hide", {
+          body: {
+            shipment_ids: cargas.map((carga) => carga.id),
+            motivo: motivoEliminar.trim(),
+          },
+        }),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        cliente.invalidateQueries({ queryKey: ["cargas"] }),
+        cliente.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+      limpiar();
+      cerrarEliminar();
+    },
+  });
 
   function cerrar() {
     setAbierto(false);
@@ -91,6 +118,14 @@ export function AccionesMasivas({
     setMotivo("");
     setConfirmado(false);
     mutacion.reset();
+  }
+
+  function cerrarEliminar() {
+    setEliminando(false);
+    setPasoEliminar(1);
+    setConfirmacionEliminar("");
+    setMotivoEliminar("");
+    eliminar.reset();
   }
 
   const detalleError =
@@ -102,9 +137,16 @@ export function AccionesMasivas({
     <>
       <div className="sticky bottom-4 z-20 flex flex-wrap items-center gap-3 rounded-lg border bg-[var(--superficie)] px-4 py-3 shadow-lg" role="region" aria-label="Acciones masivas">
         <strong className="text-sm">{cargas.length} cargas seleccionadas</strong>
-        <Boton onClick={() => setAbierto(true)}>
-          <RefreshCw className="size-4" aria-hidden="true" /> Cambiar estado
-        </Boton>
+        {puedeCambiarEstado ? (
+          <Boton onClick={() => setAbierto(true)}>
+            <RefreshCw className="size-4" aria-hidden="true" /> Cambiar estado
+          </Boton>
+        ) : null}
+        {puedeEliminar ? (
+          <Boton variante="peligro" onClick={() => setEliminando(true)}>
+            <Trash2 className="size-4" aria-hidden="true" /> Eliminar
+          </Boton>
+        ) : null}
         <button type="button" className="ml-auto flex items-center gap-1 text-sm text-[var(--texto-secundario)] hover:underline" onClick={limpiar}>
           <X className="size-4" aria-hidden="true" /> Limpiar selección
         </button>
@@ -149,6 +191,41 @@ export function AccionesMasivas({
               <Check className="size-4" aria-hidden="true" /> Aplicar cambio
             </Boton>
           </div>
+        </div>
+      </Modal>
+
+      <Modal abierto={eliminando} cerrar={cerrarEliminar} titulo="Eliminar cargas">
+        <div className="space-y-4 p-5">
+          {pasoEliminar === 1 ? (
+            <>
+              <p className="text-sm">
+                Vas a eliminar {cargas.length} carga{cargas.length === 1 ? "" : "s"} de los
+                listados. El historial y los documentos se conservarán para auditoría.
+              </p>
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium">Motivo</span>
+                <textarea className="min-h-24 w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm" maxLength={2000} value={motivoEliminar} onChange={(evento) => setMotivoEliminar(evento.target.value)} />
+              </label>
+              <div className="flex justify-end gap-2">
+                <Boton variante="secundario" onClick={cerrarEliminar}>Cancelar</Boton>
+                <Boton variante="peligro" disabled={motivoEliminar.trim().length < 3} onClick={() => setPasoEliminar(2)}>Continuar</Boton>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="rounded-md bg-[var(--peligro-tenue)] p-3 text-sm">
+                Segunda confirmación: escribí <strong>ELIMINAR</strong> para completar la acción.
+              </p>
+              <input className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm" value={confirmacionEliminar} onChange={(evento) => setConfirmacionEliminar(evento.target.value)} autoFocus />
+              {eliminar.error ? <AvisoError error={eliminar.error} /> : null}
+              <div className="flex justify-end gap-2">
+                <Boton variante="secundario" onClick={() => setPasoEliminar(1)}>Atrás</Boton>
+                <Boton variante="peligro" cargando={eliminar.isPending} disabled={confirmacionEliminar !== "ELIMINAR"} onClick={() => eliminar.mutate()}>
+                  <Trash2 className="size-4" aria-hidden="true" /> Confirmar eliminación
+                </Boton>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
     </>

@@ -558,8 +558,8 @@ async def marcar_requisito_subido(session: AsyncSession, document_id: UUID) -> N
     """El requisito que este documento venía a satisfacer pasa a `UPLOADED`.
 
     NO pasa a `VERIFIED` (ADR-0003): subir un archivo no equivale a que
-    Operaciones lo haya aceptado, así que el requisito sigue bloqueando hasta
-    que alguien con `documents.verify` lo revise. El plan de trabajo decía
+    Operaciones lo haya aceptado. Sigue pendiente de revisión, pero no bloquea
+    ninguna operación. El plan de trabajo decía
     `FULFILLED` automático; manda el ADR, que es la decisión más nueva.
 
     El enlace es por carga y tipo de documento, no por un `requirement_id` que

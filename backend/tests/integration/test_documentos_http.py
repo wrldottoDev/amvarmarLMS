@@ -498,10 +498,8 @@ class TestFlujoCompleto:
     ) -> None:
         """Paso 3.4 + ADR-0003.
 
-        Subir el archivo NO cierra el requisito: queda en `UPLOADED`, que sigue
-        bloqueando el despacho hasta que Operaciones lo verifique. Si subir
-        bastara, un cliente podría desbloquear su propia carga mandando
-        cualquier PDF.
+        Subir el archivo NO cierra el requisito: queda en `UPLOADED` hasta que
+        Operaciones lo verifique, aunque ese estado nunca bloquea el despacho.
         """
         cabeceras = await _autenticar(cliente, entorno["email"])
 
@@ -512,7 +510,7 @@ class TestFlujoCompleto:
                         (shipment_id, requirement_type, document_type_id, title,
                          required_from, status, blocks_dispatch, created_by)
                     VALUES (:s, 'DOCUMENT', :t, 'Factura comercial',
-                            'CLIENT', 'PENDING', true, :u)
+                            'CLIENT', 'PENDING', false, :u)
                     RETURNING id
                 """),
                 {
@@ -670,7 +668,7 @@ class TestExpediente:
                     (shipment_id, requirement_type, document_type_id, title,
                      required_from, status, blocks_dispatch, created_by)
                 VALUES (:s, 'DOCUMENT', :t, 'Factura comercial',
-                        'CLIENT', 'PENDING', true, :u)
+                        'CLIENT', 'PENDING', false, :u)
             """),
             {"s": entorno["carga"], "t": entorno["tipo_factura"], "u": entorno["user_id"]},
         )
@@ -684,7 +682,7 @@ class TestExpediente:
         requisito = cuerpo["requisitos"][0]
         assert requisito["label"] == "Factura comercial"
         assert requisito["status"] == "PENDING"
-        assert requisito["blocks_dispatch"] is True
+        assert requisito["blocks_dispatch"] is False
         # Los formatos vienen del tipo: sin eso la interfaz no puede decir qué
         # archivo aceptar y el rechazo llegaría después de subir.
         assert requisito["allowed_formats"]
@@ -780,7 +778,7 @@ async def _abrir_requisito(session: AsyncSession, entorno: dict) -> None:
                 (shipment_id, requirement_type, document_type_id, title,
                  required_from, status, blocks_dispatch, created_by)
             VALUES (:s, 'DOCUMENT', :t, 'Factura comercial',
-                    'CLIENT', 'PENDING', true, :u)
+                    'CLIENT', 'PENDING', false, :u)
         """),
         {"s": entorno["carga"], "t": entorno["tipo_factura"], "u": entorno["user_id"]},
     )

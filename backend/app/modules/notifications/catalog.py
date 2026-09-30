@@ -43,17 +43,17 @@ EVENTOS: dict[str, DefinicionEvento] = {
     "shipment.requirement_blocking": DefinicionEvento(
         codigo="shipment.requirement_blocking",
         critico=True,
-        asunto="Falta documentación para despachar",
-        mensaje=f"Una de sus cargas no puede despacharse porque falta un documento obligatorio. {_ENTRAR}",
-        con_referencia=f"La carga {{ref}} no puede despacharse porque falta un documento obligatorio. {_ENTRAR}",
+        asunto="Documento sugerido pendiente",
+        mensaje=f"Una de sus cargas tiene un documento sugerido pendiente; puede despacharse igualmente. {_ENTRAR}",
+        con_referencia=f"La carga {{ref}} tiene un documento sugerido pendiente; puede despacharse igualmente. {_ENTRAR}",
         ruta="/shipments/{id}",
     ),
     "shipment.requirement_rejected": DefinicionEvento(
         codigo="shipment.requirement_rejected",
         critico=True,
         asunto="Un documento fue rechazado",
-        mensaje=f"Se rechazó un documento de una de sus cargas y hay que volver a cargarlo. {_ENTRAR}",
-        con_referencia=f"Se rechazó un documento de la carga {{ref}} y hay que volver a cargarlo. {_ENTRAR}",
+        mensaje=f"Se rechazó un documento de una de sus cargas; puede corregirlo si desea adjuntarlo. {_ENTRAR}",
+        con_referencia=f"Se rechazó un documento de la carga {{ref}}; puede corregirlo si desea adjuntarlo. {_ENTRAR}",
         ruta="/shipments/{id}",
     ),
     "shipment.permit_review": DefinicionEvento(

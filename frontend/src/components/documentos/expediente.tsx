@@ -224,7 +224,9 @@ export function Expediente({
         <div className="flex items-center gap-2">
           <FileText className="size-5 text-[var(--marca)]" aria-hidden="true" />
           <h2 id={`documentos-carga-${cargaId}`} className="text-base font-bold">
-            {soloParaSolicitarDespacho ? "Documentos para solicitar el despacho" : "Documentos"}
+            {soloParaSolicitarDespacho
+              ? "Documentos opcionales para el despacho"
+              : "Documentos"}
           </h2>
         </div>
 
@@ -241,10 +243,10 @@ export function Expediente({
           )}
         >
           {faltantes.length === 0
-            ? "No falta ningún documento de tu parte."
+            ? "Ya adjuntaste todos los documentos sugeridos."
             : faltantes.length === 1
-              ? "Falta 1 documento. Sin él no podemos despachar esta carga."
-              : `Faltan ${faltantes.length} documentos. Sin ellos no podemos despachar esta carga.`}
+              ? "Hay 1 documento sugerido pendiente. Podés continuar sin subirlo."
+              : `Hay ${faltantes.length} documentos sugeridos pendientes. Podés continuar sin subirlos.`}
         </p>
       ) : null}
 
@@ -627,8 +629,8 @@ export function Expediente({
         </details>
       ) : null}
 
-      {/* Confirmación explícita: quitar un documento puede reabrir el requisito
-          que bloquea el despacho, y eso no debería pasar por un clic al pasar. */}
+      {/* Confirmación explícita: quitar un documento reabre su recomendación y
+          elimina el acceso normal al archivo dentro del expediente. */}
       <Modal
         abierto={aQuitar !== null}
         titulo="¿Quitar este documento del expediente?"
@@ -636,8 +638,8 @@ export function Expediente({
       >
         <p className="text-sm">
           <strong>{aQuitar?.original_name}</strong> deja de aparecer en el expediente. Si era el
-          único de su tipo, el requisito que satisfacía vuelve a quedar pendiente y la carga no
-          podrá despacharse hasta que se reponga.
+          único de su tipo, la recomendación vuelve a quedar pendiente. Esto no impide cambiar el
+          estado de la carga ni procesar su despacho.
         </p>
         <p className="mt-2 text-sm text-[var(--texto-secundario)]">
           El archivo no se borra del almacenamiento: queda como constancia de que estuvo.

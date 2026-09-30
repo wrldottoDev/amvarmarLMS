@@ -701,8 +701,7 @@ class TestRequisitos:
     ) -> None:
         """El concepto central: "faltan documentos" NO es un estado.
 
-        La carga avanza a IN_TRANSIT con un requisito abierto; solo el despacho
-        se bloquea.
+        La carga avanza a IN_TRANSIT con un documento sugerido abierto.
         """
         ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
@@ -722,18 +721,16 @@ class TestRequisitos:
         ).scalar_one()
         assert pendientes == 1
 
-    async def test_no_se_despacha_con_requisitos_bloqueantes(
+    async def test_un_documento_pendiente_no_impide_despachar(
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         await _abrir_documental(session, ctx, shipment_id, redis)
 
-        with pytest.raises(service.RequisitosPendientes) as error:
-            await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
+        resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
 
-        assert error.value.code == "SHIPMENT_REQUIREMENTS_PENDING"
-        assert error.value.details[0]["estado"] == RequirementStatus.PENDING
+        assert resultado.hacia == ShipmentStatus.DISPATCHED
 
     async def test_un_requisito_informativo_no_impide_despachar(
         self, session: AsyncSession, redis
@@ -775,8 +772,9 @@ class TestRequisitos:
         resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
         assert resultado.hacia == ShipmentStatus.DISPATCHED
 
-    async def test_subir_el_archivo_no_basta(self, session: AsyncSession, redis) -> None:
-        """`UPLOADED` no satisface: Operaciones tiene que verificarlo (ADR-0003)."""
+    async def test_un_archivo_sin_verificar_tampoco_bloquea(
+        self, session: AsyncSession, redis
+    ) -> None:
         ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PREPARING)
         requirement_id = await _abrir_documental(session, ctx, shipment_id, redis)
@@ -788,8 +786,8 @@ class TestRequisitos:
             permisos=await _permisos(session, redis, ctx),
         )
 
-        with pytest.raises(service.RequisitosPendientes):
-            await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
+        resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
+        assert resultado.hacia == ShipmentStatus.DISPATCHED
 
     async def test_exonerar_sin_motivo_falla(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session, RoleCode.ADMIN)

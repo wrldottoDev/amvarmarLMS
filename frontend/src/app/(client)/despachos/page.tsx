@@ -10,6 +10,7 @@ import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { etiquetaDespacho, type EstadoDespacho } from "@/features/despachos/catalogo";
 import { useDespachos } from "@/features/despachos/consultas";
+import { identificadorDespacho } from "@/features/despachos/identificador";
 import { clases, formatearFecha } from "@/lib/utilidades";
 
 const FILTROS: { valor: EstadoDespacho | undefined; etiqueta: string }[] = [
@@ -84,12 +85,17 @@ export default function PaginaDespachos() {
                 className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-[var(--superficie)] px-4 py-4 hover:border-[var(--mar)]"
               >
                 <div className="min-w-0">
-                  <strong className="block text-sm">{despacho.dispatch_number}</strong>
+                  <strong className="block text-base">
+                    {identificadorDespacho(despacho.shipment_identifiers)}
+                  </strong>
                   <span className="mt-0.5 block text-sm text-[var(--texto-secundario)]">
                     {despacho.shipment_count === 1
                       ? "1 carga"
                       : `${despacho.shipment_count} cargas`}{" "}
                     · Solicitado el {formatearFecha(despacho.requested_at)}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-[var(--texto-secundario)]">
+                    Referencia de despacho: {despacho.dispatch_number}
                   </span>
                 </div>
                 <InsigniaDespacho estado={despacho.status} />

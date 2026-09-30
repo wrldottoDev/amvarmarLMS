@@ -54,7 +54,7 @@ _EVENTO_POR_ESTADO_DE_DESPACHO: dict[str, str] = {
 
 
 async def _referencia_de_carga(session: AsyncSession, shipment_id: UUID) -> str | None:
-    """El identificador que el cliente reconoce: su WR o su número de factura.
+    """El identificador que el cliente reconoce: su WR o su número de BL.
 
     Es lo único de negocio que ADR-0008 deja salir en un correo. Sale de
     `shipment_references`, que guarda ambos tipos, con el WR primero porque es
@@ -65,9 +65,9 @@ async def _referencia_de_carga(session: AsyncSession, shipment_id: UUID) -> str 
     referencia: str | None = (
         await session.execute(
             text("""
-                SELECT value FROM shipment_references
-                WHERE shipment_id = :s AND reference_type IN ('WR', 'INVOICE')
-                ORDER BY CASE reference_type WHEN 'WR' THEN 0 ELSE 1 END, created_at
+                SELECT reference_type || ' ' || value FROM shipment_references
+                WHERE shipment_id = :s AND reference_type IN ('WR', 'BL', 'INVOICE')
+                ORDER BY CASE reference_type WHEN 'WR' THEN 0 WHEN 'BL' THEN 1 ELSE 2 END, created_at
                 LIMIT 1
             """),
             {"s": shipment_id},

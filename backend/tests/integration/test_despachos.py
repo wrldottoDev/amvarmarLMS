@@ -12,13 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.errors import RecursoNoEncontrado
-from app.modules.dispatches import service
+from app.modules.dispatches import queries, service
 from app.modules.dispatches.models import DispatchMethod, DispatchStatus
 from app.modules.dispatches.router import _detalle
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
 from app.modules.shipments.models import ShipmentStatus
-from app.modules.shipments.service import RequisitosPendientes
 from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
@@ -38,6 +37,17 @@ async def _entorno(session: AsyncSession) -> dict[str, object]:
 
     origen = await _ubicacion(session, "US", "MIA", "Miami")
     destino = await _ubicacion(session, "CR", "SJO", "San José")
+    bodega = (
+        await session.execute(
+            text("""
+                INSERT INTO facilities
+                    (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                VALUES (:ubicacion, :codigo, 'WAREHOUSE', true)
+                RETURNING id
+            """),
+            {"ubicacion": origen, "codigo": f"MIA-{uuid.uuid4().hex[:8]}"},
+        )
+    ).scalar_one()
 
     return {
         "empresa": empresa,
@@ -47,6 +57,7 @@ async def _entorno(session: AsyncSession) -> dict[str, object]:
         "cliente": cliente,
         "origen": origen,
         "destino": destino,
+        "bodega": bodega,
     }
 
 
@@ -111,14 +122,15 @@ async def _carga_almacenada(
             text("""
                 INSERT INTO shipments
                     (company_id, created_by, current_status_code,
-                     origin_location_id, destination_location_id)
-                VALUES (:c,:u,'STORED',:o,:d) RETURNING id
+                     origin_location_id, destination_location_id, origin_facility_id)
+                VALUES (:c,:u,'STORED',:o,:d,:f) RETURNING id
             """),
             {
                 "c": ctx[empresa],
                 "u": ctx["operaciones"],
                 "o": ctx["origen"],
                 "d": ctx["destino"],
+                "f": ctx["bodega"],
             },
         )
     ).scalar_one()
@@ -218,7 +230,7 @@ class TestMetodosDeTransporte:
 
 
 class TestCreacion:
-    async def test_cliente_debe_subir_sus_documentos_antes_de_solicitar(
+    async def test_cliente_puede_solicitar_con_documentos_pendientes(
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
@@ -229,25 +241,22 @@ class TestCreacion:
                     (shipment_id, requirement_type, document_type_id, title,
                      required_from, status, blocks_dispatch, created_by)
                 SELECT :carga, 'DOCUMENT', id, label,
-                       'CLIENT', 'PENDING', true, :actor
+                       'CLIENT', 'PENDING', false, :actor
                 FROM document_types WHERE code = 'COMMERCIAL_INVOICE'
             """),
             {"carga": carga, "actor": ctx["operaciones"]},
         )
 
-        with pytest.raises(RequisitosPendientes):
-            await _crear(session, redis, ctx, [carga], actor="cliente")
-
-        await session.execute(
-            text("""
-                UPDATE shipment_requirements SET status = 'UPLOADED'
-                WHERE shipment_id = :carga
-            """),
-            {"carga": carga},
-        )
         solicitud = await _crear(session, redis, ctx, [carga], actor="cliente")
 
         assert solicitud.status == DispatchStatus.PENDING
+        estado = (
+            await session.execute(
+                text("SELECT status FROM shipment_requirements WHERE shipment_id = :carga"),
+                {"carga": carga},
+            )
+        ).scalar_one()
+        assert estado == "PENDING"
 
     async def test_reclama_las_cargas_y_las_mueve(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
@@ -260,20 +269,23 @@ class TestCreacion:
         for carga in cargas:
             assert await _estado_carga(session, carga) == ShipmentStatus.DISPATCH_REQUESTED
 
-    async def test_una_carga_de_transito_se_puede_solicitar_sin_almacenarla(
+    async def test_una_carga_de_transito_no_se_puede_solicitar(
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
         carga = await _carga_almacenada(session, ctx)
         await session.execute(
-            text("UPDATE shipments SET current_status_code = 'IN_TRANSIT' WHERE id = :id"),
+            text(
+                "UPDATE shipments SET current_status_code = 'IN_TRANSIT', origin_facility_id = NULL WHERE id = :id"
+            ),
             {"id": carga},
         )
 
-        solicitud = await _crear(session, redis, ctx, [carga])
+        with pytest.raises(service.TransicionDeDespachoInvalida) as error:
+            await _crear(session, redis, ctx, [carga])
 
-        assert solicitud.status == DispatchStatus.PENDING
-        assert await _estado_carga(session, carga) == ShipmentStatus.DISPATCH_REQUESTED
+        assert "reportes de tránsito" in str(error.value)
+        assert await _estado_carga(session, carga) == ShipmentStatus.IN_TRANSIT
 
     async def test_deja_evento_en_la_solicitud(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
@@ -313,6 +325,12 @@ class TestCreacion:
         assert detalle.shipments[0].invoice == "FAC-DETALLE-001"
         assert detalle.shipments[0].status == ShipmentStatus.DISPATCH_REQUESTED
         assert detalle.shipments[0].package_count == 1
+        assert detalle.shipment_identifiers == ["Factura FAC-DETALLE-001"]
+
+        pagina = await queries.listar(
+            session, empresas=None, limit=25, cursor=None, status_filtro=None
+        )
+        assert pagina.items[0].shipment_identifiers == ["Factura FAC-DETALLE-001"]
 
     async def test_una_carga_miami_no_almacenada_se_rechaza(
         self, session: AsyncSession, redis
@@ -411,7 +429,7 @@ class TestFlujoCompleto:
         assert fechas.dispatched_at is not None
         assert fechas.completed_at is not None
 
-    async def test_completar_exige_un_bl_ready(self, session: AsyncSession, redis) -> None:
+    async def test_completar_no_exige_un_bl(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         carga = await _carga_almacenada(session, ctx)
         solicitud = await _crear(session, redis, ctx, [carga])
@@ -425,16 +443,9 @@ class TestFlujoCompleto:
         await service.preparar(session, **comun)
         await service.despachar(session, **comun)
 
-        with pytest.raises(service.DespachoSinBL):
-            await service.completar(session, **comun)
+        resultado = await service.completar(session, **comun)
 
-        estado = (
-            await session.execute(
-                text("SELECT status FROM dispatch_requests WHERE id = :id"),
-                {"id": solicitud.id},
-            )
-        ).scalar_one()
-        assert estado == DispatchStatus.DISPATCHED
+        assert resultado.hacia == DispatchStatus.COMPLETED
 
     async def test_completar_libera_las_cargas(self, session: AsyncSession, redis) -> None:
         """El despacho terminó: ya no las retiene."""
@@ -661,28 +672,6 @@ class TestCancelacion:
 
         assert resultado.hacia == DispatchStatus.CANCELLED
         assert await _estado_carga(session, carga) == ShipmentStatus.STORED
-
-    async def test_cancelar_transito_lo_devuelve_a_en_transito(
-        self, session: AsyncSession, redis
-    ) -> None:
-        ctx = await _entorno(session)
-        carga = await _carga_almacenada(session, ctx)
-        await session.execute(
-            text("UPDATE shipments SET current_status_code = 'IN_TRANSIT' WHERE id = :id"),
-            {"id": carga},
-        )
-        solicitud = await _crear(session, redis, ctx, [carga], actor="cliente")
-
-        await service.cancelar(
-            session,
-            dispatch_id=solicitud.id,
-            actor_user_id=ctx["cliente"],
-            permisos=await _permisos(session, redis, ctx["cliente"]),
-            company_ids=[ctx["empresa"]],
-            motivo="Ya no lo necesito.",
-        )
-
-        assert await _estado_carga(session, carga) == ShipmentStatus.IN_TRANSIT
 
     async def test_el_cliente_no_cancela_una_solicitud_aprobada(
         self, session: AsyncSession, redis

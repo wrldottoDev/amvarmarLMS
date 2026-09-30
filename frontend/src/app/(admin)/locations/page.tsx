@@ -183,7 +183,21 @@ export default function PaginaUbicaciones() {
           {desactivar.error ? <AvisoError error={desactivar.error} /> : null}
           <div className="flex justify-end gap-2">
             <Boton variante="secundario" onClick={() => setPorDesactivar(null)}>Cancelar</Boton>
-            <Boton cargando={desactivar.isPending} onClick={async () => { if (!porDesactivar) return; await desactivar.mutateAsync(porDesactivar.id); setPorDesactivar(null); }}>Desactivar</Boton>
+            <Boton
+              variante="peligro"
+              cargando={desactivar.isPending}
+              onClick={async () => {
+                if (!porDesactivar) return;
+                try {
+                  await desactivar.mutateAsync(porDesactivar.id);
+                  setPorDesactivar(null);
+                } catch {
+                  // La mutación deja el mensaje de la API en `desactivar.error`.
+                }
+              }}
+            >
+              Desactivar
+            </Boton>
           </div>
         </div>
       </Modal>

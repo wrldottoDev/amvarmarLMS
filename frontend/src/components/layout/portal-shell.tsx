@@ -69,7 +69,7 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
   const navegacion: ElementoNavegacion[] = [
     { href: inicio, etiqueta: esCliente ? "Resumen" : "Operaciones", icono: Gauge },
     { href: "/miami", etiqueta: "Miami", icono: Warehouse },
-    { href: "/transito", etiqueta: "Tránsito", icono: Ship },
+  { href: "/transito", etiqueta: "Reportes de tránsito", icono: Ship },
     { href: "/despachos", etiqueta: "Despachos", icono: Truck },
     { href: "/avisos", etiqueta: "Avisos", icono: Bell },
     ...(esCliente

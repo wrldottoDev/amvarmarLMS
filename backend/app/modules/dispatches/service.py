@@ -51,10 +51,6 @@ class DespachoSinCargas(ReglaDeNegocioViolada):
     code = "DISPATCH_SIN_CARGAS"
 
 
-class DespachoSinBL(Conflicto):
-    code = "DISPATCH_BL_REQUIRED"
-
-
 class CargasNoDespachadas(Conflicto):
     code = "DISPATCH_SHIPMENTS_NOT_DISPATCHED"
 
@@ -96,7 +92,8 @@ _TRANSICIONES: dict[str, frozenset[str]] = {
 }
 
 # Estado al que se mueven las cargas con cada acción del despacho.
-# Estados de la solicitud que exigen tener los documentos obligatorios listos.
+# Los requisitos no documentales que Operaciones marque como bloqueantes aún
+# se validan; un documento nunca impide estas acciones.
 _EXIGEN_REQUISITOS: frozenset[str] = frozenset(
     {DispatchStatus.APPROVED, DispatchStatus.DISPATCHED, DispatchStatus.COMPLETED}
 )
@@ -210,9 +207,11 @@ async def crear(
         if carga.company_id != company_id:
             # Mezclar empresas en un despacho expondría datos de una a la otra.
             raise RecursoNoEncontrado("Alguna de las cargas no existe.")
-        disponible = carga.current_status_code == ShipmentStatus.STORED or (
-            carga.es_transito and carga.current_status_code == ShipmentStatus.IN_TRANSIT
-        )
+        if carga.es_transito:
+            raise TransicionDeDespachoInvalida(
+                "Los reportes de tránsito no se pueden incluir en un despacho."
+            )
+        disponible = carga.current_status_code == ShipmentStatus.STORED
         if not disponible:
             raise TransicionDeDespachoInvalida(
                 f"La carga {carga.shipment_number} está en "
@@ -224,14 +223,6 @@ async def crear(
                     }
                 ],
             )
-
-    # Al cliente se le muestran y exigen sus documentos en el mismo formulario
-    # de solicitud. Un archivo ya subido puede quedar pendiente de revisión por
-    # Operaciones, que lo validará antes de aprobar el despacho.
-    if not permisos.permite(Perm.DISPATCH_REQUESTS_APPROVE, company_id=company_id):
-        await shipments.validar_documentos_del_cliente_para_solicitar_despacho(
-            session, [carga.id for carga in cargas]
-        )
 
     dispatch = (
         await session.execute(
@@ -418,13 +409,9 @@ async def _cambiar_estado(
 
     if hacia == DispatchStatus.COMPLETED:
         await _validar_cargas_despachadas(session, cargas)
-        await _validar_bl_listo(session, dispatch_id)
 
-    # Los documentos obligatorios se exigen al APROBAR, no solo al completar.
-    # Aprobar es lo que dispara la coordinación real (contenedor, transporte),
-    # así que descubrir ahí que falta la factura es mucho más barato que
-    # descubrirlo con la carga ya en preparación. Se vuelve a verificar al
-    # completar porque entre una cosa y otra alguien pudo rechazar un documento.
+    # Solo los requisitos no documentales pueden bloquear estas acciones. Los
+    # documentos pendientes son recomendaciones y no frenan el despacho.
     if hacia in _EXIGEN_REQUISITOS and cargas:
         await shipments.validar_requisitos_de_cargas(session, cargas, ShipmentStatus.DISPATCHED)
 
@@ -559,29 +546,6 @@ async def _validar_cargas_despachadas(session: AsyncSession, shipment_ids: list[
                 {"shipment_number": fila.shipment_number, "status": fila.current_status_code}
                 for fila in pendientes
             ],
-        )
-
-
-async def _validar_bl_listo(session: AsyncSession, dispatch_id: UUID) -> None:
-    existe = (
-        await session.execute(
-            text("""
-                SELECT 1
-                FROM dispatch_documents dd
-                JOIN documents d ON d.id = dd.document_id
-                JOIN document_types dt ON dt.id = dd.document_type_id
-                WHERE dd.dispatch_request_id = :id
-                  AND upper(dt.code) = 'BL'
-                  AND d.upload_status = 'READY'
-                  AND d.deleted_at IS NULL
-                LIMIT 1
-            """),
-            {"id": dispatch_id},
-        )
-    ).scalar_one_or_none()
-    if existe is None:
-        raise DespachoSinBL(
-            "Debe existir al menos un Bill of Lading listo antes de completar el despacho."
         )
 
 

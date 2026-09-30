@@ -54,7 +54,39 @@ async def listar(
     consulta = f"""
         SELECT d.id, d.dispatch_number, d.status, d.method, d.company_id,
                d.requested_at, d.row_version,
-               count(s.shipment_id) AS cargas
+               count(s.shipment_id) AS cargas,
+               COALESCE(
+                   array_agg(
+                       COALESCE(
+                           (
+                               SELECT 'WR ' || r.value
+                               FROM shipment_references r
+                               WHERE r.shipment_id = s.shipment_id
+                                 AND r.reference_type = 'WR'
+                               ORDER BY r.is_primary DESC, r.created_at
+                               LIMIT 1
+                           ),
+                           (
+                               SELECT 'BL ' || r.value
+                               FROM shipment_references r
+                               WHERE r.shipment_id = s.shipment_id
+                                 AND r.reference_type = 'BL'
+                               ORDER BY r.is_primary DESC, r.created_at
+                               LIMIT 1
+                           ),
+                           (
+                               SELECT 'Factura ' || r.value
+                               FROM shipment_references r
+                               WHERE r.shipment_id = s.shipment_id
+                                 AND r.reference_type = 'INVOICE'
+                               ORDER BY r.is_primary DESC, r.created_at
+                               LIMIT 1
+                           ),
+                           'Sin WR, BL o factura'
+                       ) ORDER BY s.shipment_id
+                   ) FILTER (WHERE s.shipment_id IS NOT NULL),
+                   ARRAY[]::varchar[]
+               ) AS shipment_identifiers
         FROM dispatch_requests d
         LEFT JOIN dispatch_request_shipments s ON s.dispatch_request_id = d.id
         {where}
@@ -122,6 +154,13 @@ async def _detalle_por_condicion(
                                SELECT r.value
                                FROM shipment_references r
                                WHERE r.shipment_id = sh.id AND r.reference_type = 'WR'
+                               ORDER BY r.is_primary DESC, r.created_at
+                               LIMIT 1
+                           ),
+                           'bl', (
+                               SELECT r.value
+                               FROM shipment_references r
+                               WHERE r.shipment_id = sh.id AND r.reference_type = 'BL'
                                ORDER BY r.is_primary DESC, r.created_at
                                LIMIT 1
                            ),

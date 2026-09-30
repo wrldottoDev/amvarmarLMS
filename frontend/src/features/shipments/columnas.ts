@@ -42,6 +42,8 @@ export const contenidoColumna: Record<string, (carga: CargaResumen) => string> =
   identificador: identificadorCarga,
   empresa: () => "",
   invoice: (c) => c.invoice || "—",
+  bl: (c) => c.bl || "—",
+  amar: (c) => c.amar || "—",
   estado: (c) => c.status,
   shipper: (c) => c.shipper || "—",
   carrier: (c) => c.carrier || "—",

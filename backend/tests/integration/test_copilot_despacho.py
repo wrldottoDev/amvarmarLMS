@@ -30,13 +30,24 @@ async def _carga(
     empresa: str = "empresa_a",
     factura: str | None = None,
 ) -> tuple[uuid.UUID, str]:
+    bodega = (
+        await session.execute(
+            text("""
+                INSERT INTO facilities
+                    (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                VALUES (:o, :codigo, 'WAREHOUSE', true)
+                RETURNING id
+            """),
+            {"o": ctx["origen"], "codigo": f"MIA-{uuid.uuid4().hex[:8]}"},
+        )
+    ).scalar_one()
     fila = (
         await session.execute(
             text("""
                 INSERT INTO shipments
                     (company_id, created_by, current_status_code,
-                     origin_location_id, destination_location_id)
-                VALUES (:c, :u, :e, :o, :d)
+                     origin_location_id, destination_location_id, origin_facility_id)
+                VALUES (:c, :u, :e, :o, :d, :f)
                 RETURNING id, shipment_number
             """),
             {
@@ -45,6 +56,7 @@ async def _carga(
                 "e": estado,
                 "o": ctx["origen"],
                 "d": ctx["destino"],
+                "f": bodega,
             },
         )
     ).one()
@@ -151,18 +163,20 @@ class TestPropuesta:
         assert resultado["propuesta"] is None
         assert factura in resultado["ambiguas"]
 
-    async def test_avisa_si_hay_requisitos_pendientes_pero_propone(
+    async def test_avisa_si_hay_documentos_sugeridos_pero_propone(
         self, session: AsyncSession, redis
     ) -> None:
-        """El cliente puede pedirlo; Operaciones lo aprueba cuando se resuelve."""
+        """El cliente puede pedirlo y el documento nunca bloquea la aprobación."""
         ctx = await _entorno(session)
         carga, numero = await _carga(session, ctx)
         await session.execute(
             text("""
                 INSERT INTO shipment_requirements
-                    (shipment_id, requirement_type, title, required_from, status,
-                     blocks_dispatch, created_by)
-                VALUES (:s, 'ACTION', 'Pago de bodegaje', 'CLIENT', 'OPEN', true, :u)
+                    (shipment_id, requirement_type, document_type_id, title,
+                     required_from, status, blocks_dispatch, created_by)
+                SELECT :s, 'DOCUMENT', id, 'Factura comercial',
+                       'CLIENT', 'PENDING', false, :u
+                FROM document_types WHERE code = 'COMMERCIAL_INVOICE'
             """),
             {"s": carga, "u": ctx["operaciones"]},
         )
@@ -170,7 +184,8 @@ class TestPropuesta:
         resultado = await _proponer(session, redis, ctx, [numero])
 
         assert resultado["action_code"] == "proponer_despacho"
-        assert any("Pago de bodegaje" in a for a in resultado["advertencias"])
+        assert any("Factura comercial" in a for a in resultado["advertencias"])
+        assert any("podés continuar" in a for a in resultado["advertencias"])
 
     async def test_operaciones_no_mezcla_empresas(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)

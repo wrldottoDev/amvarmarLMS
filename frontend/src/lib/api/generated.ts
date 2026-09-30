@@ -505,6 +505,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shipments/bulk-hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ocultar Cargas Masivamente
+         * @description Oculta varias cargas en una sola transacción auditable.
+         */
+        post: operations["ocultar_cargas_masivamente_api_v1_shipments_bulk_hide_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/ocultar": {
         parameters: {
             query?: never;
@@ -1596,6 +1616,10 @@ export interface components {
             po?: string | null;
             /** Container */
             container?: string | null;
+            /** Bl */
+            bl?: string | null;
+            /** Amar */
+            amar?: string | null;
         };
         /** ActualizarEmpresaRequest */
         ActualizarEmpresaRequest: {
@@ -1838,8 +1862,10 @@ export interface components {
             shipment_number: string;
             /** Wr */
             wr: string | null;
+            /** Bl */
+            bl?: string | null;
             /** Invoice */
-            invoice: string | null;
+            invoice?: string | null;
             /** Status */
             status: string;
             /** Package Count */
@@ -1973,6 +1999,10 @@ export interface components {
             container?: string | null;
             /** Wr */
             wr?: string | null;
+            /** Bl */
+            bl?: string | null;
+            /** Amar */
+            amar?: string | null;
             /** Packages */
             packages: components["schemas"]["BultoRequest"][];
             /** Initial Status */
@@ -2053,6 +2083,8 @@ export interface components {
             id: string;
             /** Dispatch Number */
             dispatch_number: string;
+            /** Shipment Identifiers */
+            shipment_identifiers: string[];
             /** Status */
             status: string;
             /** Method */
@@ -2440,6 +2472,18 @@ export interface components {
             /** Read At */
             read_at: string | null;
         };
+        /** OcultarMasivoRequest */
+        OcultarMasivoRequest: {
+            /** Shipment Ids */
+            shipment_ids: string[];
+            /** Motivo */
+            motivo: string;
+        };
+        /** OcultarMasivoResponse */
+        OcultarMasivoResponse: {
+            /** Updated */
+            updated: number;
+        };
         /** OcultarRequest */
         OcultarRequest: {
             /** Motivo */
@@ -2590,7 +2634,7 @@ export interface components {
          *     con bodega que lo use (ADR-0005).
          * @enum {string}
          */
-        ReferenceType: "INVOICE" | "WR" | "PO" | "TRACKING" | "CONTAINER" | "BL" | "OTHER";
+        ReferenceType: "INVOICE" | "WR" | "PO" | "TRACKING" | "CONTAINER" | "BL" | "AMAR" | "OTHER";
         /** RejectRequirementRequest */
         RejectRequirementRequest: {
             /**
@@ -2625,7 +2669,7 @@ export interface components {
             description?: string | null;
             /**
              * Blocks Dispatch
-             * @default true
+             * @default false
              */
             blocks_dispatch: boolean;
             /** Due At */
@@ -2758,6 +2802,10 @@ export interface components {
             client_action_required_count: number;
             /** Wr */
             wr?: string | null;
+            /** Bl */
+            bl?: string | null;
+            /** Amar */
+            amar?: string | null;
             /** Tracking */
             tracking?: string | null;
             /** Po */
@@ -2855,6 +2903,10 @@ export interface components {
             client_action_required_count: number;
             /** Wr */
             wr?: string | null;
+            /** Bl */
+            bl?: string | null;
+            /** Amar */
+            amar?: string | null;
             /** Tracking */
             tracking?: string | null;
             /** Po */
@@ -2919,6 +2971,8 @@ export interface components {
             id: string;
             /** Dispatch Number */
             dispatch_number: string;
+            /** Shipment Identifiers */
+            shipment_identifiers: string[];
             /** Status */
             status: string;
             /** Method */
@@ -3967,6 +4021,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreferenciaColumnasResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ocultar_cargas_masivamente_api_v1_shipments_bulk_hide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OcultarMasivoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OcultarMasivoResponse"];
                 };
             };
             /** @description Validation Error */

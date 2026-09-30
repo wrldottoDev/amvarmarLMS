@@ -559,9 +559,8 @@ async def proponer_cambio_estado(
 _METODOS = {"SEA": "Marítimo", "AIR": "Aéreo", "LAND": "Terrestre"}
 
 
-async def _requisitos_que_frenan(session: AsyncSession, shipment_ids: list[UUID]) -> list[Any]:
-    """Lo que Operaciones va a esperar antes de aprobar: no impide pedir el
-    despacho, pero el cliente tiene que saberlo al confirmar."""
+async def _documentos_sugeridos(session: AsyncSession, shipment_ids: list[UUID]) -> list[Any]:
+    """Documentos opcionales que conviene recordar antes de confirmar."""
     return list(
         (
             await session.execute(
@@ -571,7 +570,8 @@ async def _requisitos_que_frenan(session: AsyncSession, shipment_ids: list[UUID]
                     JOIN shipments s ON s.id = r.shipment_id
                     LEFT JOIN document_types dt ON dt.id = r.document_type_id
                     WHERE r.shipment_id = ANY(:ids)
-                      AND r.blocks_dispatch
+                      AND r.requirement_type = 'DOCUMENT'
+                      AND r.required_from = 'CLIENT'
                       AND COALESCE(dt.required_before_status, 'DISPATCHED') = 'DISPATCHED'
                       AND r.status NOT IN
                           ('FULFILLED', 'VERIFIED', 'NOT_APPLICABLE', 'WAIVED', 'CANCELLED')
@@ -644,12 +644,11 @@ async def proponer_despacho(
     if not permisos.permite(Perm.DISPATCH_REQUESTS_CREATE, company_id=empresa):
         return sin_propuesta("Tu cuenta no puede solicitar despachos para esta empresa.")
 
-    no_disponibles = [
-        c
-        for c in cargas
-        if c.current_status_code != ShipmentStatus.STORED
-        and not (c.es_transito and c.current_status_code == ShipmentStatus.IN_TRANSIT)
-    ]
+    transito = [c for c in cargas if c.es_transito]
+    if transito:
+        return sin_propuesta("Los reportes de tránsito no se pueden despachar.")
+
+    no_disponibles = [c for c in cargas if c.current_status_code != ShipmentStatus.STORED]
     if no_disponibles:
         detalle = ", ".join(
             f"{c.shipment_number} ({_etiqueta(c.current_status_code)})" for c in no_disponibles
@@ -659,8 +658,8 @@ async def proponer_despacho(
     metodo = str(argumentos["metodo"])
     fecha = _fecha(argumentos.get("fecha_retiro"))
     advertencias = [
-        f"{f.shipment_number}: falta «{f.title}». Operaciones aprueba el despacho cuando se resuelva."
-        for f in await _requisitos_que_frenan(session, [c.id for c in cargas])
+        f"{f.shipment_number}: sería útil adjuntar «{f.title}», pero podés continuar sin hacerlo."
+        for f in await _documentos_sugeridos(session, [c.id for c in cargas])
     ]
     if argumentos.get("fecha_retiro") and fecha is None:
         advertencias.append("No entendí la fecha de retiro; completala al confirmar (AAAA-MM-DD).")

@@ -191,7 +191,8 @@ export function useRevisarRequisito(cargaId: string) {
       cliente.invalidateQueries({ queryKey: claveExpediente(cargaId) });
       cliente.invalidateQueries({ queryKey: ["carga", cargaId] });
       cliente.invalidateQueries({ queryKey: ["cargas"] });
-      // Un requisito aprobado puede desbloquear una transición.
+      // La revisión actualiza el expediente y sus contadores; nunca bloquea
+      // una transición, pero todas las pantallas deben reflejar el resultado.
       cliente.invalidateQueries({ queryKey: ["transiciones-disponibles", cargaId] });
     },
   });

@@ -49,8 +49,8 @@ export function CampanaNotificaciones() {
       </button>
 
       {abierto ? (
-        <div className="absolute right-0 z-30 mt-2 w-[min(92vw,380px)] rounded-md border bg-[var(--superficie)] shadow-xl">
-          <div className="flex items-center justify-between border-b px-4 py-3">
+        <div className="fixed inset-x-3 top-16 z-30 rounded-md border bg-[var(--superficie)] shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[380px]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
             <strong className="text-sm">Avisos</strong>
             {sinLeer > 0 ? (
               <button
@@ -87,9 +87,9 @@ export function CampanaNotificaciones() {
                           aria-hidden="true"
                         />
                       )}
-                      <span className={aviso.read_at ? "pl-4" : ""}>
-                        <strong className="block text-sm">{aviso.title}</strong>
-                        <span className="mt-0.5 block text-xs text-[var(--texto-secundario)]">
+                      <span className={clases("min-w-0 flex-1", aviso.read_at ? "pl-4" : "")}>
+                        <strong className="block break-words text-sm">{aviso.title}</strong>
+                        <span className="mt-0.5 block break-words text-xs text-[var(--texto-secundario)]">
                           {aviso.body}
                         </span>
                         <span className="mt-1 block text-[11px] text-[var(--texto-secundario)]">
