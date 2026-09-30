@@ -9,7 +9,6 @@ import {
   FileText,
   History,
   LayoutList,
-  MapPin,
   Package,
   Pencil,
   Route,
@@ -23,11 +22,13 @@ import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carg
 import { TimelineCarga } from "@/components/shipments/timeline-carga";
 import { TransicionCarga } from "@/components/shipments/transicion-carga";
 import { AvisoError } from "@/components/ui/aviso-error";
+import { Boton } from "@/components/ui/boton";
 import { Expediente } from "@/components/documentos/expediente";
 import { EstadoExplicado } from "@/components/shipments/estado-explicado";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { identificadorCarga } from "@/features/shipments/identificador";
+import { useActualizarDatosTransito } from "@/features/shipments/consultas";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
 
@@ -58,6 +59,74 @@ function Dato({ etiqueta, valor }: { etiqueta: string; valor: React.ReactNode })
   );
 }
 
+function FormularioDatosTransito({
+  cargaId,
+  rowVersion,
+  descripcionInicial,
+  partidaInicial,
+}: {
+  cargaId: string;
+  rowVersion: number;
+  descripcionInicial: string | null;
+  partidaInicial: string | null;
+}) {
+  const [descripcion, setDescripcion] = useState(descripcionInicial ?? "");
+  const [partida, setPartida] = useState(partidaInicial ?? "");
+  const actualizar = useActualizarDatosTransito(cargaId);
+  const faltanDatos = !descripcionInicial || !partidaInicial;
+
+  return (
+    <div className="mt-5 space-y-4 rounded-lg border bg-[var(--superficie)] p-4">
+      {faltanDatos ? (
+        <p className="rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] p-3 text-sm">
+          Por favor, ayúdenos agregando la descripción en español de lo que viene y la partida
+          arancelaria.
+        </p>
+      ) : null}
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Descripción en español</span>
+        <textarea
+          className="min-h-28 w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+          value={descripcion}
+          maxLength={4000}
+          onChange={(evento) => setDescripcion(evento.target.value)}
+          placeholder="Describa en español la mercancía que viene"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Partida arancelaria</span>
+        <input
+          className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+          value={partida}
+          inputMode="numeric"
+          maxLength={40}
+          onChange={(evento) => setPartida(evento.target.value.replace(/\D/g, "").slice(0, 40))}
+          placeholder="6 u 8 dígitos (se permiten hasta 40)"
+        />
+      </label>
+      {actualizar.error ? <AvisoError error={actualizar.error} /> : null}
+      {actualizar.isSuccess ? (
+        <p className="text-sm font-medium text-[var(--exito)]">Datos guardados y enviados a administración.</p>
+      ) : null}
+      <div className="flex justify-end">
+        <Boton
+          cargando={actualizar.isPending}
+          disabled={!descripcion.trim() && !partida.trim()}
+          onClick={() =>
+            actualizar.mutate({
+              row_version: rowVersion,
+              description: descripcion.trim() || null,
+              tariff_code: partida.trim() || null,
+            })
+          }
+        >
+          Guardar datos
+        </Boton>
+      </div>
+    </div>
+  );
+}
+
 export default function PaginaDetalleCarga() {
   const parametros = useParams<{ id: string }>();
   const cargaId = parametros.id;
@@ -78,6 +147,8 @@ export default function PaginaDetalleCarga() {
   if (!consulta.data) return null;
 
   const carga = consulta.data;
+  const esCliente = Boolean(usuario?.empresa);
+  const esTransito = carga.origin_kind === "TRANSIT";
   const pendientes = usuario?.empresa ? carga.client_action_required_count : carga.open_requirements_count;
   const identificador = identificadorCarga(carga);
 
@@ -113,7 +184,7 @@ export default function PaginaDetalleCarga() {
               <BadgeEstado estado={carga.status} />
               <BadgePendientes
                 cantidad={pendientes}
-                etiqueta={usuario?.empresa && !carga.bl ? "sugerido" : "pendiente"}
+                etiqueta={esCliente && !esTransito ? "sugerido" : "pendiente"}
               />
               {carga.archived_at ? (
                 <span
@@ -221,7 +292,6 @@ export default function PaginaDetalleCarga() {
           <dl className="grid grid-cols-2 divide-x border-b">
             <div className="pr-5">
               <Dato etiqueta="ETA" valor={<span className="inline-flex items-center gap-2"><CalendarDays className="size-4 text-[var(--marca)]" />{formatearFecha(carga.estimated_arrival_at)}</span>} />
-              <Dato etiqueta="Ubicación actual" valor={<span className="inline-flex items-center gap-2"><MapPin className="size-4 text-[var(--marca)]" />{carga.current_location ?? "No registrada"}</span>} />
               <Dato etiqueta="Dirección de destino" valor={carga.destination_address} />
             </div>
             <div className="pl-5">
@@ -238,7 +308,12 @@ export default function PaginaDetalleCarga() {
               />
             </div>
           </dl>
-          {carga.description ? <p className="mt-4 text-sm leading-6 text-[var(--texto-secundario)]">{carga.description}</p> : null}
+          {!esTransito ? (
+            <div className="mt-5 rounded-lg border bg-[var(--superficie)] p-4">
+              <h3 className="text-sm font-bold uppercase tracking-wide text-[var(--texto-secundario)]">Descripción</h3>
+              <p className="mt-2 text-sm leading-6">{carga.description || "No registrada"}</p>
+            </div>
+          ) : null}
 
           {/*
             Los datos comerciales viven en su propio bloque y solo aparecen si hay
@@ -311,6 +386,26 @@ export default function PaginaDetalleCarga() {
             <span>Actualizada {formatearFechaHora(carga.updated_at)}</span>
             <span>Versión {carga.row_version}</span>
           </div>
+          {esTransito ? (
+            <section className="mt-6" aria-labelledby="datos-aduaneros">
+              <h3 id="datos-aduaneros" className="border-b pb-3 text-base font-bold">
+                Descripción y partida arancelaria
+              </h3>
+              {esCliente ? (
+                <FormularioDatosTransito
+                  cargaId={carga.id}
+                  rowVersion={carga.row_version}
+                  descripcionInicial={carga.description}
+                  partidaInicial={carga.tariff_code ?? null}
+                />
+              ) : (
+                <dl className="grid grid-cols-2 gap-x-6 border-b">
+                  <Dato etiqueta="Descripción en español" valor={carga.description} />
+                  <Dato etiqueta="Partida arancelaria" valor={carga.tariff_code} />
+                </dl>
+              )}
+            </section>
+          ) : null}
         </div>
           </section>
         </>

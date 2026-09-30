@@ -170,6 +170,14 @@ EVENTOS: dict[str, DefinicionEvento] = {
         ),
         ruta="/despachos/{id}",
     ),
+    "shipment.transit_details_updated_internal": DefinicionEvento(
+        codigo="shipment.transit_details_updated_internal",
+        critico=False,
+        asunto="Cliente actualizó datos de un reporte de tránsito",
+        mensaje=f"Un cliente completó la descripción en español o la partida arancelaria. {_ENTRAR}",
+        con_referencia=(f"El cliente actualizó los datos aduaneros del reporte {{ref}}. {_ENTRAR}"),
+        ruta="/shipments/{id}",
+    ),
     "dispatch.approved": DefinicionEvento(
         # Reemplaza `dispatch_approved.html`.
         codigo="dispatch.approved",
@@ -267,6 +275,20 @@ EVENTOS: dict[str, DefinicionEvento] = {
         mensaje=f"Registramos una carga suya en prealerta: la esperamos en bodega. {_ENTRAR}",
         con_referencia=(
             f"Registramos su carga {{ref}} en prealerta: la esperamos en bodega. {_ENTRAR}"
+        ),
+        ruta="/shipments/{id}",
+    ),
+    "shipment.transit_details_requested": DefinicionEvento(
+        codigo="shipment.transit_details_requested",
+        critico=False,
+        asunto="Complete los datos de su reporte de tránsito",
+        mensaje=(
+            "Por favor agregue la descripción en español de la mercancía y su partida "
+            f"arancelaria. {_ENTRAR}"
+        ),
+        con_referencia=(
+            "Por favor agregue la descripción en español y la partida arancelaria "
+            f"del reporte {{ref}}. {_ENTRAR}"
         ),
         ruta="/shipments/{id}",
     ),

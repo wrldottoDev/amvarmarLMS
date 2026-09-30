@@ -199,6 +199,7 @@ class Shipment(Base, TimestampMixin):
 
     current_location: Mapped[str | None] = mapped_column(String(180))
     description: Mapped[str | None] = mapped_column(Text)
+    tariff_code: Mapped[str | None] = mapped_column(String(40))
 
     estimated_arrival_at: Mapped[datetime | None]
     actual_arrival_at: Mapped[datetime | None]
@@ -270,6 +271,10 @@ class Shipment(Base, TimestampMixin):
             name="peso_volumetrico_no_negativo",
         ),
         CheckConstraint("volume_m3 IS NULL OR volume_m3 >= 0", name="volumen_no_negativo"),
+        CheckConstraint(
+            "tariff_code IS NULL OR tariff_code ~ '^[0-9]{1,40}$'",
+            name="partida_arancelaria_valida",
+        ),
         CheckConstraint("package_count >= 0", name="bultos_no_negativos"),
         CheckConstraint("row_version > 0", name="row_version_positiva"),
         # ADR-0007: un legal hold sin motivo no se puede auditar después.

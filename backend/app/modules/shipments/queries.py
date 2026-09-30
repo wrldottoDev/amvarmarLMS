@@ -89,6 +89,7 @@ _COLUMNAS_LISTADO = """
     s.transport_mode,
     s.estimated_arrival_at,
     s.current_location,
+    s.tariff_code,
     s.package_count,
     s.weight_kg,
     s.weight_lb,
@@ -112,6 +113,11 @@ _COLUMNAS_LISTADO = """
     destino.location_code AS destino_codigo,
     destino.name AS destino_nombre,
     destino.country_code AS destino_pais,
+    CASE WHEN EXISTS (
+        SELECT 1 FROM facilities tipo_origen
+        WHERE tipo_origen.id = s.origin_facility_id
+          AND tipo_origen.uses_warehouse_receipt
+    ) THEN 'MIAMI' ELSE 'TRANSIT' END AS origin_kind,
     (
         SELECT r.value FROM shipment_references r
         WHERE r.shipment_id = s.id AND r.reference_type = 'INVOICE'

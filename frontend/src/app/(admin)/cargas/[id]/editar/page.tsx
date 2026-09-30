@@ -172,6 +172,18 @@ export default function PaginaEditarCarga({
               />
             </label>
           ))}
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">Partida arancelaria</span>
+            <input
+              className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+              value={valor("tariff_code", datos.tariff_code)}
+              inputMode="numeric"
+              maxLength={40}
+              onChange={(evento) =>
+                cambiar("tariff_code", evento.target.value.replace(/\D/g, "").slice(0, 40))
+              }
+            />
+          </label>
         </div>
       </fieldset>
 

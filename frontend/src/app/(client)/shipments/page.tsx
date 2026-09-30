@@ -199,7 +199,7 @@ function ContenidoCargas({
               Ver ocultas
             </label>
           )}
-          <SelectorColumnas tipoOrigen={tipoOrigen} />
+          <SelectorColumnas tipoOrigen={tipoOrigen} esCliente={esCliente} />
         </div>
       </div>
 

@@ -410,6 +410,23 @@ export interface paths {
         patch: operations["actualizar_carga_api_v1_shipments__shipment_id__patch"];
         trace?: never;
     };
+    "/api/v1/shipments/{shipment_id}/transit-details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Actualizar Datos Transito */
+        put: operations["actualizar_datos_transito_api_v1_shipments__shipment_id__transit_details_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments/{shipment_id}/packages": {
         parameters: {
             query?: never;
@@ -1587,6 +1604,8 @@ export interface components {
             destination_address?: string | null;
             /** Description */
             description?: string | null;
+            /** Tariff Code */
+            tariff_code?: string | null;
             /** Transport Mode */
             transport_mode?: string | null;
             /** Estimated Arrival At */
@@ -1620,6 +1639,15 @@ export interface components {
             bl?: string | null;
             /** Amar */
             amar?: string | null;
+        };
+        /** ActualizarDatosTransitoRequest */
+        ActualizarDatosTransitoRequest: {
+            /** Row Version */
+            row_version: number;
+            /** Description */
+            description?: string | null;
+            /** Tariff Code */
+            tariff_code?: string | null;
         };
         /** ActualizarEmpresaRequest */
         ActualizarEmpresaRequest: {
@@ -1967,6 +1995,8 @@ export interface components {
             destination_address?: string | null;
             /** Description */
             description?: string | null;
+            /** Tariff Code */
+            tariff_code?: string | null;
             /** Transport Mode */
             transport_mode?: string | null;
             /** Estimated Arrival At */
@@ -2800,6 +2830,11 @@ export interface components {
             open_requirements_count: number;
             /** Client Action Required Count */
             client_action_required_count: number;
+            /**
+             * Origin Kind
+             * @enum {string}
+             */
+            origin_kind: "MIAMI" | "TRANSIT";
             /** Wr */
             wr?: string | null;
             /** Bl */
@@ -2814,6 +2849,8 @@ export interface components {
             container?: string | null;
             /** Shipper */
             shipper?: string | null;
+            /** Tariff Code */
+            tariff_code?: string | null;
             /** Carrier */
             carrier?: string | null;
             /** Foots Cft */
@@ -2901,6 +2938,11 @@ export interface components {
             open_requirements_count: number;
             /** Client Action Required Count */
             client_action_required_count: number;
+            /**
+             * Origin Kind
+             * @enum {string}
+             */
+            origin_kind: "MIAMI" | "TRANSIT";
             /** Wr */
             wr?: string | null;
             /** Bl */
@@ -2915,6 +2957,8 @@ export interface components {
             container?: string | null;
             /** Shipper */
             shipper?: string | null;
+            /** Tariff Code */
+            tariff_code?: string | null;
             /** Carrier */
             carrier?: string | null;
             /** Foots Cft */
@@ -3859,6 +3903,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ActualizarCargaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CargaActualizadaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actualizar_datos_transito_api_v1_shipments__shipment_id__transit_details_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualizarDatosTransitoRequest"];
             };
         };
         responses: {

@@ -22,6 +22,27 @@ export function useCarga(cargaId: string) {
 type CuerpoPiezas =
   paths["/api/v1/shipments/{shipment_id}/packages"]["put"]["requestBody"]["content"]["application/json"];
 
+type CuerpoDatosTransito =
+  paths["/api/v1/shipments/{shipment_id}/transit-details"]["put"]["requestBody"]["content"]["application/json"];
+
+export function useActualizarDatosTransito(cargaId: string) {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async (cuerpo: CuerpoDatosTransito) =>
+      exigirDatos(
+        await api.PUT("/api/v1/shipments/{shipment_id}/transit-details", {
+          params: { path: { shipment_id: cargaId } },
+          body: cuerpo,
+        }),
+      ),
+    onSuccess: () => {
+      cliente.invalidateQueries({ queryKey: ["carga", cargaId] });
+      cliente.invalidateQueries({ queryKey: ["cargas"] });
+      cliente.invalidateQueries({ queryKey: ["timeline", cargaId] });
+    },
+  });
+}
+
 /**
  * Reemplaza el desglose completo de piezas.
  *

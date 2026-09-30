@@ -12,7 +12,13 @@ import { clases } from "@/lib/utilidades";
  * quien rastrea mira tracking y WR. Obligar a los dos a la misma vista hace que
  * ninguno la tenga cómoda.
  */
-export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANSIT" }) {
+export function SelectorColumnas({
+  tipoOrigen,
+  esCliente = false,
+}: {
+  tipoOrigen?: "MIAMI" | "TRANSIT";
+  esCliente?: boolean;
+}) {
   const [abierto, setAbierto] = useState(false);
   const contenedor = useRef<HTMLDivElement>(null);
   const { data } = usePreferenciaColumnas();
@@ -30,6 +36,12 @@ export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANS
   if (!data) return null;
 
   const visibles = new Set(data.visibles);
+  const ocultasCliente = new Set(["tracking", "carrier", "po", "container"]);
+  const disponibles = data.disponibles.filter(
+    (columna) =>
+      (!esCliente || !ocultasCliente.has(columna.clave)) &&
+      !(esCliente && tipoOrigen === "TRANSIT" && columna.clave === "invoice"),
+  );
 
   function alternar(columna: string) {
     if (!data) return;
@@ -53,7 +65,7 @@ export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANS
         <Columns3 className="size-4" aria-hidden="true" />
         Columnas
         <span className="text-xs text-[var(--texto-secundario)]">
-          {data.visibles.length}/{data.disponibles.length}
+          {disponibles.filter((c) => visibles.has(c.clave)).length}/{disponibles.length}
         </span>
       </button>
 
@@ -64,7 +76,7 @@ export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANS
           </p>
 
           <ul className="max-h-80 overflow-y-auto">
-            {data.disponibles.map((columna) => (
+            {disponibles.map((columna) => (
               <li key={columna.clave}>
                 <label
                   className={clases(
@@ -82,6 +94,8 @@ export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANS
                   />
                   {tipoOrigen === "TRANSIT" && columna.clave === "foots_cft"
                     ? "Metro cúbico (m³)"
+                    : tipoOrigen === "TRANSIT" && columna.clave === "fecha"
+                      ? "ETA"
                     : columna.etiqueta}
                 </label>
               </li>
@@ -91,7 +105,7 @@ export function SelectorColumnas({ tipoOrigen }: { tipoOrigen?: "MIAMI" | "TRANS
           <button
             type="button"
             className="mt-1 flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-[var(--mar)] hover:bg-[var(--hover)]"
-            onClick={() => guardar.mutate(data.disponibles.map((c) => c.clave))}
+            onClick={() => guardar.mutate(disponibles.map((c) => c.clave))}
           >
             <RotateCcw className="size-3.5" aria-hidden="true" />
             Mostrar todas

@@ -16,7 +16,7 @@ import { identificadorCarga } from "@/features/shipments/identificador";
 /**
  * Cómo se identifica una carga en pantalla.
  *
- * Lo de Miami lleva Warehouse Receipt; lo demás va por factura. Ese es el orden
+ * Lo de Miami lleva Warehouse Receipt; tránsito va por BL. Ese es el orden
  * en que la gente la busca, así que ese es el orden en que se muestra. El
  * El número interno no se muestra: no corresponde a ningún papel comercial.
  */
@@ -57,10 +57,18 @@ export function ListadoCargas({
   const etiquetas = new Map(preferencia?.disponibles.map((c) => [c.clave, c.etiqueta]) ?? []);
 
   // Un cliente ve una sola empresa: la columna sería la misma en cada fila.
-  const columnasBase = visibles.filter((c) => c !== "empresa" || (empresaVisible && !esCliente));
-  const columnas = tipoOrigen === "TRANSIT" && !columnasBase.includes("shipper")
-    ? [...columnasBase, "shipper"]
-    : columnasBase;
+  const ocultasCliente = new Set(["tracking", "carrier", "po", "container"]);
+  const columnasBase = visibles.filter(
+    (c) =>
+      (c !== "empresa" || (empresaVisible && !esCliente)) &&
+      (!esCliente || !ocultasCliente.has(c)) &&
+      !(esCliente && tipoOrigen === "TRANSIT" && c === "invoice"),
+  );
+  const columnas = [...columnasBase];
+  if (tipoOrigen === "TRANSIT") {
+    if (esCliente && !columnas.includes("bl")) columnas.splice(1, 0, "bl");
+    if (!columnas.includes("shipper")) columnas.push("shipper");
+  }
   const seleccionHabilitada = Boolean(seleccionadas && alternarSeleccion && alternarTodas);
   const todasSeleccionadas = cargas.length > 0 && cargas.every((carga) => seleccionadas?.has(carga.id));
 
@@ -86,6 +94,8 @@ export function ListadoCargas({
                   >
                     {tipoOrigen === "TRANSIT" && clave === "foots_cft"
                       ? "Metro cúbico (m³)"
+                      : tipoOrigen === "TRANSIT" && clave === "fecha"
+                        ? "ETA"
                       : etiquetas.get(clave) ?? clave}
                   </th>
                 ))}
@@ -151,7 +161,7 @@ export function ListadoCargas({
                 <strong className="block text-sm">{referencia(carga)}</strong>
                 <span className="block text-xs text-[var(--texto-secundario)]">
                   {tipoOrigen === "TRANSIT"
-                    ? carga.shipper || "Proveedor sin indicar"
+                    ? `${carga.shipper || "Proveedor sin indicar"} · ETA ${formatearFecha(carga.estimated_arrival_at)}`
                     : `${carga.origin.location_code} → ${carga.destination.location_code} · ${formatearFecha(carga.created_at)}`}
                 </span>
               </Link>
@@ -227,6 +237,10 @@ function Celda({
 
   if (clave === "foots_cft" && tipoOrigen === "TRANSIT") {
     return <span>{carga.volume_m3 != null ? `${carga.volume_m3} m³` : "—"}</span>;
+  }
+
+  if (clave === "fecha" && tipoOrigen === "TRANSIT") {
+    return <span>{formatearFecha(carga.estimated_arrival_at)}</span>;
   }
 
   const valor = contenidoColumna[clave]?.(carga) ?? "—";

@@ -146,6 +146,7 @@ class CrearCargaRequest(BaseModel):
     origin_facility_id: UUID | None = None
     destination_address: str | None = Field(default=None, max_length=240)
     description: str | None = Field(default=None, max_length=4000)
+    tariff_code: str | None = Field(default=None, max_length=40, pattern="^(?:[0-9]{1,40})?$")
     transport_mode: str | None = Field(default=None, max_length=20)
     estimated_arrival_at: datetime | None = None
     weight: PesoInput
@@ -225,6 +226,7 @@ class ActualizarCargaRequest(BaseModel):
     destination_location_id: UUID | None = None
     destination_address: str | None = Field(default=None, max_length=240)
     description: str | None = Field(default=None, max_length=4000)
+    tariff_code: str | None = Field(default=None, max_length=40, pattern="^(?:[0-9]{1,40})?$")
     transport_mode: str | None = Field(default=None, max_length=20)
     estimated_arrival_at: datetime | None = None
     weight: PesoInput | None = None
@@ -246,6 +248,12 @@ class ActualizarCargaRequest(BaseModel):
     container: str | None = Field(default=None, max_length=120)
     bl: str | None = Field(default=None, max_length=120)
     amar: str | None = Field(default=None, max_length=120)
+
+
+class ActualizarDatosTransitoRequest(BaseModel):
+    row_version: int = Field(ge=1)
+    description: str | None = Field(default=None, max_length=4000)
+    tariff_code: str | None = Field(default=None, max_length=40, pattern="^[0-9]{1,40}$")
 
 
 def _a_bultos(peticiones: list[BultoRequest]) -> tuple[gestion.DatosDeBulto, ...]:
@@ -328,6 +336,7 @@ async def crear_carga(
                 origin_facility_id=datos.origin_facility_id,
                 destination_address=datos.destination_address,
                 description=datos.description,
+                tariff_code=datos.tariff_code,
                 transport_mode=datos.transport_mode,
                 estimated_arrival_at=datos.estimated_arrival_at,
                 weight_value=datos.weight.value,
@@ -411,6 +420,42 @@ async def actualizar_carga(
     )
     await db.commit()
 
+    return CargaActualizadaResponse(id=shipment_id, row_version=nueva_version)
+
+
+@router.put("/{shipment_id}/transit-details", response_model=CargaActualizadaResponse)
+async def actualizar_datos_transito(
+    shipment_id: UUID,
+    datos: ActualizarDatosTransitoRequest,
+    request: Request,
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+) -> CargaActualizadaResponse:
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    try:
+        nueva_version = await gestion.actualizar_datos_transito_del_cliente(
+            db,
+            shipment_id=shipment_id,
+            description=datos.description,
+            tariff_code=datos.tariff_code,
+            row_version=datos.row_version,
+            actor_user_id=actor.user_id,
+            permisos=permisos,
+        )
+    except service.SinPermisoParaTransicion as error:
+        raise RecursoNoEncontrado("Carga no encontrada.") from error
+
+    await registrar(
+        db,
+        action="shipment.transit_details.updated",
+        resource_type="shipment",
+        resource_id=shipment_id,
+        actor_user_id=actor.user_id,
+        after_data={"campos": ["description", "tariff_code"]},
+        ip_address=_ip(request),
+    )
+    await db.commit()
     return CargaActualizadaResponse(id=shipment_id, row_version=nueva_version)
 
 
@@ -1051,6 +1096,7 @@ class ShipmentResumenResponse(BaseModel):
     status: str
     open_requirements_count: int
     client_action_required_count: int
+    origin_kind: Literal["MIAMI", "TRANSIT"]
     # Identificadores comerciales. El sistema viejo los tenía como columnas del
     # listado y se busca por ellos todos los días.
     wr: str | None = None
@@ -1060,6 +1106,7 @@ class ShipmentResumenResponse(BaseModel):
     po: str | None = None
     container: str | None = None
     shipper: str | None = None
+    tariff_code: str | None = None
     carrier: str | None = None
     foots_cft: Decimal | None = None
     volume_m3: Decimal | None = None
@@ -1121,6 +1168,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         status=fila.current_status_code,
         open_requirements_count=fila.requisitos_abiertos,
         client_action_required_count=fila.requisitos_del_cliente,
+        origin_kind=getattr(fila, "origin_kind", "MIAMI" if fila.wr else "TRANSIT"),
         invoice=fila.factura,
         wr=fila.wr,
         bl=getattr(fila, "bl", None),
@@ -1129,6 +1177,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         po=fila.po,
         container=fila.contenedor,
         shipper=fila.shipper,
+        tariff_code=getattr(fila, "tariff_code", None),
         carrier=fila.carrier,
         foots_cft=fila.foots_cft,
         volume_m3=fila.volume_m3,

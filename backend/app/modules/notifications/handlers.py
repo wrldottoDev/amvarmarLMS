@@ -188,12 +188,22 @@ async def carga_creada(session: AsyncSession, evento: EventoPendiente) -> None:
     estado y lo manda `cambio_de_estado_de_carga`: dos correos por el mismo
     hecho serían ruido.
     """
-    if evento.payload.get("estado_inicial") != ShipmentStatus.PRE_ALERT:
-        return
     carga = await _carga(session, evento.aggregate_id)
     if carga is None:
         return
     empresa, referencia = carga
+    if evento.payload.get("es_transito") is True:
+        await service.notificar(
+            session,
+            event_code="shipment.transit_details_requested",
+            destinatarios=await service.destinatarios_de_empresa(session, empresa),
+            resource_type="shipment",
+            resource_id=evento.aggregate_id,
+            referencia=referencia,
+            dedup_key=f"outbox:{evento.id}:datos-transito",
+        )
+    if evento.payload.get("estado_inicial") != ShipmentStatus.PRE_ALERT:
+        return
     await service.notificar(
         session,
         event_code="shipment.pre_alerted",
@@ -202,6 +212,22 @@ async def carga_creada(session: AsyncSession, evento: EventoPendiente) -> None:
         resource_id=evento.aggregate_id,
         referencia=referencia,
         dedup_key=f"outbox:{evento.id}",
+    )
+
+
+async def datos_transito_actualizados(session: AsyncSession, evento: EventoPendiente) -> None:
+    carga = await _carga(session, evento.aggregate_id)
+    if carga is None:
+        return
+    _, referencia = carga
+    await service.notificar(
+        session,
+        event_code="shipment.transit_details_updated_internal",
+        destinatarios=await service.destinatarios_de_operaciones(session),
+        resource_type="shipment",
+        resource_id=evento.aggregate_id,
+        referencia=referencia,
+        dedup_key=f"outbox:{evento.id}:interno",
     )
 
 
@@ -396,4 +422,5 @@ POR_EVENTO = {
     # Se publicaba desde el rechazo de documentos pero no tenía manejador: el
     # worker lo descartaba y el cliente nunca se enteraba.
     "shipment.document_rejected": documento_rechazado,
+    "shipment.transit_details_updated": datos_transito_actualizados,
 }

@@ -97,6 +97,7 @@ class DatosDeCarga:
     origin_facility_id: UUID | None = None
     destination_address: str | None = None
     description: str | None = None
+    tariff_code: str | None = None
     transport_mode: str | None = None
     estimated_arrival_at: datetime | None = None
     weight_value: Decimal | None = None
@@ -200,13 +201,13 @@ async def crear(
                         (company_id, created_by, assigned_to, current_status_code,
                          origin_location_id, origin_facility_id,
                          destination_location_id, destination_address,
-                         description, transport_mode, estimated_arrival_at,
+                         description, tariff_code, transport_mode, estimated_arrival_at,
                          weight_kg, weight_lb, weight_source_unit,
                          volumetric_weight_kg, volume_m3,
                          foots_cft, shipper, carrier, permit_review_required)
                     VALUES (:company, :actor, :asignado, :estado,
                             :origen, :bodega, :destino, :direccion,
-                            :descripcion, :modo, :eta,
+                            :descripcion, :partida, :modo, :eta,
                             :peso, :peso_lb, :unidad_peso, :peso_vol, :volumen,
                             :cft, :shipper, :carrier, :permiso)
                     RETURNING id, shipment_number, row_version
@@ -221,6 +222,7 @@ async def crear(
                     "destino": datos.destination_location_id,
                     "direccion": datos.destination_address,
                     "descripcion": datos.description,
+                    "partida": datos.tariff_code,
                     "modo": datos.transport_mode,
                     "eta": datos.estimated_arrival_at,
                     "peso": peso.kg,
@@ -276,12 +278,29 @@ async def crear(
 
     # El aviso de "carga nueva" sale del outbox, como el resto: si el alta se
     # revierte, no queda un correo avisando de una carga que no existe.
+    es_transito = bool(
+        (
+            await session.execute(
+                text("""
+                    SELECT NOT EXISTS (
+                        SELECT 1 FROM facilities f
+                        WHERE f.id = :facility_id AND f.uses_warehouse_receipt
+                    )
+                """),
+                {"facility_id": datos.origin_facility_id},
+            )
+        ).scalar_one()
+    )
     await publicar(
         session,
         aggregate_type="shipment",
         aggregate_id=fila.id,
         event_type="shipment.created",
-        payload={"estado_inicial": estado_inicial, "actor_user_id": str(actor_user_id)},
+        payload={
+            "estado_inicial": estado_inicial,
+            "actor_user_id": str(actor_user_id),
+            "es_transito": es_transito,
+        },
         dedup_key=f"shipment:{fila.id}:created",
     )
 
@@ -441,6 +460,7 @@ _EDITABLES_CAMPOS: dict[str, str] = {
     "destination_location_id": "destino",
     "destination_address": "direccion",
     "description": "descripcion",
+    "tariff_code": "partida",
     "transport_mode": "modo",
     "estimated_arrival_at": "eta",
     "weight_kg": "peso",
@@ -508,6 +528,10 @@ async def actualizar(
         )
 
     cambios_normalizados = dict(cambios)
+    if "tariff_code" in cambios_normalizados:
+        cambios_normalizados["tariff_code"] = (
+            str(cambios_normalizados["tariff_code"] or "").strip() or None
+        )
     if "weight" in cambios_normalizados:
         peso_entrada = cambios_normalizados.pop("weight")
         try:
@@ -587,6 +611,86 @@ async def _subir_version(session: AsyncSession, shipment_id: UUID, row_version: 
         )
     ).scalar_one()
     return version
+
+
+async def actualizar_datos_transito_del_cliente(
+    session: AsyncSession,
+    *,
+    shipment_id: UUID,
+    description: str | None,
+    tariff_code: str | None,
+    row_version: int,
+    actor_user_id: UUID,
+    permisos: PermisosEfectivos,
+) -> int:
+    """Permite al dueño completar datos aduaneros de un reporte de tránsito."""
+    carga = (
+        await session.execute(
+            text("""
+                SELECT s.company_id, s.row_version, s.hidden_at, s.archived_at,
+                       NOT EXISTS (
+                           SELECT 1 FROM facilities f
+                           WHERE f.id = s.origin_facility_id
+                             AND f.uses_warehouse_receipt
+                       ) AS es_transito
+                FROM shipments s
+                WHERE s.id = :id AND s.deleted_at IS NULL
+                FOR UPDATE
+            """),
+            {"id": shipment_id},
+        )
+    ).one_or_none()
+    if carga is None or not permisos.permite(Perm.SHIPMENTS_READ, company_id=carga.company_id):
+        raise SinPermisoParaTransicion(Perm.SHIPMENTS_READ)
+    if not carga.es_transito:
+        raise DatosInvalidos("Estos datos solo aplican a reportes de tránsito.")
+    if carga.hidden_at is not None or carga.archived_at is not None:
+        raise NoSePuedeEditar("Este reporte de tránsito ya no admite cambios.")
+    if carga.row_version != row_version:
+        raise VersionDesactualizada(
+            "La carga fue modificada por otra persona. Recárguela y reintente.",
+            details=[{"row_version_actual": carga.row_version}],
+        )
+
+    descripcion = (description or "").strip() or None
+    partida = (tariff_code or "").strip() or None
+    if partida is not None and (len(partida) > 40 or not partida.isdigit()):
+        raise DatosInvalidos("La partida arancelaria debe contener solo números (máximo 40).")
+
+    nueva_version = int(
+        (
+            await session.execute(
+                text("""
+                    UPDATE shipments
+                    SET description = :descripcion, tariff_code = :partida,
+                        row_version = row_version + 1, updated_at = now()
+                    WHERE id = :id AND row_version = :version
+                    RETURNING row_version
+                """),
+                {
+                    "id": shipment_id,
+                    "version": row_version,
+                    "descripcion": descripcion,
+                    "partida": partida,
+                },
+            )
+        ).scalar_one()
+    )
+    await _registrar_correccion(
+        session,
+        shipment_id,
+        ["description", "tariff_code"],
+        actor_user_id=actor_user_id,
+    )
+    await publicar(
+        session,
+        aggregate_type="shipment",
+        aggregate_id=shipment_id,
+        event_type="shipment.transit_details_updated",
+        payload={"actor_user_id": str(actor_user_id)},
+        dedup_key=f"shipment:{shipment_id}:transit-details:{nueva_version}",
+    )
+    return nueva_version
 
 
 async def _aplicar_referencias(
