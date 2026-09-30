@@ -217,6 +217,14 @@ async def crear(
                 ],
             )
 
+    # Al cliente se le muestran y exigen sus documentos en el mismo formulario
+    # de solicitud. Un archivo ya subido puede quedar pendiente de revisión por
+    # Operaciones, que lo validará antes de aprobar el despacho.
+    if not permisos.permite(Perm.DISPATCH_REQUESTS_APPROVE, company_id=company_id):
+        await shipments.validar_documentos_del_cliente_para_solicitar_despacho(
+            session, [carga.id for carga in cargas]
+        )
+
     dispatch = (
         await session.execute(
             text("""

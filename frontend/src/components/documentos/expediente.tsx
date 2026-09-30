@@ -47,12 +47,15 @@ export function Expediente({
   cargaId,
   esCliente,
   soloLectura = false,
+  soloParaSolicitarDespacho = false,
 }: {
   cargaId: string;
   esCliente: boolean;
   /** Historial de despachos (ADR-0007): una carga archivada no admite
    * documentos nuevos, renombres ni bajas — el backend lo rechaza igual. */
   soloLectura?: boolean;
+  /** En la solicitud muestra únicamente lo que el cliente debe aportar antes de enviarla. */
+  soloParaSolicitarDespacho?: boolean;
 }) {
   const { data, isPending, error } = useExpediente(cargaId);
   const subir = useSubirDocumento(cargaId);
@@ -94,11 +97,18 @@ export function Expediente({
   // Al cliente solo se le piden los documentos que le tocan a él. Un packing
   // list lo carga Operaciones, y mostrárselo como pendiente suyo lo haría
   // buscar un archivo que nunca tuvo (ADR-0003).
-  const requisitos = esCliente
+  const requisitosDelActor = esCliente
     ? data.requisitos.filter((r) => r.required_from === "CLIENT")
     : data.requisitos;
+  const requisitos = soloParaSolicitarDespacho
+    ? requisitosDelActor.filter((r) => r.required_before_status === "DISPATCHED")
+    : requisitosDelActor;
 
-  const faltantes = requisitos.filter((r) => ["PENDING", "REJECTED", "OPEN"].includes(r.status));
+  const faltantes = requisitos.filter(
+    (r) =>
+      r.required_before_status === "DISPATCHED" &&
+      ["PENDING", "REJECTED", "OPEN"].includes(r.status),
+  );
   // Aprobar o rechazar es de Operaciones; la carga archivada no se toca.
   const puedeRevisar = !soloLectura && tienePermiso("documents.verify");
 
@@ -209,16 +219,18 @@ export function Expediente({
   }
 
   return (
-    <section aria-labelledby="documentos-carga" className="space-y-4">
+    <section aria-labelledby={`documentos-carga-${cargaId}`} className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <FileText className="size-5 text-[var(--marca)]" aria-hidden="true" />
-          <h2 id="documentos-carga" className="text-base font-bold">
-            Documentos
+          <h2 id={`documentos-carga-${cargaId}`} className="text-base font-bold">
+            {soloParaSolicitarDespacho ? "Documentos para solicitar el despacho" : "Documentos"}
           </h2>
         </div>
 
-        {data.documentos.length > 1 ? <ExportacionCarga cargaId={cargaId} /> : null}
+        {!soloParaSolicitarDespacho && data.documentos.length > 1 ? (
+          <ExportacionCarga cargaId={cargaId} />
+        ) : null}
       </div>
 
       {esCliente ? (
@@ -375,11 +387,13 @@ export function Expediente({
         </ul>
       ) : (
         <p className="rounded-lg border bg-[var(--superficie)] px-4 py-8 text-center text-sm text-[var(--texto-secundario)]">
-          Esta carga no tiene documentos pendientes.
+          {soloParaSolicitarDespacho
+            ? "No tenés documentos pendientes para solicitar el despacho."
+            : "Esta carga no tiene documentos pendientes."}
         </p>
       )}
 
-      {data.tipos.length > 0 && !soloLectura ? (
+      {data.tipos.length > 0 && !soloLectura && !soloParaSolicitarDespacho ? (
         <div className="space-y-3 border-y bg-[var(--superficie)] px-4 py-3">
           <div className="flex flex-wrap items-end gap-2">
           <label className="min-w-56 flex-1">
@@ -497,7 +511,7 @@ export function Expediente({
         </div>
       ) : null}
 
-      {data.documentos.length > 0 ? (
+      {!soloParaSolicitarDespacho && data.documentos.length > 0 ? (
         <details className="rounded-lg border bg-[var(--superficie)]">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
             Todos los archivos ({data.documentos.length})

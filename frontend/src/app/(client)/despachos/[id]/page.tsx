@@ -24,6 +24,7 @@ import {
   useRechazar,
 } from "@/features/despachos/consultas";
 import { ErrorApi } from "@/lib/api/client";
+import { identificadorCarga } from "@/features/shipments/identificador";
 import { formatearFechaHora } from "@/lib/utilidades";
 
 export default function PaginaDetalleDespacho() {
@@ -182,10 +183,10 @@ export default function PaginaDetalleDespacho() {
               >
                 <span className="min-w-0 flex-1">
                   <strong className="block truncate text-sm">
-                    {carga.wr || carga.invoice || carga.shipment_number}
+                    {identificadorCarga(carga)}
                   </strong>
                   <span className="block text-xs text-[var(--texto-secundario)]">
-                    {carga.shipment_number} · {carga.package_count} piezas
+                    {carga.package_count} piezas
                     {carga.weight_kg ? ` · ${carga.weight_kg} kg` : ""}
                   </span>
                 </span>

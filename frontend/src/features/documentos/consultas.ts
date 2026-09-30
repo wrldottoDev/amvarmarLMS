@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ErrorApi, exigirDatos } from "@/lib/api/client";
 import type { components } from "@/lib/api/generated";
 import type { Expediente } from "@/lib/api/tipos";
@@ -11,20 +11,34 @@ export type TrabajoExportacion = components["schemas"]["ExportJobResponse"];
 
 export const claveExpediente = (cargaId: string) => ["expediente", cargaId] as const;
 
+async function consultarExpediente(cargaId: string): Promise<Expediente> {
+  return exigirDatos(
+    await api.GET("/api/v1/shipments/{shipment_id}/documents", {
+      params: { path: { shipment_id: cargaId } },
+    }),
+  );
+}
+
 export function useExpediente(cargaId: string) {
   return useQuery({
     queryKey: claveExpediente(cargaId),
-    queryFn: async (): Promise<Expediente> =>
-      exigirDatos(
-        await api.GET("/api/v1/shipments/{shipment_id}/documents", {
-          params: { path: { shipment_id: cargaId } },
-        }),
-      ),
+    queryFn: () => consultarExpediente(cargaId),
     enabled: Boolean(cargaId),
     refetchInterval: (consulta) =>
       consulta.state.data?.documentos.some((d) => d.upload_status === "PROCESSING")
         ? 1500
         : false,
+  });
+}
+
+/** Expedientes seleccionados en el formulario de despacho. */
+export function useExpedientes(cargaIds: string[]) {
+  return useQueries({
+    queries: cargaIds.map((cargaId) => ({
+      queryKey: claveExpediente(cargaId),
+      queryFn: () => consultarExpediente(cargaId),
+      enabled: Boolean(cargaId),
+    })),
   });
 }
 

@@ -665,6 +665,7 @@ class RequisitoDeCarga:
     status: str
     required_from: str
     blocks_dispatch: bool
+    required_before_status: str | None
     allowed_formats: list[str]
     document_id: UUID | None
 
@@ -894,6 +895,7 @@ async def expediente(
             text("""
                 SELECT r.id, r.document_type_id, dt.code, r.title, r.description,
                        r.status, r.required_from, r.blocks_dispatch,
+                       dt.required_before_status,
                        COALESCE(dt.allowed_formats, ARRAY[]::varchar[]) AS allowed_formats,
                        -- El documento que ya satisface (o intenta satisfacer)
                        -- este requisito, para poder descargarlo desde el mismo
@@ -945,6 +947,7 @@ async def expediente(
                 status=f.status,
                 required_from=f.required_from,
                 blocks_dispatch=f.blocks_dispatch,
+                required_before_status=f.required_before_status,
                 allowed_formats=list(f.allowed_formats),
                 document_id=f.document_id,
             )

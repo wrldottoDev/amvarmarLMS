@@ -27,6 +27,7 @@ import { Expediente } from "@/components/documentos/expediente";
 import { EstadoExplicado } from "@/components/shipments/estado-explicado";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
+import { identificadorCarga } from "@/features/shipments/identificador";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
 
@@ -78,7 +79,7 @@ export default function PaginaDetalleCarga() {
 
   const carga = consulta.data;
   const pendientes = usuario?.empresa ? carga.client_action_required_count : carga.open_requirements_count;
-  const identificador = carga.wr || carga.invoice || carga.shipment_number;
+  const identificador = identificadorCarga(carga);
 
   // Peso y volumen en una sola línea: son la misma pregunta —cuánto ocupa— y
   // separarlos en tres filas medio vacías no ayuda a leerlo.
@@ -120,13 +121,8 @@ export default function PaginaDetalleCarga() {
                 </span>
               ) : null}
             </div>
-            {/* El identificador que el cliente reconoce: WR si sale de una bodega
-                que lo emite, factura en cualquier otro caso. El número interno
-                queda debajo — es nuestro, no aparece en ningún papel del embarque. */}
+            {/* WR si sale de una bodega que lo emite; factura en los demás casos. */}
             <h1 className="mt-3 text-2xl font-bold sm:text-3xl">{identificador}</h1>
-            {identificador !== carga.shipment_number ? (
-              <p className="mt-1 font-mono text-sm text-[var(--texto-secundario)]">{carga.shipment_number}</p>
-            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {/* Solo Operaciones edita, y solo mientras la carga no salió de

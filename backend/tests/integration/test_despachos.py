@@ -18,6 +18,7 @@ from app.modules.dispatches.router import _detalle
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectivos
 from app.modules.shipments.models import ShipmentStatus
+from app.modules.shipments.service import RequisitosPendientes
 from tests.piezas import sembrar_pieza
 
 pytestmark = pytest.mark.integration
@@ -217,6 +218,37 @@ class TestMetodosDeTransporte:
 
 
 class TestCreacion:
+    async def test_cliente_debe_subir_sus_documentos_antes_de_solicitar(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        carga = await _carga_almacenada(session, ctx)
+        await session.execute(
+            text("""
+                INSERT INTO shipment_requirements
+                    (shipment_id, requirement_type, document_type_id, title,
+                     required_from, status, blocks_dispatch, created_by)
+                SELECT :carga, 'DOCUMENT', id, label,
+                       'CLIENT', 'PENDING', true, :actor
+                FROM document_types WHERE code = 'COMMERCIAL_INVOICE'
+            """),
+            {"carga": carga, "actor": ctx["operaciones"]},
+        )
+
+        with pytest.raises(RequisitosPendientes):
+            await _crear(session, redis, ctx, [carga], actor="cliente")
+
+        await session.execute(
+            text("""
+                UPDATE shipment_requirements SET status = 'UPLOADED'
+                WHERE shipment_id = :carga
+            """),
+            {"carga": carga},
+        )
+        solicitud = await _crear(session, redis, ctx, [carga], actor="cliente")
+
+        assert solicitud.status == DispatchStatus.PENDING
+
     async def test_reclama_las_cargas_y_las_mueve(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         cargas = [await _carga_almacenada(session, ctx) for _ in range(2)]

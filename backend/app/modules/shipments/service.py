@@ -628,6 +628,52 @@ async def validar_requisitos_de_cargas(
     await _validar_requisitos_resueltos(session, shipment_ids, hacia)
 
 
+async def validar_documentos_del_cliente_para_solicitar_despacho(
+    session: AsyncSession, shipment_ids: list[UUID]
+) -> None:
+    """El cliente debe aportar sus documentos antes de pedir el despacho.
+
+    `UPLOADED` alcanza para crear la solicitud: Operaciones todavía debe revisar
+    el archivo y la aprobación del despacho vuelve a exigir `VERIFIED`.
+    """
+    pendientes = list(
+        (
+            await session.execute(
+                text(f"""
+                    SELECT COALESCE(
+                               (SELECT r2.value FROM shipment_references r2
+                                WHERE r2.shipment_id = s.id
+                                  AND r2.reference_type IN ('WR', 'INVOICE')
+                                ORDER BY CASE r2.reference_type WHEN 'WR' THEN 0 ELSE 1 END,
+                                         r2.is_primary DESC, r2.created_at
+                                LIMIT 1),
+                               'Carga sin referencia comercial'
+                           ) AS referencia,
+                           r.title, r.status
+                    FROM shipment_requirements r
+                    JOIN shipments s ON s.id = r.shipment_id
+                    LEFT JOIN document_types dt ON dt.id = r.document_type_id
+                    WHERE r.shipment_id = ANY(:cargas)
+                      AND r.required_from = 'CLIENT'
+                      AND r.requirement_type = 'DOCUMENT'
+                      AND r.blocks_dispatch
+                      AND {_ESTADO_BLOQUEADO} = 'DISPATCHED'
+                      AND r.status IN ('PENDING', 'REJECTED', 'OPEN')
+                    ORDER BY referencia, r.created_at
+                """),  # noqa: S608  # nosec B608
+                {"cargas": shipment_ids},
+            )
+        ).all()
+    )
+    if pendientes:
+        raise RequisitosPendientes(
+            "Subí los documentos obligatorios antes de solicitar el despacho.",
+            details=[
+                {"carga": f.referencia, "titulo": f.title, "estado": f.status} for f in pendientes
+            ],
+        )
+
+
 # --- Requisitos ---
 
 

@@ -9,9 +9,12 @@ import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { Modal } from "@/components/ui/modal";
+import { Expediente } from "@/components/documentos/expediente";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { metodos } from "@/features/despachos/catalogo";
 import { useCrearDespacho } from "@/features/despachos/consultas";
+import { useExpedientes } from "@/features/documentos/consultas";
+import { identificadorCarga } from "@/features/shipments/identificador";
 import { api, exigirDatos } from "@/lib/api/client";
 import { clases } from "@/lib/utilidades";
 
@@ -40,6 +43,18 @@ export default function PaginaNuevoDespacho() {
   });
 
   const crear = useCrearDespacho(empresaId);
+  const expedientes = useExpedientes(seleccionadas);
+  const documentosSinComprobar = expedientes.some(
+    (consulta) => consulta.isPending || consulta.isError,
+  );
+  const faltanDocumentos = expedientes.some((consulta) =>
+    consulta.data?.requisitos.some(
+      (requisito) =>
+        requisito.required_from === "CLIENT" &&
+        requisito.required_before_status === "DISPATCHED" &&
+        ["PENDING", "REJECTED", "OPEN"].includes(requisito.status),
+    ),
+  );
 
   function alternar(id: string) {
     setSeleccionadas((actuales) =>
@@ -152,12 +167,11 @@ export default function PaginaNuevoDespacho() {
                         onChange={() => alternar(carga.id)}
                       />
                       <span className="min-w-0 flex-1">
-                        <strong className="block text-sm">{carga.shipment_number}</strong>
+                        <strong className="block text-sm">{identificadorCarga(carga)}</strong>
                         <span className="block text-xs text-[var(--texto-secundario)]">
                           {carga.package_count === 1
                             ? "1 bulto"
                             : `${carga.package_count} bultos`}
-                          {carga.invoice ? ` · Factura ${carga.invoice}` : ""}
                         </span>
                       </span>
                       {carga.open_requirements_count ? (
@@ -176,8 +190,30 @@ export default function PaginaNuevoDespacho() {
             </ul>
           </div>
 
+          {cargasElegidas.length > 0 ? (
+            <div className="space-y-3 rounded-md border bg-[var(--superficie)] px-4 py-4">
+              <div>
+                <strong className="block text-sm">2. Documentos necesarios</strong>
+                <span className="text-xs text-[var(--texto-secundario)]">
+                  Subí aquí los documentos pendientes antes de enviar la solicitud. Operaciones los
+                  revisará después.
+                </span>
+              </div>
+              {cargasElegidas.map((carga) => (
+                <div key={carga.id} className="space-y-3 rounded-md border px-4 py-4">
+                  <p className="text-sm font-semibold">{identificadorCarga(carga)}</p>
+                  <Expediente
+                    cargaId={carga.id}
+                    esCliente
+                    soloParaSolicitarDespacho
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className="rounded-md border bg-[var(--superficie)] px-4 py-4">
-            <strong className="block text-sm">2. ¿Cómo querés que salga?</strong>
+            <strong className="block text-sm">3. ¿Cómo querés que salga?</strong>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               {metodos.map((opcion) => (
                 <label
@@ -208,7 +244,7 @@ export default function PaginaNuevoDespacho() {
           </div>
 
           <div className="rounded-md border bg-[var(--superficie)] px-4 py-4">
-            <strong className="block text-sm">3. ¿Algo más que debamos saber?</strong>
+            <strong className="block text-sm">4. ¿Algo más que debamos saber?</strong>
             <span className="text-xs text-[var(--texto-secundario)]">Los dos son opcionales.</span>
 
             <label className="mt-3 block">
@@ -251,10 +287,20 @@ export default function PaginaNuevoDespacho() {
                 </>
               )}
             </p>
-            <Boton onClick={() => setConfirmando(true)} disabled={seleccionadas.length === 0}>
+            <Boton
+              onClick={() => setConfirmando(true)}
+              disabled={
+                seleccionadas.length === 0 || documentosSinComprobar || faltanDocumentos
+              }
+            >
               Revisar y enviar
             </Boton>
           </div>
+          {seleccionadas.length > 0 && faltanDocumentos ? (
+            <p className="text-sm text-[var(--advertencia)]">
+              Subí los documentos marcados como pendientes para continuar.
+            </p>
+          ) : null}
         </>
       ) : null}
 

@@ -8,6 +8,7 @@ import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useUbicaciones } from "@/features/admin/consultas";
+import { identificadorCarga } from "@/features/shipments/identificador";
 import {
   aPayload,
   EditorPiezas,
@@ -140,8 +141,7 @@ export default function PaginaEditarCarga({
       <div>
         <h1 className="text-2xl font-bold text-[var(--mar)]">Editar carga</h1>
         <p className="mt-1 text-sm text-[var(--texto-secundario)]">
-          {datos.wr || datos.invoice || datos.shipment_number} ·{" "}
-          <span className="font-mono">{datos.shipment_number}</span>
+          {identificadorCarga(datos)}
         </p>
       </div>
 

@@ -2685,6 +2685,8 @@ export interface components {
             required_from: string;
             /** Blocks Dispatch */
             blocks_dispatch: boolean;
+            /** Required Before Status */
+            required_before_status: string | null;
             /** Allowed Formats */
             allowed_formats: string[];
             /** Document Id */

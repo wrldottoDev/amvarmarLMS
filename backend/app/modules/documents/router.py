@@ -375,6 +375,7 @@ class RequisitoResponse(BaseModel):
     status: str
     required_from: str
     blocks_dispatch: bool
+    required_before_status: str | None
     allowed_formats: list[str]
     # El documento ya subido para este requisito, si lo hay.
     document_id: UUID | None

@@ -11,16 +11,17 @@ import {
 } from "@/features/shipments/columnas";
 import type { CargaResumen } from "@/lib/api/tipos";
 import { clases, formatearFecha } from "@/lib/utilidades";
+import { identificadorCarga } from "@/features/shipments/identificador";
 
 /**
  * Cómo se identifica una carga en pantalla.
  *
  * Lo de Miami lleva Warehouse Receipt; lo demás va por factura. Ese es el orden
  * en que la gente la busca, así que ese es el orden en que se muestra. El
- * número interno solo aparece si no hay ninguno de los dos.
+ * El número interno no se muestra: no corresponde a ningún papel comercial.
  */
 function referencia(carga: CargaResumen) {
-  return carga.wr || carga.invoice || carga.shipment_number;
+  return identificadorCarga(carga);
 }
 
 function cantidadPendiente(carga: CargaResumen, esCliente: boolean) {

@@ -5,7 +5,7 @@
 Las cargas las registra AMVARMAR, no el cliente.
 
 **Si sos cliente:** cuando tu proveedor despacha, AMVARMAR recibe la mercadería en Miami con la factura
-y la da de alta. Vos la ves aparecer en **Inventario**, con su número (`SHP-AAAA-NNNNNN`) y su estado.
+y la da de alta. Vos la ves aparecer en **Inventario**, identificada por su WR o factura y con su estado.
 Si esperabas algo que no aparece, avisale a tu contacto en AMVARMAR con la factura o el tracking del
 proveedor.
 
@@ -18,7 +18,7 @@ proveedor.
   escribir el peso en kilogramos o en libras: el sistema convierte el otro campo automáticamente.
 - Una carga nace en estado `PRE_ALERT` salvo que la registres directamente en un estado posterior.
 - Al confirmar con **Crear carga**, el sistema te lleva al expediente de esa carga, donde ya podés ver
-  el número asignado y subir los documentos que falten.
+  su WR o factura y subir los documentos que falten.
 
 También podés pedírmelo a mí: decime de qué empresa es y los datos de la factura, y te preparo el
 borrador para que lo revises antes de registrarlo.

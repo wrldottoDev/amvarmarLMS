@@ -4,8 +4,8 @@
 
 En **Inventario** (`/shipments`) están todas las cargas de tu empresa con su estado actual.
 
-- El buscador de arriba acepta el número de carga (`SHP-AAAA-NNNNNN`), el Warehouse Receipt, la
-  factura, el shipper, el carrier o cualquier referencia. No hace falta el número exacto: busca por
+- El buscador de arriba acepta el Warehouse Receipt, la factura, el shipper, el carrier o cualquier
+  referencia. No hace falta el número exacto: busca por
   coincidencia parcial.
 - **Filtros** abre el panel para acotar por estado, fecha o referencia; **Columnas** elige qué datos
   se ven en la tabla.

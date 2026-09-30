@@ -1,13 +1,12 @@
-# Cómo identifico una carga: número, factura o WR
+# Cómo identifico una carga: factura o WR
 
 <!-- palabras_clave: numero de carga, shp, wr, warehouse receipt, numero de factura, referencia, como encuentro mi carga, identificador -->
 
-Cada carga tiene varios identificadores y cualquiera sirve para encontrarla:
+Cada carga se muestra con la referencia de sus documentos comerciales:
 
-- **Número de carga** (`SHP-AAAA-NNNNNN`): lo asigna el sistema al registrarla.
-- **Número de factura:** el de la factura comercial de tu proveedor.
-- **WR (Warehouse Receipt):** solo lo tienen las cargas que pasan por la bodega de Miami.
+- **WR (Warehouse Receipt):** identifica las cargas que pasan por la bodega de Miami.
+- **Número de factura:** identifica las cargas de otros orígenes.
 
-En los avisos por correo usamos el WR o la factura, que son los que reconocés en tus papeles. Para
-pedirme algo sobre una carga, usá cualquiera de los tres. Si una factura aparece en varias cargas, te voy
-a pedir el número de carga para no confundirlas.
+En el inventario y los avisos usamos el WR o la factura, que son los que reconocés en tus papeles. Para
+pedirme algo sobre una carga, usá uno de esos dos. Si una referencia aparece en varias cargas, te voy a
+mostrar las coincidencias para que elijás la correcta.

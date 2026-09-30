@@ -17,9 +17,9 @@ de `STORED` a `RECEIVED`) requiere permiso de Operaciones y una justificación, 
 ## Avanzar el ingreso a bodega desde AMVI
 
 El personal de AMVARMAR puede pedirle a AMVI que avance una carga dentro del ingreso a bodega:
-`PRE_ALERT` → `IN_TRANSIT` → `RECEIVED` → `STORED`. La carga se nombra por su número (`SHP-…`), su número
-de factura o su ID, y tiene que coincidir exacto con una sola carga; si la factura está en varias, AMVI
-muestra cuáles y pide elegir por número.
+`PRE_ALERT` → `IN_TRANSIT` → `RECEIVED` → `STORED`. La carga se nombra por su WR o factura y tiene que
+coincidir exacto con una sola carga; si la referencia está en varias, AMVI muestra las coincidencias y
+pide elegir la correcta.
 
 AMVI solo prepara la propuesta: el cambio se aplica cuando la persona pulsa **Confirmar** en el chat. Si la
 carga está varios estados antes, la propuesta incluye todos los pasos y se aplican juntos o ninguno. Si un

@@ -14,6 +14,7 @@ import Link from "next/link";
 import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carga";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
+import { identificadorCarga } from "@/features/shipments/identificador";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha } from "@/lib/utilidades";
 
@@ -101,8 +102,9 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
                   className="grid gap-4 p-4 hover:bg-[var(--hover)] sm:grid-cols-[minmax(160px,1fr)_minmax(180px,1.25fr)_120px_auto_32px] sm:items-center"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[var(--mar)]">{carga.invoice || carga.shipment_number}</p>
-                    {carga.invoice ? <p className="mt-1 truncate font-mono text-[11px] text-[var(--texto-secundario)]">{carga.shipment_number}</p> : null}
+                    <p className="truncate text-sm font-semibold text-[var(--mar)]">
+                      {identificadorCarga(carga)}
+                    </p>
                   </div>
                   <div className="min-w-0 text-sm">
                     <p className="truncate">{carga.destination.name}, {carga.destination.country_code}</p>

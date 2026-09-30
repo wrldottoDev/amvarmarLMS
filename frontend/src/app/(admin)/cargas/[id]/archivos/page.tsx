@@ -8,6 +8,7 @@ import { AvisoError } from "@/components/ui/aviso-error";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { useCarga } from "@/features/shipments/consultas";
+import { identificadorCarga } from "@/features/shipments/identificador";
 
 /**
  * Segundo paso del alta: los papeles de la carga.
@@ -43,8 +44,7 @@ export default function PaginaArchivosDeCarga({
           Carga creada
         </p>
         <p className="mt-1 text-sm text-[var(--exito)]">
-          {datos.wr || datos.invoice || datos.shipment_number} ·{" "}
-          <span className="font-mono">{datos.shipment_number}</span>
+          {identificadorCarga(datos)}
         </p>
       </div>
 

@@ -211,7 +211,7 @@ export function FiltrosCargas({
             onChange={(evento) =>
               setBorrador((actual) => ({ ...actual, q: evento.target.value }))
             }
-            placeholder="SHP, WR, shipper, carrier o referencia"
+            placeholder="Factura, WR, shipper, carrier o referencia"
           />
         </label>
 
@@ -225,7 +225,6 @@ export function FiltrosCargas({
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(
                 [
-                  ["shipmentNumber", "Número SHP", "SHP-000123"],
                   ["wr", "Número WR", "WR105921"],
                   ["shipper", "Shipper", "Remitente"],
                   ["carrier", "Carrier", "Transportista"],

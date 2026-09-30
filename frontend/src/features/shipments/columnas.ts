@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, exigirDatos } from "@/lib/api/client";
 import type { CargaResumen } from "@/lib/api/tipos";
 import { formatearFecha } from "@/lib/utilidades";
+import { identificadorCarga } from "./identificador";
 
 const clave = ["preferencias", "columnas"] as const;
 
@@ -38,7 +39,7 @@ export function useGuardarColumnas() {
  * necesita saber cuáles existen.
  */
 export const contenidoColumna: Record<string, (carga: CargaResumen) => string> = {
-  identificador: (c) => c.wr || c.invoice || c.shipment_number,
+  identificador: identificadorCarga,
   empresa: () => "",
   invoice: (c) => c.invoice || "—",
   estado: (c) => c.status,
