@@ -26,5 +26,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_shipments_partida_arancelaria_valida", "shipments", type_="check")
+    op.drop_constraint(op.f("ck_shipments_partida_arancelaria_valida"), "shipments", type_="check")
     op.drop_column("shipments", "tariff_code")
