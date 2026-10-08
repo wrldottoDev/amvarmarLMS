@@ -395,7 +395,6 @@ class TarjetasDashboard:
     """Una tarjeta por sección del menú (rediseño del 2026-10-08): el cliente
     ve cuánto hay en cada lugar y entra desde la tarjeta."""
 
-    camino_a_miami: int
     inventario_miami: int
     en_despacho: int
     transito_activo: int
@@ -419,7 +418,7 @@ async def tarjetas_dashboard(
     """
     alcance = alcance_de_lectura(permisos)
     if alcance.no_ve_nada:
-        return TarjetasDashboard(0, 0, 0, 0, 0, 0)
+        return TarjetasDashboard(0, 0, 0, 0, 0)
 
     filtro_empresa = "" if alcance.global_ else "AND s.company_id = ANY(:empresas)"
     parametros: dict[str, Any] = {"zona": ZONA_OPERACION}
@@ -437,10 +436,6 @@ async def tarjetas_dashboard(
         await session.execute(
             text(f"""
                 SELECT
-                    count(*) FILTER (
-                        WHERE es_miami AND s.current_status_code IN
-                            ('PRE_ALERT', 'BOOKING_ASSIGNED', 'IN_TRANSIT', 'TRANSSHIPMENT')
-                    ) AS camino_a_miami,
                     count(*) FILTER (
                         WHERE es_miami AND s.current_status_code IN ('RECEIVED', 'STORED')
                     ) AS inventario_miami,
@@ -484,7 +479,6 @@ async def tarjetas_dashboard(
     ).one()
 
     return TarjetasDashboard(
-        camino_a_miami=fila.camino_a_miami,
         inventario_miami=fila.inventario_miami,
         en_despacho=fila.en_despacho,
         transito_activo=fila.transito_activo,
@@ -498,6 +492,9 @@ async def proximos_movimientos(
 ) -> list[Any]:
     """Cargas con ETA cercana, ordenadas por llegada.
 
+    Sin las de Miami que todavía no llegan a la bodega: se muestran recién al
+    llegar (pedido de AMVARMAR, 2026-10-08).
+
     Devuelve `status` y el conteo de pendientes como campos SEPARADOS: "faltan
     documentos" nunca reemplaza al estado logístico en la interfaz.
     """
@@ -510,6 +507,14 @@ async def proximos_movimientos(
         "s.archived_at IS NULL",
         "st.is_terminal = false",
         "s.estimated_arrival_at IS NOT NULL",
+        """NOT (
+            s.current_status_code IN
+                ('PRE_ALERT', 'BOOKING_ASSIGNED', 'IN_TRANSIT', 'TRANSSHIPMENT')
+            AND EXISTS (
+                SELECT 1 FROM facilities f
+                WHERE f.id = s.origin_facility_id AND f.uses_warehouse_receipt
+            )
+        )""",
     ]
     parametros: dict[str, Any] = {"limite": limite}
 

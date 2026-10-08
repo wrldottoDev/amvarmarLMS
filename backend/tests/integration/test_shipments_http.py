@@ -253,7 +253,6 @@ class TestDashboardHttp:
         # Solo cuenta las propias, no las de la otra empresa.
         assert cuerpo["tarjetas"]["transito_activo"] == 3
         assert set(cuerpo["tarjetas"]) == {
-            "camino_a_miami",
             "inventario_miami",
             "en_despacho",
             "transito_activo",

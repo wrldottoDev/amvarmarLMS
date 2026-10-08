@@ -4,8 +4,8 @@
 
 El menú sigue el recorrido de una carga:
 
-- **Miami** tiene cuatro pestañas:
-  - **En camino a Miami**: cargas avisadas que todavía no llegan a la bodega.
+- **Miami** tiene tres pestañas. Una carga aparece cuando llega a la bodega de Miami; mientras viene en
+  camino no se muestra, pero te llega el aviso por correo y la ves en **Avisos**.
   - **Inventario en Miami**: lo que está en la bodega. Marcá las almacenadas y tocá **Solicitar
     despacho** para pedir que salgan.
   - **En despacho**: cargas con un despacho pedido o en preparación.

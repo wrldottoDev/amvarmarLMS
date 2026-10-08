@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   CheckCircle2,
-  PlaneLanding,
   RefreshCw,
   Ship,
   Truck,
@@ -24,7 +23,6 @@ type VistaDashboard = "client" | "operations";
 // Una tarjeta por sección del menú, y cada una lleva a su sección: como el
 // panel del sistema viejo, que mostraba cuánto había y dejaba entrar directo.
 const tarjetas = [
-  { clave: "camino_a_miami", etiqueta: "En camino a Miami", enlace: "/miami?vista=camino", icono: PlaneLanding, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
   { clave: "inventario_miami", etiqueta: "Inventario en Miami", enlace: "/miami?vista=inventario", icono: Warehouse, estilo: "bg-[var(--marca-tenue)] text-[var(--mar)]" },
   { clave: "en_despacho", etiqueta: "En despacho", enlace: "/despachos", icono: Truck, estilo: "bg-[var(--advertencia-tenue)] text-[var(--advertencia)]" },
   { clave: "transito_activo", etiqueta: "Reportes de tránsito", enlace: "/transito", icono: Ship, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
@@ -62,7 +60,7 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
         </button>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-5" aria-label="Indicadores de cargas">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Indicadores de cargas">
         {tarjetas.map((tarjeta) => {
           const Icono = tarjeta.icono;
           return (
