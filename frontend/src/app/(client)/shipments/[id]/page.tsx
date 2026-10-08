@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { metodos } from "@/features/despachos/catalogo";
 import {
   Archive,
   ArrowLeft,
@@ -39,7 +40,15 @@ import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
  * despachada, un error se registra como corrección en la línea de tiempo y no
  * se sobreescribe: el expediente ya salió con esos datos.
  */
-const EDITABLES = new Set(["PRE_ALERT", "IN_TRANSIT", "RECEIVED", "STORED"]);
+const EDITABLES = new Set([
+  "PRE_ALERT",
+  "BOOKING_ASSIGNED",
+  "IN_TRANSIT",
+  "TRANSSHIPMENT",
+  "AT_DESTINATION",
+  "RECEIVED",
+  "STORED",
+]);
 
 /** Los mismos nombres que usaba el desplegable del sistema viejo. */
 const ETIQUETA_PIEZA: Record<string, string> = {
@@ -294,7 +303,7 @@ export default function PaginaDetalleCarga() {
               <Dato etiqueta="Dirección de destino" valor={carga.destination_address} />
             </div>
             <div className="pl-5">
-              <Dato etiqueta="Modo de transporte" valor={<span className="inline-flex items-center gap-2"><Ship className="size-4 text-[var(--marca)]" />{carga.transport_mode ?? "No registrado"}</span>} />
+              <Dato etiqueta="Modo de transporte" valor={<span className="inline-flex items-center gap-2"><Ship className="size-4 text-[var(--marca)]" />{metodos.find((m) => m.valor === carga.transport_mode)?.etiqueta ?? carga.transport_mode ?? "No registrado"}{carga.load_type ? ` · ${carga.load_type}` : ""}</span>} />
               <Dato etiqueta="Paquetes" valor={<span className="inline-flex items-center gap-2"><Package className="size-4 text-[var(--marca)]" />{carga.package_count}</span>} />
               <Dato
                 etiqueta={carga.wr ? "Warehouse Receipt" : carga.bl ? "Número de BL" : "Factura"}

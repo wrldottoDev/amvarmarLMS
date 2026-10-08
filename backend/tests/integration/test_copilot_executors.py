@@ -179,6 +179,25 @@ class TestAislamiento:
     ) -> None:
         ctx = await _entorno(session)
         carga = await _crear_shipment(session, ctx, empresa=ctx["empresa_b"], estado="STORED")
+        # Solo se despacha lo de la bodega de Miami (con WR).
+        await session.execute(
+            text("""
+                WITH bodega AS (
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:o, :cod, 'WAREHOUSE', true) RETURNING id
+                )
+                UPDATE shipments SET origin_facility_id = (SELECT id FROM bodega) WHERE id = :s
+            """),
+            {"o": ctx["origen"], "cod": f"BOD-{uuid.uuid4().hex[:6]}", "s": carga.id},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO shipment_references (shipment_id, reference_type, value) "
+                "VALUES (:s, 'WR', :v)"
+            ),
+            {"s": carga.id, "v": f"WR{uuid.uuid4().hex[:8].upper()}"},
+        )
         operaciones = await _usuario_con_rol(session, RoleCode.ADMIN, ScopeType.GLOBAL, None)
         permisos_ops = await obtener_permisos_efectivos(session, redis, operaciones)
         despacho = await dispatches_service.crear(

@@ -22,12 +22,17 @@ class DefinicionEstado:
 
 ESTADOS: dict[str, DefinicionEstado] = {
     S.PRE_ALERT: DefinicionEstado("Prealerta", C.PRE_ARRIVAL, 10),
+    # Marítimos (pedido de AMVARMAR, 2026-10-08): booking, transbordo y
+    # llegada a destino de las cargas que viajan por mar sin pasar por Miami.
+    S.BOOKING_ASSIGNED: DefinicionEstado("Booking asignado", C.PRE_ARRIVAL, 15),
     S.IN_TRANSIT: DefinicionEstado("En tránsito", C.PRE_ARRIVAL, 20),
+    S.TRANSSHIPMENT: DefinicionEstado("Transbordo", C.PRE_ARRIVAL, 25),
     S.RECEIVED: DefinicionEstado("Recibida", C.WAREHOUSE, 30),
     S.STORED: DefinicionEstado("Almacenada", C.WAREHOUSE, 40),
     S.DISPATCH_REQUESTED: DefinicionEstado("Despacho solicitado", C.DISPATCH, 50),
     S.PREPARING: DefinicionEstado("En preparación", C.DISPATCH, 60),
     S.DISPATCHED: DefinicionEstado("Despachada", C.DISPATCH, 70),
+    S.AT_DESTINATION: DefinicionEstado("En destino", C.FINAL, 75),
     S.DELIVERED: DefinicionEstado("Entregada", C.FINAL, 80, is_terminal=True),
     S.CANCELLED: DefinicionEstado("Cancelada", C.FINAL, 90, is_terminal=True),
 }
@@ -56,10 +61,24 @@ _FLUJO: tuple[str, ...] = (
 )
 
 
+# El recorrido marítimo de las cargas que no pasan por la bodega de Miami.
+# Comparte prealerta, tránsito y entrega con el flujo normal.
+_FLUJO_MARITIMO: tuple[str, ...] = (
+    S.PRE_ALERT,
+    S.BOOKING_ASSIGNED,
+    S.IN_TRANSIT,
+    S.TRANSSHIPMENT,
+    S.AT_DESTINATION,
+    S.DELIVERED,
+)
+
+
 def _construir_transiciones() -> tuple[DefinicionTransicion, ...]:
     transiciones: list[DefinicionTransicion] = []
 
-    for desde, hacia in pairwise(_FLUJO):
+    pares = list(pairwise(_FLUJO))
+    pares += [par for par in pairwise(_FLUJO_MARITIMO) if par not in pares]
+    for desde, hacia in pares:
         transiciones.append(DefinicionTransicion(desde, hacia, Perm.SHIPMENTS_TRANSITION_FORWARD))
 
         # Retroceso de un paso. Se genera desde el mismo flujo para que agregar

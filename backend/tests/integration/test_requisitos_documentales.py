@@ -148,6 +148,20 @@ async def _carga(
     return carga
 
 
+async def _carga_de_miami(session: AsyncSession, ctx: dict) -> uuid.UUID:
+    """Almacenada en la bodega de Miami, con su WR: lo único que se despacha
+    desde el sistema (los reportes de tránsito no entran en un despacho)."""
+    carga = await _carga(session, ctx, bodega=await _bodega(session, ctx, usa_wr=True))
+    await session.execute(
+        text("""
+            INSERT INTO shipment_references (shipment_id, reference_type, value)
+            VALUES (:s, 'WR', :v)
+        """),
+        {"s": carga, "v": f"WR{uuid.uuid4().hex[:8].upper()}"},
+    )
+    return carga
+
+
 async def _permisos(session: AsyncSession, redis, user_id: uuid.UUID):
     return await obtener_permisos_efectivos(session, redis, user_id)
 
@@ -373,7 +387,7 @@ class TestDocumentosOpcionalesEnDespacho:
     """Los documentos se solicitan y revisan, pero no frenan el despacho."""
 
     async def _carga_con_pendiente(self, session: AsyncSession, ctx: dict) -> uuid.UUID:
-        carga = await _carga(session, ctx)
+        carga = await _carga_de_miami(session, ctx)
         await cargas.sincronizar_requisitos_del_catalogo(
             session, shipment_id=carga, actor_user_id=ctx["admin"]
         )
@@ -472,7 +486,7 @@ class TestDocumentosOpcionalesEnDespacho:
 class TestExoneracion:
     async def test_exonerar_desbloquea_y_deja_el_motivo(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
-        carga = await _carga(session, ctx)
+        carga = await _carga_de_miami(session, ctx)
         await cargas.sincronizar_requisitos_del_catalogo(
             session, shipment_id=carga, actor_user_id=ctx["admin"]
         )

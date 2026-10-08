@@ -5,12 +5,15 @@ import { esEstadoCarga, etiquetaEstado } from "@/features/shipments/catalogo-est
 
 const estiloEstado: Record<EstadoCarga, string> = {
   PRE_ALERT: "bg-[var(--hover)] text-[var(--texto-secundario)]",
+  BOOKING_ASSIGNED: "bg-[var(--hover)] text-[var(--texto-secundario)]",
   IN_TRANSIT: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]",
+  TRANSSHIPMENT: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]",
   RECEIVED: "bg-[var(--marca-tenue)] text-[var(--mar)]",
   STORED: "bg-[var(--exito-tenue)] text-[var(--exito)]",
   DISPATCH_REQUESTED: "bg-[var(--advertencia-tenue)] text-[var(--advertencia)]",
   PREPARING: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]",
   DISPATCHED: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]",
+  AT_DESTINATION: "bg-[var(--exito-tenue)] text-[var(--exito)]",
   DELIVERED: "bg-[var(--exito-tenue)] text-[var(--exito)]",
   CANCELLED: "bg-[var(--peligro-tenue)] text-[var(--peligro)]",
 };

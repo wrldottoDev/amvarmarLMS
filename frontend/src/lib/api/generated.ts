@@ -1608,6 +1608,8 @@ export interface components {
             tariff_code?: string | null;
             /** Transport Mode */
             transport_mode?: string | null;
+            /** Load Type */
+            load_type?: ("FCL" | "LCL") | null;
             /** Estimated Arrival At */
             estimated_arrival_at?: string | null;
             weight?: components["schemas"]["PesoInput"] | null;
@@ -1637,7 +1639,7 @@ export interface components {
             container?: string | null;
             /** Bl */
             bl?: string | null;
-            /** Amar */
+            /** Amvar */
             amvar?: string | null;
         };
         /** ActualizarDatosTransitoRequest */
@@ -1999,6 +2001,8 @@ export interface components {
             tariff_code?: string | null;
             /** Transport Mode */
             transport_mode?: string | null;
+            /** Load Type */
+            load_type?: ("FCL" | "LCL") | null;
             /** Estimated Arrival At */
             estimated_arrival_at?: string | null;
             weight: components["schemas"]["PesoInput"];
@@ -2031,7 +2035,7 @@ export interface components {
             wr?: string | null;
             /** Bl */
             bl?: string | null;
-            /** Amar */
+            /** Amvar */
             amvar?: string | null;
             /** Packages */
             packages: components["schemas"]["BultoRequest"][];
@@ -2839,7 +2843,7 @@ export interface components {
             wr?: string | null;
             /** Bl */
             bl?: string | null;
-            /** Amar */
+            /** Amvar */
             amvar?: string | null;
             /** Tracking */
             tracking?: string | null;
@@ -2851,6 +2855,8 @@ export interface components {
             shipper?: string | null;
             /** Tariff Code */
             tariff_code?: string | null;
+            /** Load Type */
+            load_type?: string | null;
             /** Carrier */
             carrier?: string | null;
             /** Foots Cft */
@@ -2947,7 +2953,7 @@ export interface components {
             wr?: string | null;
             /** Bl */
             bl?: string | null;
-            /** Amar */
+            /** Amvar */
             amvar?: string | null;
             /** Tracking */
             tracking?: string | null;
@@ -2959,6 +2965,8 @@ export interface components {
             shipper?: string | null;
             /** Tariff Code */
             tariff_code?: string | null;
+            /** Load Type */
+            load_type?: string | null;
             /** Carrier */
             carrier?: string | null;
             /** Foots Cft */
@@ -3005,7 +3013,7 @@ export interface components {
          *     el código no use strings sueltos.
          * @enum {string}
          */
-        ShipmentStatus: "PRE_ALERT" | "IN_TRANSIT" | "RECEIVED" | "STORED" | "DISPATCH_REQUESTED" | "PREPARING" | "DISPATCHED" | "DELIVERED" | "CANCELLED";
+        ShipmentStatus: "PRE_ALERT" | "BOOKING_ASSIGNED" | "IN_TRANSIT" | "TRANSSHIPMENT" | "RECEIVED" | "STORED" | "DISPATCH_REQUESTED" | "PREPARING" | "DISPATCHED" | "AT_DESTINATION" | "DELIVERED" | "CANCELLED";
         /** SolicitudResponse */
         SolicitudResponse: {
             /**
@@ -3134,6 +3142,11 @@ export interface components {
              */
             event_id: string;
         };
+        /**
+         * TransportMode
+         * @enum {string}
+         */
+        TransportMode: "SEA" | "AIR" | "LAND";
         /** UbicacionAdminResponse */
         UbicacionAdminResponse: {
             /**
@@ -3800,6 +3813,7 @@ export interface operations {
                 only_archived?: boolean;
                 origin_kind?: ("MIAMI" | "TRANSIT") | null;
                 origin_country?: string | null;
+                transport_mode?: components["schemas"]["TransportMode"][] | null;
             };
             header?: never;
             path?: never;

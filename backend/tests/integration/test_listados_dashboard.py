@@ -324,6 +324,36 @@ class TestCursor:
 
 
 class TestFiltros:
+    async def test_filtra_por_metodo_de_envio(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session)
+        maritima = await _carga(session, ctx)
+        aerea = await _carga(session, ctx)
+        sin_metodo = await _carga(session, ctx)
+        for carga, modo in ((maritima, "SEA"), (aerea, "AIR")):
+            await session.execute(
+                text("UPDATE shipments SET transport_mode = :m, load_type = :t WHERE id = :id"),
+                {"m": modo, "t": "FCL" if modo == "SEA" else None, "id": carga},
+            )
+        permisos = await _permisos(session, redis, ctx["operaciones"])
+
+        solo_mar = await queries.listar_shipments(
+            session,
+            permisos=permisos,
+            filtros=queries.FiltrosListado(modos_transporte=["SEA"]),
+            limite=50,
+        )
+        mar_y_aire = await queries.listar_shipments(
+            session,
+            permisos=permisos,
+            filtros=queries.FiltrosListado(modos_transporte=["SEA", "AIR"]),
+            limite=50,
+        )
+
+        assert [c.id for c in solo_mar.items] == [maritima]
+        assert solo_mar.items[0].load_type == "FCL"
+        assert {c.id for c in mar_y_aire.items} == {maritima, aerea}
+        assert sin_metodo not in {c.id for c in mar_y_aire.items}
+
     async def test_filtra_por_pais_de_origen(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         desde_estados_unidos = await _carga(session, ctx)

@@ -1313,6 +1313,65 @@ class TestOcultar:
         assert referencias > 0
 
 
+class TestAltaMaritima:
+    """Estados marítimos (2026-10-08): se registra en prealerta, booking,
+    tránsito, transbordo o en destino, y el tipo FCL/LCL es opcional."""
+
+    async def test_nace_en_destino_recorriendo_el_flujo_maritimo(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        creada = await gestion.crear(
+            session,
+            datos=_datos(
+                entorno,
+                initial_status=ShipmentStatus.AT_DESTINATION.value,
+                transport_mode="SEA",
+                load_type="LCL",
+            ),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        assert creada.status == ShipmentStatus.AT_DESTINATION
+        # Mismo instante para todos los pasos: se comparan los pares, no el orden.
+        recorrido = {
+            (f.from_status_code, f.to_status_code)
+            for f in await session.execute(
+                text("""
+                    SELECT from_status_code, to_status_code FROM shipment_events
+                    WHERE shipment_id = :s AND event_type = 'STATUS_CHANGED'
+                """),
+                {"s": creada.id},
+            )
+        }
+        assert recorrido == {
+            (ShipmentStatus.PRE_ALERT, ShipmentStatus.BOOKING_ASSIGNED),
+            (ShipmentStatus.BOOKING_ASSIGNED, ShipmentStatus.IN_TRANSIT),
+            (ShipmentStatus.IN_TRANSIT, ShipmentStatus.TRANSSHIPMENT),
+            (ShipmentStatus.TRANSSHIPMENT, ShipmentStatus.AT_DESTINATION),
+        }
+        fila = (
+            await session.execute(
+                text("SELECT load_type, actual_arrival_at FROM shipments WHERE id = :s"),
+                {"s": creada.id},
+            )
+        ).one()
+        assert fila.load_type == "LCL"
+        assert fila.actual_arrival_at is not None
+
+    async def test_un_tipo_de_carga_invalido_no_entra(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        # El API lo frena antes (Literal FCL/LCL); acá queda el CHECK de la base.
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.crear(
+                session,
+                datos=_datos(entorno, transport_mode="SEA", load_type="XYZ"),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+
 class TestAvisosDelAlta:
     """Qué correo recibe la empresa al dar de alta una carga (pedido de AMVARMAR,
     2026-09-25): uno por el estado en que quedó, nunca uno por paso intermedio."""
@@ -1344,7 +1403,12 @@ class TestAvisosDelAlta:
             permisos=await _permisos(session, redis, entorno["ops"]),
         )
 
-        assert await self._codigos_del_cliente(session, entorno) == ["shipment.pre_alerted"]
+        # Origen sin bodega con WR: es un reporte de tránsito, que además pide
+        # completar descripción y partida arancelaria.
+        assert sorted(await self._codigos_del_cliente(session, entorno)) == [
+            "shipment.pre_alerted",
+            "shipment.transit_details_requested",
+        ]
 
     async def test_alta_directa_en_un_estado_posterior_avisa_una_sola_vez(
         self, session: AsyncSession, redis, entorno
@@ -1358,4 +1422,7 @@ class TestAvisosDelAlta:
             permisos=await _permisos(session, redis, entorno["ops"]),
         )
 
-        assert await self._codigos_del_cliente(session, entorno) == ["shipment.received"]
+        assert sorted(await self._codigos_del_cliente(session, entorno)) == [
+            "shipment.received",
+            "shipment.transit_details_requested",
+        ]

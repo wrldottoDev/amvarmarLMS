@@ -30,12 +30,15 @@ _log = obtener_logger(__name__)
 # Estados de carga que ADR-0008 marca como aviso crítico propio. El resto cae
 # en `shipment.status_changed`, que es el avance rutinario.
 _EVENTO_POR_ESTADO: dict[str, str] = {
+    ShipmentStatus.BOOKING_ASSIGNED: "shipment.booking_assigned",
     ShipmentStatus.IN_TRANSIT: "shipment.in_transit",
+    ShipmentStatus.TRANSSHIPMENT: "shipment.transshipment",
     ShipmentStatus.RECEIVED: "shipment.received",
     ShipmentStatus.STORED: "shipment.stored",
     ShipmentStatus.DISPATCH_REQUESTED: "shipment.dispatch_requested",
     ShipmentStatus.PREPARING: "shipment.preparing",
     ShipmentStatus.DISPATCHED: "shipment.dispatched",
+    ShipmentStatus.AT_DESTINATION: "shipment.at_destination",
     ShipmentStatus.DELIVERED: "shipment.delivered",
     ShipmentStatus.CANCELLED: "shipment.cancelled",
 }
@@ -103,12 +106,15 @@ async def _numero_de_solicitud(session: AsyncSession, dispatch_id: UUID) -> str 
 # El recorrido normal, en orden: sirve para reconocer un retroceso.
 _RECORRIDO: tuple[str, ...] = (
     ShipmentStatus.PRE_ALERT,
+    ShipmentStatus.BOOKING_ASSIGNED,
     ShipmentStatus.IN_TRANSIT,
+    ShipmentStatus.TRANSSHIPMENT,
     ShipmentStatus.RECEIVED,
     ShipmentStatus.STORED,
     ShipmentStatus.DISPATCH_REQUESTED,
     ShipmentStatus.PREPARING,
     ShipmentStatus.DISPATCHED,
+    ShipmentStatus.AT_DESTINATION,
     ShipmentStatus.DELIVERED,
 )
 

@@ -1,5 +1,6 @@
 """Motor de transiciones y requisitos (Paso 2.4)."""
 
+import dataclasses
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -11,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.rbac.catalog import Perm
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import service
@@ -144,7 +146,16 @@ async def _carga(
 
 
 async def _permisos(session: AsyncSession, redis, ctx: dict[str, object]):
-    return await obtener_permisos_efectivos(session, redis, ctx["user_id"])
+    """Por defecto SIN el cambio libre: estas pruebas verifican el catálogo,
+    que sigue mandando para todo actor sin `shipments.status.set_any`.
+    `ctx["libre"] = True` lo deja tal cual (Admin y Super admin reales)."""
+    permisos = await obtener_permisos_efectivos(session, redis, ctx["user_id"])
+    if ctx.get("libre"):
+        return permisos
+    return dataclasses.replace(
+        permisos,
+        permisos=tuple(p for p in permisos.permisos if p.code != Perm.SHIPMENTS_STATUS_SET_ANY),
+    )
 
 
 async def _transicionar(
@@ -171,7 +182,7 @@ def _pares_validos() -> set[tuple[str, str]]:
 
 
 def _todos_los_pares() -> list[tuple[str, str, bool]]:
-    """Los 9x9 pares posibles, marcando cuáles son válidos. 72 casos."""
+    """Todos los pares de estados distintos, marcando cuáles son válidos."""
     codigos = [str(c) for c in ESTADOS]
     validos = _pares_validos()
     return [
@@ -214,7 +225,10 @@ class TestTransicionMasiva:
         assert estados == [ShipmentStatus.IN_TRANSIT, ShipmentStatus.IN_TRANSIT]
         assert (
             await session.execute(
-                text("SELECT count(*) FROM shipment_events WHERE shipment_id IN (:a, :b)"),
+                text(
+                    "SELECT count(*) FROM shipment_events "
+                    "WHERE shipment_id IN (:a, :b) AND event_type = 'STATUS_CHANGED'"
+                ),
                 {"a": primera, "b": segunda},
             )
         ).scalar_one() == 2
@@ -280,7 +294,7 @@ class TestMatrizCompleta:
     async def test_toda_combinacion_de_estados(
         self, session: AsyncSession, redis, desde: str, hacia: str, es_valida: bool
     ) -> None:
-        """Los 72 pares posibles. Los que no están en el catálogo dan 409."""
+        """Todos los pares. Sin cambio libre, los que no están en el catálogo dan 409."""
         ctx = await _entorno(session, RoleCode.SUPER_ADMIN)
         # Miami exige WR antes de STORED; se usa origen sin bodega para que la
         # matriz pruebe el catálogo y no esa política.
@@ -302,6 +316,111 @@ class TestMatrizCompleta:
             assert hacia not in error.value.details[0]["allowed"]
 
 
+class TestCambioLibre:
+    """Pedido de AMVARMAR (2026-10-08): Admin y Super admin pasan una carga a
+    cualquier estado, sin flujo ni motivo, pero con rastro y aviso."""
+
+    async def test_un_admin_salta_a_cualquier_estado_sin_motivo(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session, RoleCode.ADMIN)
+        ctx["libre"] = True
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PRE_ALERT)
+
+        resultado = await _transicionar(
+            session, redis, ctx, shipment_id, ShipmentStatus.AT_DESTINATION
+        )
+
+        assert resultado.hacia == ShipmentStatus.AT_DESTINATION
+        evento = (
+            await session.execute(
+                text("""
+                    SELECT from_status_code, to_status_code FROM shipment_events
+                    WHERE shipment_id = :s AND event_type = 'STATUS_CHANGED'
+                """),
+                {"s": shipment_id},
+            )
+        ).one()
+        assert (evento.from_status_code, evento.to_status_code) == (
+            ShipmentStatus.PRE_ALERT,
+            ShipmentStatus.AT_DESTINATION,
+        )
+        outbox = (
+            await session.execute(
+                text("""
+                    SELECT count(*) FROM outbox_events
+                    WHERE aggregate_id = :s AND event_type = 'shipment.status_changed'
+                """),
+                {"s": shipment_id},
+            )
+        ).scalar_one()
+        assert outbox == 1
+
+    async def test_un_retroceso_libre_no_pide_motivo(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session, RoleCode.SUPER_ADMIN)
+        ctx["libre"] = True
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DELIVERED)
+
+        resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.RECEIVED)
+
+        assert resultado.hacia == ShipmentStatus.RECEIVED
+
+    async def test_libre_ignora_la_politica_de_wr(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session, RoleCode.ADMIN)
+        ctx["libre"] = True
+        shipment_id = await _carga(
+            session, ctx, estado=ShipmentStatus.RECEIVED, con_bodega_miami=True
+        )
+
+        resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.STORED)
+
+        assert resultado.hacia == ShipmentStatus.STORED
+
+    async def test_libre_no_reabre_una_archivada(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session, RoleCode.ADMIN)
+        ctx["libre"] = True
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DELIVERED)
+        await session.execute(
+            text("UPDATE shipments SET archived_at = now() WHERE id = :s"), {"s": shipment_id}
+        )
+
+        with pytest.raises(service.CargaArchivada):
+            await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.STORED)
+
+    async def test_libre_no_acepta_el_mismo_estado(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session, RoleCode.ADMIN)
+        ctx["libre"] = True
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.STORED)
+
+        with pytest.raises(service.TransicionInvalida):
+            await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.STORED)
+
+    async def test_disponibles_lista_todos_los_estados(self, session: AsyncSession, redis) -> None:
+        ctx = await _entorno(session, RoleCode.ADMIN)
+        ctx["libre"] = True
+        shipment_id = await _carga(session, ctx, estado=ShipmentStatus.PRE_ALERT)
+
+        disponibles = await service.transiciones_disponibles(
+            session, shipment_id=shipment_id, permisos=await _permisos(session, redis, ctx)
+        )
+
+        destinos = {d.to_status for d in disponibles}
+        assert destinos == {str(c) for c in ESTADOS} - {ShipmentStatus.PRE_ALERT}
+        assert not any(d.requires_reason or d.blocked for d in disponibles)
+
+    async def test_admin_y_super_admin_tienen_el_permiso(
+        self, session: AsyncSession, redis
+    ) -> None:
+        for rol in (RoleCode.ADMIN, RoleCode.SUPER_ADMIN):
+            ctx = await _entorno(session, rol)
+            permisos = await obtener_permisos_efectivos(session, redis, ctx["user_id"])
+            assert permisos.permite(Perm.SHIPMENTS_STATUS_SET_ANY)
+
+        cliente = await _entorno(session, RoleCode.CLIENTE)
+        permisos = await obtener_permisos_efectivos(session, redis, cliente["user_id"])
+        assert not permisos.permite(Perm.SHIPMENTS_STATUS_SET_ANY, company_id=cliente["company_id"])
+
+
 class TestPermisos:
     async def test_un_cliente_no_cambia_estados_operativos(
         self, session: AsyncSession, redis
@@ -312,15 +431,14 @@ class TestPermisos:
         with pytest.raises(service.SinPermisoParaTransicion):
             await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
 
-    async def test_un_agente_no_revierte_una_entrega(self, session: AsyncSession, redis) -> None:
-        """Solo SUPER_ADMIN, y el motor lo sabe por el permiso de la fila."""
+    async def test_revertir_una_entrega_exige_motivo(self, session: AsyncSession, redis) -> None:
+        """ADMIN comparte la matriz de SUPER_ADMIN (2026-09-30): revertir una
+        entrega ya no es exclusivo, pero sin cambio libre sigue pidiendo motivo."""
         ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx, estado=ShipmentStatus.DELIVERED)
 
-        with pytest.raises(service.SinPermisoParaTransicion):
-            await _transicionar(
-                session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED, note="error"
-            )
+        with pytest.raises(service.MotivoRequerido):
+            await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.DISPATCHED)
 
     async def test_un_admin_cancela_en_transito(self, session: AsyncSession, redis) -> None:
         """Cancelar una carga ya en tránsito era exclusivo del jefe de
@@ -401,7 +519,7 @@ class TestTransicionesDisponibles:
             permisos=await _permisos(session, redis, ctx),
         )
 
-        assert {o.to_status for o in opciones} == {"IN_TRANSIT", "CANCELLED"}
+        assert {o.to_status for o in opciones} == {"BOOKING_ASSIGNED", "IN_TRANSIT", "CANCELLED"}
         cancelar = next(o for o in opciones if o.to_status == "CANCELLED")
         assert cancelar.requires_reason is True
         assert cancelar.blocked is False
@@ -511,7 +629,8 @@ class TestEfectosDeLaTransicion:
             await session.execute(
                 text("""
                     SELECT from_status_code, to_status_code, event_type, actor_user_id
-                    FROM shipment_events WHERE shipment_id = :s
+                    FROM shipment_events
+                    WHERE shipment_id = :s AND event_type = 'STATUS_CHANGED'
                 """),
                 {"s": shipment_id},
             )
@@ -705,21 +824,18 @@ class TestRequisitos:
         """
         ctx = await _entorno(session, RoleCode.ADMIN)
         shipment_id = await _carga(session, ctx)
-        await _abrir_documental(session, ctx, shipment_id, redis)
+        requisito = await _abrir_documental(session, ctx, shipment_id, redis)
 
         resultado = await _transicionar(session, redis, ctx, shipment_id, ShipmentStatus.IN_TRANSIT)
 
         assert resultado.hacia == ShipmentStatus.IN_TRANSIT
-        pendientes = (
+        estado = (
             await session.execute(
-                text("""
-                    SELECT count(*) FROM shipment_requirements
-                    WHERE shipment_id = :s AND status = 'PENDING'
-                """),
-                {"s": shipment_id},
+                text("SELECT status FROM shipment_requirements WHERE id = :r"),
+                {"r": requisito},
             )
         ).scalar_one()
-        assert pendientes == 1
+        assert estado == "PENDING"
 
     async def test_un_documento_pendiente_no_impide_despachar(
         self, session: AsyncSession, redis

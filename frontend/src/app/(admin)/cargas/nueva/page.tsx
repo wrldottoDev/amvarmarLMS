@@ -26,11 +26,21 @@ import { useBodegas, useCrearCarga, useEmpresas, useUbicaciones } from "@/featur
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { clases } from "@/lib/utilidades";
 
+// La etiqueta dice dónde está la carga, no solo el nombre del estado.
 const ESTADOS_INICIALES = [
-  { valor: "PRE_ALERT", etiqueta: "Prealerta — todavía no llegó" },
-  { valor: "IN_TRANSIT", etiqueta: "En tránsito — va en camino" },
-  { valor: "RECEIVED", etiqueta: "Recibida — llegó, sin contar" },
-  { valor: "STORED", etiqueta: "Almacenada — está en bodega y contada" },
+  { valor: "PRE_ALERT", etiqueta: "Prealerta — en camino a Miami" },
+  { valor: "IN_TRANSIT", etiqueta: "En tránsito — en camino a Miami" },
+  { valor: "RECEIVED", etiqueta: "Recibida — en Miami, sin contar" },
+  { valor: "STORED", etiqueta: "Almacenada — en Miami, contada" },
+] as const;
+
+// Marítimo que no pasa por Miami (pedido de AMVARMAR, 2026-10-08).
+const ESTADOS_INICIALES_MARITIMOS = [
+  { valor: "PRE_ALERT", etiqueta: "Prealerta — en origen" },
+  { valor: "BOOKING_ASSIGNED", etiqueta: "Booking asignado" },
+  { valor: "IN_TRANSIT", etiqueta: "Tránsito — navegando a Costa Rica" },
+  { valor: "TRANSSHIPMENT", etiqueta: "Transbordo" },
+  { valor: "AT_DESTINATION", etiqueta: "En destino — en Costa Rica" },
 ] as const;
 
 export default function PaginaNuevaCarga() {
@@ -72,6 +82,7 @@ function FormularioNuevaCarga() {
   const [cft, setCft] = useState("");
   const [volumenM3, setVolumenM3] = useState("");
   const [transporte, setTransporte] = useState<"SEA" | "AIR" | "LAND">("SEA");
+  const [tipoCarga, setTipoCarga] = useState<"" | "FCL" | "LCL">("");
   const [wr, setWr] = useState("");
   const [bl, setBl] = useState("");
   const [amvar, setAmvar] = useState("");
@@ -107,6 +118,10 @@ function FormularioNuevaCarga() {
   // La regla del negocio: lo que sale de una bodega que emite WR se identifica
   // por el WR; todo lo demás, por su factura.
   const exigeFactura = desdeMiami === false;
+  const estadosIniciales: readonly { valor: string; etiqueta: string }[] =
+    desdeMiami === false && transporte === "SEA" ? ESTADOS_INICIALES_MARITIMOS : ESTADOS_INICIALES;
+  // Si cambia el método o el origen, un estado que ya no aplica vuelve a prealerta.
+  const estadoEfectivo = estadosIniciales.some((e) => e.valor === estado) ? estado : "PRE_ALERT";
   const hayPeso = pesoValido(peso);
 
   const listo = Boolean(
@@ -126,7 +141,7 @@ function FormularioNuevaCarga() {
       origin_location_id: origenEfectivo,
       destination_location_id: destino,
       origin_facility_id: bodegaEfectiva,
-      initial_status: estado,
+      initial_status: estadoEfectivo,
       destination_address: direccion.trim() || null,
       description: descripcion.trim() || null,
       estimated_arrival_at: eta ? new Date(`${eta}T12:00:00`).toISOString() : null,
@@ -135,6 +150,7 @@ function FormularioNuevaCarga() {
       volume_m3: desdeMiami === false ? volumenM3 || null : null,
       foots_cft: desdeMiami ? cft || null : null,
       transport_mode: transporte,
+      load_type: transporte === "SEA" ? tipoCarga || null : null,
       shipper: shipper.trim() || null,
       carrier: carrier.trim() || null,
       wr: desdeMiami ? wr.trim() || null : null,
@@ -377,10 +393,10 @@ function FormularioNuevaCarga() {
                 <span className="mb-1 block text-sm font-medium">Estado en que se registra</span>
                 <select
                   className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
-                  value={estado}
+                  value={estadoEfectivo}
                   onChange={(evento) => setEstado(evento.target.value)}
                 >
-                  {ESTADOS_INICIALES.map((e) => (
+                  {estadosIniciales.map((e) => (
                     <option key={e.valor} value={e.valor}>
                       {e.etiqueta}
                     </option>
@@ -470,6 +486,23 @@ function FormularioNuevaCarga() {
                   <option value="LAND">Terrestre</option>
                 </select>
               </label>
+              {transporte === "SEA" ? (
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium">
+                    Tipo{" "}
+                    <span className="font-normal text-[var(--texto-secundario)]">(opcional)</span>
+                  </span>
+                  <select
+                    className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                    value={tipoCarga}
+                    onChange={(evento) => setTipoCarga(evento.target.value as "" | "FCL" | "LCL")}
+                  >
+                    <option value="">Sin definir</option>
+                    <option value="FCL">FCL — contenedor completo</option>
+                    <option value="LCL">LCL — carga consolidada</option>
+                  </select>
+                </label>
+              ) : null}
               {(
                 [
                   ["Proveedor", shipper, setShipper, "Quién envía la mercancía"],

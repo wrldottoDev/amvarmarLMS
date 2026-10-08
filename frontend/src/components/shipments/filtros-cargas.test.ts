@@ -20,6 +20,7 @@ describe("filtros de cargas", () => {
       etaDesde: "2026-08-01",
       etaHasta: "2026-08-31",
       originCountry: "CN",
+      transportMode: "SEA",
     };
 
     const parametros = parametrosDeFiltros(filtros);
@@ -31,15 +32,16 @@ describe("filtros de cargas", () => {
     expect(parametros.getAll("status")).toEqual(["IN_TRANSIT", "STORED"]);
   });
 
-  it("descarta estados y tipos de referencia desconocidos", () => {
+  it("descarta estados, tipos de referencia y métodos desconocidos", () => {
     const parametros = new URLSearchParams(
-      "status=STORED&status=HOLD&reference_type=PASSWORD&q=contenedor",
+      "status=STORED&status=HOLD&reference_type=PASSWORD&transport_mode=TELEPORT&q=contenedor",
     );
 
     expect(filtrosDesdeParametros(parametros)).toMatchObject({
       q: "contenedor",
       estados: ["STORED"],
       referenceType: "",
+      transportMode: "",
     });
   });
 
@@ -57,6 +59,7 @@ describe("filtros de cargas", () => {
       etaDesde: "",
       etaHasta: "",
       originCountry: "",
+      transportMode: "",
     });
 
     expect(parametros.toString()).toBe("");

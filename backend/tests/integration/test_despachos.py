@@ -115,7 +115,7 @@ async def _ubicacion(session: AsyncSession, pais: str, ciudad: str, nombre: str)
 
 
 async def _carga_almacenada(
-    session: AsyncSession, ctx: dict, *, empresa: str = "empresa"
+    session: AsyncSession, ctx: dict, *, empresa: str = "empresa", con_wr: bool = True
 ) -> uuid.UUID:
     carga = (
         await session.execute(
@@ -136,6 +136,17 @@ async def _carga_almacenada(
     ).scalar_one()
     # Toda carga activa necesita al menos una pieza.
     await sembrar_pieza(session, carga)
+    # Y una de Miami almacenada tiene su WR (ADR-0005): sin él no podría volver
+    # a almacenada al cancelar o rechazar el despacho.
+    if not con_wr:
+        return carga
+    await session.execute(
+        text("""
+            INSERT INTO shipment_references (shipment_id, reference_type, value)
+            VALUES (:s, 'WR', :v)
+        """),
+        {"s": carga, "v": f"WR{uuid.uuid4().hex[:8].upper()}"},
+    )
     return carga
 
 
@@ -273,7 +284,7 @@ class TestCreacion:
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
-        carga = await _carga_almacenada(session, ctx)
+        carga = await _carga_almacenada(session, ctx, con_wr=False)
         await session.execute(
             text(
                 "UPDATE shipments SET current_status_code = 'IN_TRANSIT', origin_facility_id = NULL WHERE id = :id"
@@ -307,7 +318,7 @@ class TestCreacion:
         self, session: AsyncSession, redis
     ) -> None:
         ctx = await _entorno(session)
-        carga = await _carga_almacenada(session, ctx)
+        carga = await _carga_almacenada(session, ctx, con_wr=False)
         await session.execute(
             text("""
                 INSERT INTO shipment_references

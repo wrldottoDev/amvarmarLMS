@@ -9,6 +9,7 @@ INSERT propio.
 import uuid
 
 import pytest
+from scripts.seed_document_types import sembrar as sembrar_documentos
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -168,6 +169,7 @@ class TestPropuesta:
     ) -> None:
         """El cliente puede pedirlo y el documento nunca bloquea la aprobación."""
         ctx = await _entorno(session)
+        await sembrar_documentos(session)
         carga, numero = await _carga(session, ctx)
         await session.execute(
             text("""
