@@ -28,12 +28,11 @@ export function PestanasVista({
             key={pestana.clave}
             href={`${ruta}?vista=${pestana.clave}`}
             aria-current={pestana.clave === actual ? "page" : undefined}
-            // `!`: `* { border-color }` de globals.css va fuera de capa y pisa los colores de borde.
             className={clases(
               "shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-semibold",
               pestana.clave === actual
-                ? "border-[var(--mar)]! text-[var(--mar)]"
-                : "border-transparent! text-[var(--texto-secundario)] hover:text-[var(--texto)]",
+                ? "border-[var(--mar)] text-[var(--mar)]"
+                : "border-transparent text-[var(--texto-secundario)] hover:text-[var(--texto)]",
             )}
           >
             {pestana.titulo}

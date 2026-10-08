@@ -91,10 +91,14 @@ body.theme-dark {
   --font-mono: var(--font-geist-mono);
 }
 
-* {
-  box-sizing: border-box;
-  border-color: var(--borde);
-  letter-spacing: 0;
+/* En `base`: fuera de capa pisaba todos los colores de borde de Tailwind
+   (`border-[var(--mar)]`, `focus:border-…`), que viven en `utilities`. */
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--borde);
+    letter-spacing: 0;
+  }
 }
 
 html {
