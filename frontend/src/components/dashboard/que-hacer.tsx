@@ -56,9 +56,9 @@ export function QueHacer() {
             listasParaDespachar.length === 1
               ? "Tenés 1 carga lista para despachar"
               : `Tenés ${listasParaDespachar.length} cargas listas para despachar`,
-          detalle: "Están en bodega esperando tu solicitud.",
-          enlace: "/despachos/nuevo",
-          accion: "Solicitar despacho",
+          detalle: "Están en tu inventario de Miami: marcalas y pedí el despacho.",
+          enlace: "/miami?vista=inventario",
+          accion: "Ver inventario",
         }
       : null,
   ].filter((item) => item !== null);

@@ -68,12 +68,14 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
   // no cargas que él dio de alta.
   const navegacion: ElementoNavegacion[] = [
     { href: inicio, etiqueta: esCliente ? "Resumen" : "Operaciones", icono: Gauge },
+    // En el orden en que avanza una carga; lo terminado va a Historial.
     { href: "/miami", etiqueta: "Miami", icono: Warehouse },
-  { href: "/transito", etiqueta: "Reportes de tránsito", icono: Ship },
+    { href: "/transito", etiqueta: "Reportes de tránsito", icono: Ship },
     { href: "/despachos", etiqueta: "Despachos", icono: Truck },
+    { href: "/shipments/historial", etiqueta: "Historial", icono: Archive },
     { href: "/avisos", etiqueta: "Avisos", icono: Bell },
     ...(esCliente
-      ? [{ href: "/shipments/historial", etiqueta: "Historial", icono: Archive }]
+      ? []
       : [
           { href: "/inventario", etiqueta: "Inventario", icono: Boxes },
           { href: "/empresas", etiqueta: "Empresas", icono: Building2 },

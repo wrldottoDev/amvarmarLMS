@@ -3046,16 +3046,18 @@ export interface components {
         };
         /** TarjetasResponse */
         TarjetasResponse: {
-            /** En Bodega */
-            en_bodega: number;
-            /** En Transito */
-            en_transito: number;
-            /** Proximos A Llegar */
-            proximos_a_llegar: number;
+            /** Camino A Miami */
+            camino_a_miami: number;
+            /** Inventario Miami */
+            inventario_miami: number;
+            /** En Despacho */
+            en_despacho: number;
+            /** Transito Activo */
+            transito_activo: number;
+            /** Completadas Este Mes */
+            completadas_este_mes: number;
             /** Requieren Accion */
             requieren_accion: number;
-            /** Entregados Este Mes */
-            entregados_este_mes: number;
         };
         /** TipoDocumentoResponse */
         TipoDocumentoResponse: {

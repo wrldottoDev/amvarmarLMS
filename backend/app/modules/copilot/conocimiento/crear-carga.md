@@ -5,7 +5,7 @@
 Las cargas las registra AMVARMAR, no el cliente.
 
 **Si sos cliente:** cuando tu proveedor despacha, AMVARMAR recibe la mercadería en Miami con la factura
-y la da de alta. Vos la ves aparecer en **Inventario**, identificada por su WR o factura y con su estado.
+y la da de alta. Vos la ves aparecer en **Miami** (o en **Reportes de tránsito** si viaja directo a destino), identificada por su WR o BL, su factura y dónde está.
 Si esperabas algo que no aparece, avisale a tu contacto en AMVARMAR con la factura o el tracking del
 proveedor.
 

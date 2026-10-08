@@ -25,7 +25,7 @@ import {
 } from "@/features/despachos/consultas";
 import { identificadorDespacho } from "@/features/despachos/identificador";
 import { ErrorApi } from "@/lib/api/client";
-import { identificadorCarga } from "@/features/shipments/identificador";
+import { identificadorCarga, identificadorConFactura } from "@/features/shipments/identificador";
 import { formatearFechaHora } from "@/lib/utilidades";
 
 export default function PaginaDetalleDespacho() {
@@ -189,7 +189,7 @@ export default function PaginaDetalleDespacho() {
               >
                 <span className="min-w-0 flex-1">
                   <strong className="block truncate text-sm">
-                    {identificadorCarga(carga)}
+                    {identificadorConFactura(carga)}
                   </strong>
                   <span className="block text-xs text-[var(--texto-secundario)]">
                     {carga.package_count} piezas

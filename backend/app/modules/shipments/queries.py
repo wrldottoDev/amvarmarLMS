@@ -392,15 +392,16 @@ async def timeline(
 
 @dataclass(frozen=True)
 class TarjetasDashboard:
-    en_bodega: int
-    en_transito: int
-    proximos_a_llegar: int
+    """Una tarjeta por sección del menú (rediseño del 2026-10-08): el cliente
+    ve cuánto hay en cada lugar y entra desde la tarjeta."""
+
+    camino_a_miami: int
+    inventario_miami: int
+    en_despacho: int
+    transito_activo: int
+    completadas_este_mes: int
     requieren_accion: int
-    entregados_este_mes: int
 
-
-# Ventana de "próximos a llegar". Configurable en el futuro vía system_settings.
-DIAS_PROXIMA_LLEGADA = 7
 
 # Zona horaria de la operación: "este mes" se cuenta en Costa Rica, no en UTC.
 # Una entrega del 31 a las 20:00 hora local es del mes que cierra, no del
@@ -418,13 +419,10 @@ async def tarjetas_dashboard(
     """
     alcance = alcance_de_lectura(permisos)
     if alcance.no_ve_nada:
-        return TarjetasDashboard(0, 0, 0, 0, 0)
+        return TarjetasDashboard(0, 0, 0, 0, 0, 0)
 
     filtro_empresa = "" if alcance.global_ else "AND s.company_id = ANY(:empresas)"
-    parametros: dict[str, Any] = {
-        "dias": DIAS_PROXIMA_LLEGADA,
-        "zona": ZONA_OPERACION,
-    }
+    parametros: dict[str, Any] = {"zona": ZONA_OPERACION}
     if not alcance.global_:
         parametros["empresas"] = alcance.company_ids
 
@@ -440,17 +438,30 @@ async def tarjetas_dashboard(
             text(f"""
                 SELECT
                     count(*) FILTER (
-                        WHERE s.current_status_code IN ('RECEIVED', 'STORED')
-                    ) AS en_bodega,
+                        WHERE es_miami AND s.current_status_code IN
+                            ('PRE_ALERT', 'BOOKING_ASSIGNED', 'IN_TRANSIT', 'TRANSSHIPMENT')
+                    ) AS camino_a_miami,
                     count(*) FILTER (
-                        WHERE s.current_status_code = 'IN_TRANSIT'
-                    ) AS en_transito,
+                        WHERE es_miami AND s.current_status_code IN ('RECEIVED', 'STORED')
+                    ) AS inventario_miami,
                     count(*) FILTER (
-                        WHERE s.estimated_arrival_at IS NOT NULL
-                          AND s.estimated_arrival_at
-                              BETWEEN now() AND now() + make_interval(days => :dias)
-                          AND st.is_terminal = false
-                    ) AS proximos_a_llegar,
+                        WHERE s.current_status_code IN ('DISPATCH_REQUESTED', 'PREPARING')
+                    ) AS en_despacho,
+                    count(*) FILTER (
+                        WHERE NOT es_miami AND s.current_status_code IN
+                            ('PRE_ALERT', 'BOOKING_ASSIGNED', 'IN_TRANSIT', 'TRANSSHIPMENT')
+                    ) AS transito_activo,
+                    count(*) FILTER (
+                        WHERE (
+                            s.current_status_code = 'DELIVERED'
+                            AND date_trunc('month', s.delivered_at AT TIME ZONE :zona)
+                                = date_trunc('month', now() AT TIME ZONE :zona)
+                        ) OR (
+                            s.current_status_code = 'AT_DESTINATION'
+                            AND date_trunc('month', s.actual_arrival_at AT TIME ZONE :zona)
+                                = date_trunc('month', now() AT TIME ZONE :zona)
+                        )
+                    ) AS completadas_este_mes,
                     count(*) FILTER (
                         WHERE EXISTS (
                             SELECT 1 FROM shipment_requirements q
@@ -458,14 +469,12 @@ async def tarjetas_dashboard(
                               AND q.status IN {estados_requisito}
                               {filtro_requisito}
                         )
-                    ) AS requieren_accion,
-                    count(*) FILTER (
-                        WHERE s.current_status_code = 'DELIVERED'
-                          AND date_trunc('month', s.delivered_at AT TIME ZONE :zona)
-                              = date_trunc('month', now() AT TIME ZONE :zona)
-                    ) AS entregados_este_mes
-                FROM shipments s
-                JOIN shipment_statuses st ON st.code = s.current_status_code
+                    ) AS requieren_accion
+                FROM (
+                    SELECT s.*, COALESCE(f.uses_warehouse_receipt, false) AS es_miami
+                    FROM shipments s
+                    LEFT JOIN facilities f ON f.id = s.origin_facility_id
+                ) s
                 WHERE s.deleted_at IS NULL
                   AND s.archived_at IS NULL
                   {filtro_empresa}
@@ -475,11 +484,12 @@ async def tarjetas_dashboard(
     ).one()
 
     return TarjetasDashboard(
-        en_bodega=fila.en_bodega,
-        en_transito=fila.en_transito,
-        proximos_a_llegar=fila.proximos_a_llegar,
+        camino_a_miami=fila.camino_a_miami,
+        inventario_miami=fila.inventario_miami,
+        en_despacho=fila.en_despacho,
+        transito_activo=fila.transito_activo,
+        completadas_este_mes=fila.completadas_este_mes,
         requieren_accion=fila.requieren_accion,
-        entregados_este_mes=fila.entregados_este_mes,
     )
 
 

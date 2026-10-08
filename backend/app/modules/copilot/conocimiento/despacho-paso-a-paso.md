@@ -2,13 +2,13 @@
 
 <!-- palabras_clave: proceso de despacho, paso a paso, como despacho, cuando puedo despachar, lista para despachar, que sigue, despacho completo, sacar mi carga, retirar, entrega, bill of lading, cancelar solicitud -->
 
-1. **La carga queda disponible.** En Miami ocurre cuando AMVARMAR la almacena y pasa a `STORED`. Una
-   carga de otro origen puede solicitarse mientras está `IN_TRANSIT`. Los documentos pendientes no
-   cambian esa disponibilidad.
+1. **La carga queda disponible.** Ocurre cuando AMVARMAR la almacena en Miami y pasa a `STORED`: aparece
+   en **Miami → Inventario en Miami**. Los reportes de tránsito no se despachan desde el sistema. Los
+   documentos pendientes no cambian esa disponibilidad.
 2. **Revisá los documentos sugeridos.** En el detalle de la carga, el panel de documentos muestra qué
    archivos ayudarían a procesarla y si te toca a vos subirlos. Todos son opcionales.
-3. **Pedí el despacho.** En **Despachos → Solicitar despacho** elegí una o más cargas disponibles de tu
-   empresa, el método (marítimo, aéreo o terrestre) y, si querés, una dirección de entrega e
+3. **Pedí el despacho.** En **Miami → Inventario en Miami** marcá las cargas y tocá **Solicitar despacho**
+   (o andá a **Despachos → Solicitar despacho**). Elegí el método (marítimo, aéreo o terrestre) y, si querés, una dirección de entrega e
    instrucciones. También me lo podés pedir a mí: decime qué cargas (por número, factura o ID) y por qué
    vía, y te preparo la solicitud para que la revises y la confirmes.
 4. **Operaciones la revisa.** La solicitud queda `PENDING` y te llega el acuse. Los documentos pendientes

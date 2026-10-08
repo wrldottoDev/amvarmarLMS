@@ -21,6 +21,7 @@ const PERMISOS_DE_ESTADO = new Set([
   "shipments.cancel.prealert",
   "shipments.cancel.in_transit",
   "shipments.reopen",
+  "shipments.status.set_any",
 ]);
 
 function permitidasDesdeDetalles(error: ErrorApi) {

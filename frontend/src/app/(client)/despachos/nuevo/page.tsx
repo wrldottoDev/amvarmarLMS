@@ -3,8 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Info, PackageOpen } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
@@ -14,16 +14,28 @@ import { useSesion } from "@/features/auth/contexto-sesion";
 import { metodos } from "@/features/despachos/catalogo";
 import { useCrearDespacho } from "@/features/despachos/consultas";
 import { useExpedientes } from "@/features/documentos/consultas";
-import { identificadorCarga } from "@/features/shipments/identificador";
+import { identificadorConFactura } from "@/features/shipments/identificador";
 import { api, exigirDatos } from "@/lib/api/client";
 import { clases } from "@/lib/utilidades";
 
 export default function PaginaNuevoDespacho() {
+  return (
+    <Suspense fallback={<CargandoPagina />}>
+      <FormularioDespacho />
+    </Suspense>
+  );
+}
+
+function FormularioDespacho() {
   const router = useRouter();
   const { usuario } = useSesion();
   const empresaId = usuario?.empresa?.id ?? "";
 
-  const [seleccionadas, setSeleccionadas] = useState<string[]>([]);
+  // Viene del inventario de Miami con las cargas ya marcadas.
+  const preseleccion = useSearchParams().get("cargas");
+  const [seleccionadas, setSeleccionadas] = useState<string[]>(() =>
+    (preseleccion ?? "").split(",").filter(Boolean),
+  );
   const [metodo, setMetodo] = useState<(typeof metodos)[number]["valor"]>("SEA");
   const [direccion, setDireccion] = useState("");
   const [instrucciones, setInstrucciones] = useState("");
@@ -63,7 +75,8 @@ export default function PaginaNuevoDespacho() {
   async function confirmar() {
     const resultado = await crear.mutateAsync({
       method: metodo,
-      shipment_ids: seleccionadas,
+      // Solo las que siguen disponibles: la preselección pudo quedar vieja.
+      shipment_ids: seleccionadas.filter((id) => cargas.some((carga) => carga.id === id)),
       delivery_address: direccion.trim() || null,
       instructions: instrucciones.trim() || null,
       requested_pickup_date: null,
@@ -114,10 +127,10 @@ export default function PaginaNuevoDespacho() {
             despachan desde el sistema.
           </p>
           <Link
-            href="/shipments"
+            href="/miami?vista=inventario"
             className="mt-4 inline-flex h-10 items-center rounded-md border px-4 text-sm font-semibold hover:bg-[var(--hover)]"
           >
-            Ver mis cargas
+            Ver mi inventario en Miami
           </Link>
         </div>
       ) : null}
@@ -165,7 +178,7 @@ export default function PaginaNuevoDespacho() {
                         onChange={() => alternar(carga.id)}
                       />
                       <span className="min-w-0 flex-1">
-                        <strong className="block text-sm">{identificadorCarga(carga)}</strong>
+                        <strong className="block text-sm">{identificadorConFactura(carga)}</strong>
                         <span className="block text-xs text-[var(--texto-secundario)]">
                           {carga.package_count === 1
                             ? "1 bulto"
@@ -199,7 +212,7 @@ export default function PaginaNuevoDespacho() {
               </div>
               {cargasElegidas.map((carga) => (
                 <div key={carga.id} className="space-y-3 rounded-md border px-4 py-4">
-                  <p className="text-sm font-semibold">{identificadorCarga(carga)}</p>
+                  <p className="text-sm font-semibold">{identificadorConFactura(carga)}</p>
                   <Expediente
                     cargaId={carga.id}
                     esCliente

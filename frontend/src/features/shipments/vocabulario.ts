@@ -30,3 +30,29 @@ export const queHacerAhora: Partial<Record<EstadoCarga, string>> = {
   STORED: "Ya podés solicitar el despacho.",
   DISPATCHED: "Podés seguir el envío desde el detalle.",
 };
+
+const EN_CAMINO = new Set<EstadoCarga>(["PRE_ALERT", "BOOKING_ASSIGNED", "IN_TRANSIT", "TRANSSHIPMENT"]);
+
+/**
+ * Dónde está la carga, en las palabras del cliente (pedido de AMVARMAR,
+ * 2026-10-08): "En Miami", "En Costa Rica", en vez de "Prealerta" o
+ * "Recibida". El estado exacto sigue visible como detalle.
+ */
+export function ubicacionParaCliente(carga: {
+  status: string;
+  origin_kind: "MIAMI" | "TRANSIT";
+  destination: { country_code: string; name: string };
+}): string {
+  const destino = carga.destination.country_code === "CR" ? "Costa Rica" : carga.destination.name;
+  const estado = carga.status as EstadoCarga;
+  if (estado === "CANCELLED") return "Cancelada";
+  if (estado === "AT_DESTINATION" || estado === "DELIVERED") return `En ${destino}`;
+  if (carga.origin_kind === "MIAMI") {
+    if (EN_CAMINO.has(estado)) return "En camino a Miami";
+    if (estado === "RECEIVED" || estado === "STORED") return "En Miami";
+    if (estado === "DISPATCH_REQUESTED" || estado === "PREPARING") return "En Miami · preparando despacho";
+    return `En camino a ${destino}`;
+  }
+  if (estado === "PRE_ALERT" || estado === "BOOKING_ASSIGNED") return "En origen";
+  return `En tránsito a ${destino}`;
+}

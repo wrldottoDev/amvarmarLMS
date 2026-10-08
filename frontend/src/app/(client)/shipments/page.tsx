@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Boxes, Download, PackagePlus } from "lucide-react";
+import { Boxes, Download, PackagePlus, Truck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useMemo, useState } from "react";
@@ -19,7 +19,7 @@ import { Boton } from "@/components/ui/boton";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { api, exigirDatos } from "@/lib/api/client";
-import type { CargaResumen } from "@/lib/api/tipos";
+import type { CargaResumen, EstadoCarga } from "@/lib/api/tipos";
 import { alternarCarga, alternarCargasVisibles } from "@/features/shipments/seleccion-masiva";
 
 function inicioDia(valor: string) {
@@ -30,33 +30,41 @@ function finalDia(valor: string) {
   return valor ? new Date(`${valor}T23:59:59.999`).toISOString() : undefined;
 }
 
-export default function PaginaCargas({
-  inventario = false,
-  archivadas = false,
-  tipoOrigen,
-}: {
+interface PropsCargas {
   inventario?: boolean;
-  /** Historial de despachos (ADR-0007): solo cargas ya archivadas, de solo
-   * lectura — sin alta, sin cambio de estado. */
+  /** Historial: cargas completadas (despachadas, entregadas o en destino),
+   * archivadas o no, de solo lectura — sin alta, sin cambio de estado. */
   archivadas?: boolean;
   tipoOrigen?: "MIAMI" | "TRANSIT";
-}) {
+  /** Estados de la sección (pestañas de Miami, tránsito activo). Un filtro de
+   * estado elegido a mano tiene prioridad. */
+  estadosVista?: readonly EstadoCarga[];
+  /** Inventario en Miami: el cliente marca almacenadas y pide el despacho
+   * desde ahí, como en "Solicitar despacho" del sistema viejo. */
+  seleccionParaDespacho?: boolean;
+  /** Va arriba del listado (pestañas, leyendas). */
+  encabezado?: React.ReactNode;
+}
+
+export default function PaginaCargas(props: PropsCargas) {
   return (
     <Suspense fallback={<CargandoPagina texto="Preparando cargas" />}>
-      <ContenidoCargas inventario={inventario} archivadas={archivadas} tipoOrigen={tipoOrigen} />
+      <ContenidoCargas {...props} />
     </Suspense>
   );
 }
 
+// Historial: lo que ya terminó su recorrido, de Miami o de tránsito.
+const ESTADOS_COMPLETADOS: EstadoCarga[] = ["DISPATCHED", "DELIVERED", "AT_DESTINATION"];
+
 function ContenidoCargas({
-  inventario,
-  archivadas,
+  inventario = false,
+  archivadas = false,
   tipoOrigen,
-}: {
-  inventario: boolean;
-  archivadas: boolean;
-  tipoOrigen?: "MIAMI" | "TRANSIT";
-}) {
+  estadosVista,
+  seleccionParaDespacho = false,
+  encabezado,
+}: PropsCargas) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -73,16 +81,20 @@ function ContenidoCargas({
   const puedeCambiarEstado = usuario?.permisos.some((permiso) => permiso.startsWith("shipments.transition.") || permiso.startsWith("shipments.cancel.") || permiso === "shipments.reopen");
   const puedeEliminar = usuario?.permisos.includes("shipments.delete") ?? false;
 
+  const vista = searchParams.get("vista");
   const aplicarFiltros = useCallback(
     (nuevos: FiltrosCarga) => {
-      const parametros = parametrosDeFiltros(nuevos).toString();
-      router.replace(parametros ? `${pathname}?${parametros}` : pathname, { scroll: false });
+      const parametros = parametrosDeFiltros(nuevos);
+      // La pestaña no es un filtro: se conserva al filtrar.
+      if (vista) parametros.set("vista", vista);
+      const cadena = parametros.toString();
+      router.replace(cadena ? `${pathname}?${cadena}` : pathname, { scroll: false });
     },
-    [pathname, router],
+    [pathname, router, vista],
   );
 
   const consulta = useInfiniteQuery({
-    queryKey: ["cargas", filtros, inventario, archivadas, verOcultas, tipoOrigen],
+    queryKey: ["cargas", filtros, inventario, archivadas, verOcultas, tipoOrigen, estadosVista],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) =>
       exigirDatos(
@@ -95,10 +107,12 @@ function ContenidoCargas({
               // es "todo lo que existe", que es como se usaba en el sistema
               // viejo para buscar algo sin saber en qué punto estaba.
               status: archivadas
-                ? ["DISPATCHED", "DELIVERED"]
+                ? ESTADOS_COMPLETADOS
                 : !inventario && filtros.estados.length
                   ? filtros.estados
-                  : undefined,
+                  : estadosVista
+                    ? [...estadosVista]
+                    : undefined,
               incluir_ocultas: verOcultas || undefined,
               eta_from: inicioDia(filtros.etaDesde),
               eta_to: finalDia(filtros.etaHasta),
@@ -132,12 +146,17 @@ function ContenidoCargas({
   }, [cargas, seleccionadas]);
   const tituloOrigen = tipoOrigen === "MIAMI" ? "Miami" : tipoOrigen === "TRANSIT" ? "Reportes de tránsito" : null;
 
+  // El cliente elige qué despachar: solo lo almacenado en Miami.
+  const despachoDelCliente = seleccionParaDespacho && esCliente;
+  const seleccionable = (carga: CargaResumen) => !despachoDelCliente || carga.status === "STORED";
+  const conSeleccion = !archivadas && (despachoDelCliente || puedeCambiarEstado || puedeEliminar);
+
   function alternarSeleccion(carga: CargaResumen) {
-    setSeleccionadas((actual) => alternarCarga(actual, carga));
+    if (seleccionable(carga)) setSeleccionadas((actual) => alternarCarga(actual, carga));
   }
 
   function alternarTodasVisibles() {
-    setSeleccionadas((actual) => alternarCargasVisibles(actual, cargas));
+    setSeleccionadas((actual) => alternarCargasVisibles(actual, cargas.filter(seleccionable)));
   }
 
   return (
@@ -148,11 +167,11 @@ function ContenidoCargas({
             {archivadas ? "Historial" : inventario ? "Inventario" : tituloOrigen ?? "Seguimiento"}
           </p>
           <h1 className="mt-1 text-2xl font-bold">
-            {archivadas ? "Historial de despachos" : inventario ? "Inventario" : tituloOrigen ?? "Cargas"}
+            {archivadas ? "Historial" : inventario ? "Inventario" : tituloOrigen ?? "Cargas"}
           </h1>
           <p className="mt-1 text-sm text-[var(--texto-secundario)]">
             {archivadas
-              ? "Cargas de Miami y tránsito que ya fueron despachadas o entregadas."
+              ? "Cargas de Miami ya despachadas o entregadas, y reportes de tránsito que llegaron a destino."
               : inventario
                 ? "Todas las cargas, sin filtrar por estado."
                 : `${cargas.length} cargadas en esta vista`}
@@ -174,6 +193,8 @@ function ContenidoCargas({
           </Link>
         )}
       </header>
+
+      {encabezado}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex-1">
@@ -220,13 +241,33 @@ function ContenidoCargas({
           empresaVisible={!esCliente}
           soloLectura={archivadas}
           tipoOrigen={tipoOrigen}
-          seleccionadas={!archivadas && (puedeCambiarEstado || puedeEliminar) ? idsSeleccionados : undefined}
-          alternarSeleccion={!archivadas && (puedeCambiarEstado || puedeEliminar) ? alternarSeleccion : undefined}
-          alternarTodas={!archivadas && (puedeCambiarEstado || puedeEliminar) ? alternarTodasVisibles : undefined}
+          seleccionadas={conSeleccion ? idsSeleccionados : undefined}
+          alternarSeleccion={conSeleccion ? alternarSeleccion : undefined}
+          alternarTodas={conSeleccion ? alternarTodasVisibles : undefined}
+          esSeleccionable={seleccionable}
         />
       ) : null}
 
-      {seleccionadas.size ? (
+      {seleccionadas.size && despachoDelCliente ? (
+        <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-[var(--superficie)] px-4 py-3 shadow-lg">
+          <span className="text-sm">
+            <strong>{seleccionadas.size === 1 ? "1 carga" : `${seleccionadas.size} cargas`}</strong>{" "}
+            {seleccionadas.size === 1 ? "elegida" : "elegidas"} para despachar
+          </span>
+          <div className="flex gap-2">
+            <Boton variante="secundario" onClick={() => setSeleccionadas(new Map())}>
+              Quitar selección
+            </Boton>
+            <Link
+              href={`/despachos/nuevo?cargas=${[...seleccionadas.keys()].join(",")}`}
+              className="flex h-10 items-center gap-2 rounded-md bg-[var(--mar)] px-4 text-sm font-semibold text-white hover:opacity-90"
+            >
+              <Truck className="size-4" aria-hidden="true" />
+              Solicitar despacho
+            </Link>
+          </div>
+        </div>
+      ) : seleccionadas.size ? (
         <AccionesMasivas
           cargas={cargasSeleccionadas}
           limpiar={() => setSeleccionadas(new Map())}

@@ -251,13 +251,14 @@ class TestDashboardHttp:
         assert r.status_code == 200
         cuerpo = r.json()
         # Solo cuenta las propias, no las de la otra empresa.
-        assert cuerpo["tarjetas"]["en_transito"] == 3
+        assert cuerpo["tarjetas"]["transito_activo"] == 3
         assert set(cuerpo["tarjetas"]) == {
-            "en_bodega",
-            "en_transito",
-            "proximos_a_llegar",
+            "camino_a_miami",
+            "inventario_miami",
+            "en_despacho",
+            "transito_activo",
+            "completadas_este_mes",
             "requieren_accion",
-            "entregados_este_mes",
         }
 
     async def test_los_movimientos_traen_estado_y_pendientes_por_separado(

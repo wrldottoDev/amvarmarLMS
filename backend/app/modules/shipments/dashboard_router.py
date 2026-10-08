@@ -22,11 +22,12 @@ ActorDep = Annotated[Actor, Depends(actor_actual)]
 
 
 class TarjetasResponse(BaseModel):
-    en_bodega: int
-    en_transito: int
-    proximos_a_llegar: int
+    camino_a_miami: int
+    inventario_miami: int
+    en_despacho: int
+    transito_activo: int
+    completadas_este_mes: int
     requieren_accion: int
-    entregados_este_mes: int
 
 
 class DashboardResponse(BaseModel):
@@ -45,13 +46,7 @@ async def _armar(
     movimientos = await queries.proximos_movimientos(db, permisos=permisos)
 
     return DashboardResponse(
-        tarjetas=TarjetasResponse(
-            en_bodega=tarjetas.en_bodega,
-            en_transito=tarjetas.en_transito,
-            proximos_a_llegar=tarjetas.proximos_a_llegar,
-            requieren_accion=tarjetas.requieren_accion,
-            entregados_este_mes=tarjetas.entregados_este_mes,
-        ),
+        tarjetas=TarjetasResponse(**vars(tarjetas)),
         proximos_movimientos=[_a_resumen(f) for f in movimientos],
     )
 
