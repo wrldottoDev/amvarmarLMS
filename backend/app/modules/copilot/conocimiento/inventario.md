@@ -1,6 +1,6 @@
 # Dónde veo mis cargas
 
-<!-- palabras_clave: inventario, mis cargas, ver cargas, listado de cargas, que tengo en bodega, donde estan mis cargas, buscar mi carga, miami, en camino, transito, inventario en miami -->
+<!-- palabras_clave: inventario, mis cargas, ver cargas, listado de cargas, que tengo en bodega, donde estan mis cargas, buscar mi carga, miami, en camino, transito, inventario en miami, en costa rica, ya llego, completados -->
 
 El menú sigue el recorrido de una carga:
 
@@ -9,8 +9,10 @@ El menú sigue el recorrido de una carga:
   - **Inventario en Miami**: lo que está en la bodega. Marcá las almacenadas y tocá **Solicitar
     despacho** para pedir que salgan.
   - **En despacho**: cargas con un despacho pedido o en preparación.
-- **Reportes de tránsito**: cargas que viajan directo a destino sin pasar por Miami. Solo muestra las que
-  todavía viajan. Las fechas estimadas de arribo (ETA) pueden variar y están sujetas a cambios.
+- **Reportes de tránsito**: cargas que viajan directo a destino sin pasar por Miami. Tiene dos pestañas:
+  - **En camino**: las que todavía viajan. Las fechas estimadas de arribo (ETA) pueden variar y están
+    sujetas a cambios.
+  - **En Costa Rica**: las que ya llegaron a destino o se entregaron, todas, también las más viejas.
 - **Historial**: lo que ya terminó, es decir, cargas de Miami despachadas o entregadas y reportes de
   tránsito que llegaron a destino.
 

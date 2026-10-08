@@ -42,6 +42,8 @@ interface PropsCargas {
   /** Inventario en Miami: el cliente marca almacenadas y pide el despacho
    * desde ahí, como en "Solicitar despacho" del sistema viejo. */
   seleccionParaDespacho?: boolean;
+  /** Tránsito «En Costa Rica»: todos los completados, también los archivados. */
+  incluirArchivadas?: boolean;
   /** Va arriba del listado (pestañas, leyendas). */
   encabezado?: React.ReactNode;
 }
@@ -63,6 +65,7 @@ function ContenidoCargas({
   tipoOrigen,
   estadosVista,
   seleccionParaDespacho = false,
+  incluirArchivadas = false,
   encabezado,
 }: PropsCargas) {
   const router = useRouter();
@@ -94,7 +97,16 @@ function ContenidoCargas({
   );
 
   const consulta = useInfiniteQuery({
-    queryKey: ["cargas", filtros, inventario, archivadas, verOcultas, tipoOrigen, estadosVista],
+    queryKey: [
+      "cargas",
+      filtros,
+      inventario,
+      archivadas,
+      incluirArchivadas,
+      verOcultas,
+      tipoOrigen,
+      estadosVista,
+    ],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) =>
       exigirDatos(
@@ -124,7 +136,7 @@ function ContenidoCargas({
               reference: filtros.reference || undefined,
               reference_type: filtros.referenceType || undefined,
               company_id: filtros.companyId || undefined,
-              archived: archivadas || undefined,
+              archived: archivadas || incluirArchivadas || undefined,
               origin_kind: tipoOrigen,
               origin_country: filtros.originCountry || undefined,
               transport_mode: filtros.transportMode ? [filtros.transportMode] : undefined,
