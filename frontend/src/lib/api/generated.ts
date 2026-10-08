@@ -3261,8 +3261,6 @@ export interface components {
         };
         /** TarjetasResponse */
         TarjetasResponse: {
-            /** Camino A Miami */
-            camino_a_miami: number;
             /** Inventario Miami */
             inventario_miami: number;
             /** En Despacho */

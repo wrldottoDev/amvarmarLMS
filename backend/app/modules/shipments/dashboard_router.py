@@ -22,7 +22,6 @@ ActorDep = Annotated[Actor, Depends(actor_actual)]
 
 
 class TarjetasResponse(BaseModel):
-    camino_a_miami: int
     inventario_miami: int
     en_despacho: int
     transito_activo: int

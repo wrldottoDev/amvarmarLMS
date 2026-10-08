@@ -8,17 +8,13 @@ import { CargandoPagina } from "@/components/ui/estados-pagina";
 import type { EstadoCarga } from "@/lib/api/tipos";
 
 /**
- * Miami en cuatro pestañas, en el orden en que la carga avanza. El sistema viejo
+ * Miami en tres pestañas, en el orden en que la carga avanza.
+ * Lo que viene en camino no se muestra: aparece al llegar a la bodega, como
+ * en el sistema viejo (pedido de AMVARMAR, 2026-10-08). El sistema viejo
  * separaba "todo lo activo" de "lo que puedo despachar"; mezclarlo en una sola
  * lista era lo que los clientes no entendían.
  */
 const PESTANAS: { clave: string; titulo: string; ayuda: string; estados: EstadoCarga[] }[] = [
-  {
-    clave: "camino",
-    titulo: "En camino a Miami",
-    ayuda: "Cargas avisadas que todavía no llegan a la bodega de Miami.",
-    estados: ["PRE_ALERT", "BOOKING_ASSIGNED", "IN_TRANSIT", "TRANSSHIPMENT"],
-  },
   {
     clave: "inventario",
     titulo: "Inventario en Miami",
@@ -50,7 +46,7 @@ export default function PaginaMiami() {
 
 function ContenidoMiami() {
   const vista = useSearchParams().get("vista");
-  const actual = PESTANAS.find((p) => p.clave === vista) ?? PESTANAS[1];
+  const actual = PESTANAS.find((p) => p.clave === vista) ?? PESTANAS[0];
 
   return (
     <PaginaCargas

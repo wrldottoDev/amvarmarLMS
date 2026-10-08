@@ -684,7 +684,8 @@ class TestDashboard:
             solo_del_cliente=False,
         )
 
-        assert tarjetas.camino_a_miami == 1
+        # La de Miami que viene en camino no cuenta en ninguna tarjeta (pedido
+        # de AMVARMAR: el cliente la ve cuando llega a la bodega).
         assert tarjetas.inventario_miami == 2
         assert tarjetas.transito_activo == 2
         assert tarjetas.en_despacho == 1
@@ -772,6 +773,23 @@ class TestDashboard:
         )
 
         assert [m.id for m in movimientos] == [pronto, tarde]
+
+    async def test_proximos_movimientos_sin_lo_que_viene_a_miami(
+        self, session: AsyncSession, redis
+    ) -> None:
+        ctx = await _entorno(session)
+        eta = datetime.now(UTC) + timedelta(days=2)
+        a_miami = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT, eta=eta)
+        await self._a_miami(session, ctx, a_miami)
+        en_bodega = await _carga(session, ctx, estado=ShipmentStatus.STORED, eta=eta)
+        await self._a_miami(session, ctx, en_bodega)
+        transito = await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT, eta=eta)
+
+        movimientos = await queries.proximos_movimientos(
+            session, permisos=await _permisos(session, redis, ctx["operaciones"])
+        )
+
+        assert {m.id for m in movimientos} == {en_bodega, transito}
 
     async def test_proximos_movimientos_trae_la_factura_como_referencia(
         self, session: AsyncSession, redis
