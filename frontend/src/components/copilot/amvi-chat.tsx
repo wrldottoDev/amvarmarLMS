@@ -1,8 +1,13 @@
 "use client";
 
-import { Bot, Loader2, Paperclip, Send, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Bot, History, Loader2, Paperclip, Send, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useSesion } from "@/features/auth/contexto-sesion";
+import { sugerenciasPara } from "@/features/copilot/sugerencias";
+import { api, exigirDatos } from "@/lib/api/client";
 import { fragmentarConEnlaces } from "@/features/copilot/enlaces";
 import {
   type AdjuntoChat,
@@ -61,8 +66,29 @@ function PanelChat({
   puedeAdjuntar: boolean;
   onCerrar: () => void;
 }) {
-  const { mensajes, enviando, herramientasActivas, propuestas, error, enviar, reiniciar } =
-    useChatAsistente();
+  const {
+    mensajes,
+    enviando,
+    herramientasActivas,
+    propuestas,
+    error,
+    enviar,
+    reiniciar,
+    retomar,
+    calificar,
+  } = useChatAsistente();
+  const ruta = usePathname();
+  const { usuario } = useSesion();
+  const [verHistorial, setVerHistorial] = useState(false);
+  // 👎 abre un campo opcional para decir qué faltó: es lo que más ayuda a
+  // escribir la guía que corrige la respuesta.
+  const [comentando, setComentando] = useState<string | null>(null);
+  const [comentario, setComentario] = useState("");
+  const historial = useQuery({
+    queryKey: ["copilot", "conversaciones"],
+    queryFn: async () => exigirDatos(await api.GET("/api/v1/copilot/conversations")),
+    enabled: verHistorial,
+  });
   const [borrador, setBorrador] = useState("");
   const [adjunto, setAdjunto] = useState<AdjuntoChat | null>(null);
   const [errorAdjunto, setErrorAdjunto] = useState<string | null>(null);
@@ -123,6 +149,18 @@ function PanelChat({
           {nombre}
         </span>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={clases(
+              "flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--hover)]",
+              verHistorial ? "text-[var(--mar)]" : "text-[var(--texto-secundario)]",
+            )}
+            onClick={() => setVerHistorial((v) => !v)}
+            aria-pressed={verHistorial}
+          >
+            <History className="size-3.5" aria-hidden="true" />
+            Historial
+          </button>
           {mensajes.length > 0 ? (
             <button
               type="button"
@@ -143,11 +181,65 @@ function PanelChat({
         </div>
       </div>
 
+      {verHistorial ? (
+        <div className="max-h-64 shrink-0 overflow-y-auto border-b bg-[var(--fondo)] p-2">
+          {historial.isPending ? (
+            <p className="px-2 py-1 text-xs text-[var(--texto-secundario)]">Cargando…</p>
+          ) : historial.data?.length ? (
+            <ul className="space-y-0.5">
+              {historial.data.map((conversacion) => (
+                <li key={conversacion.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-[var(--hover)]"
+                    onClick={() => {
+                      void retomar(conversacion);
+                      setVerHistorial(false);
+                    }}
+                  >
+                    <span className="truncate">{conversacion.title}</span>
+                    <span className="shrink-0 text-[11px] text-[var(--texto-secundario)]">
+                      {new Date(conversacion.updated_at).toLocaleDateString("es-CR")}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-2 py-1 text-xs text-[var(--texto-secundario)]">
+              Todavía no tenés conversaciones guardadas.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       <div ref={listaRef} className="flex-1 space-y-3 overflow-y-auto p-4">
         {mensajes.length === 0 ? (
-          <p className="text-sm text-[var(--texto-secundario)]">
-            Preguntame por el estado de una carga, qué documentos faltan, o tus pendientes.
-          </p>
+          <div className="space-y-2">
+            <p className="text-sm text-[var(--texto-secundario)]">
+              Preguntame por el estado de una carga, qué documentos faltan, o tus pendientes.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {sugerenciasPara(ruta, Boolean(usuario?.empresa)).map((sugerencia) => (
+                <button
+                  key={sugerencia}
+                  type="button"
+                  className="rounded-full border px-3 py-1 text-xs hover:bg-[var(--hover)]"
+                  onClick={() => {
+                    // Las que terminan en "…" piden completar un número.
+                    if (sugerencia.endsWith("…")) {
+                      setBorrador(sugerencia.slice(0, -1));
+                      campoRef.current?.focus();
+                    } else {
+                      void enviar(sugerencia);
+                    }
+                  }}
+                >
+                  {sugerencia}
+                </button>
+              ))}
+            </div>
+          </div>
         ) : null}
 
         {mensajes.map((mensaje, indice) => (
@@ -170,6 +262,54 @@ function PanelChat({
                 )}
               </div>
             </div>
+            {mensaje.rol === "assistant" && mensaje.id ? (
+              <div className="flex items-center gap-1 pl-1">
+                {([1, -1] as const).map((valor) => {
+                  const Icono = valor === 1 ? ThumbsUp : ThumbsDown;
+                  const activo = mensaje.feedback === valor;
+                  return (
+                    <button
+                      key={valor}
+                      type="button"
+                      className={clases(
+                        "grid size-7 place-items-center rounded-md hover:bg-[var(--hover)]",
+                        activo ? "text-[var(--mar)]" : "text-[var(--texto-secundario)]",
+                      )}
+                      aria-label={valor === 1 ? "Me sirvió" : "No me sirvió"}
+                      aria-pressed={activo}
+                      onClick={() => {
+                        void calificar(mensaje.id as string, valor);
+                        setComentando(valor === -1 ? (mensaje.id as string) : null);
+                        setComentario("");
+                      }}
+                    >
+                      <Icono className={clases("size-3.5", activo && "fill-current")} aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {comentando && comentando === mensaje.id ? (
+              <form
+                className="flex gap-1.5 pl-1"
+                onSubmit={(evento) => {
+                  evento.preventDefault();
+                  void calificar(comentando, -1, comentario);
+                  setComentando(null);
+                }}
+              >
+                <input
+                  className="h-8 flex-1 rounded-md border bg-[var(--superficie)] px-2 text-xs"
+                  placeholder="¿Qué faltó? (opcional)"
+                  maxLength={1000}
+                  value={comentario}
+                  onChange={(evento) => setComentario(evento.target.value)}
+                />
+                <button type="submit" className="h-8 rounded-md border px-2 text-xs font-medium hover:bg-[var(--hover)]">
+                  Enviar
+                </button>
+              </form>
+            ) : null}
             {propuestas
               .filter((item) => item.posicion === indice)
               .map((item) => (

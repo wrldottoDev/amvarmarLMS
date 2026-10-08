@@ -11,7 +11,16 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -89,5 +98,93 @@ class CopilotActionProposal(Base):
             "ix_copilot_proposals_vencimiento",
             "expires_at",
             postgresql_where=text("status = 'PENDING'"),
+        ),
+    )
+
+
+class CopilotConversation(Base):
+    """Una conversación con AMVI, para retomarla después (ADR-0012, enmienda
+    2026-10-08). Se borra sola a los 180 días sin uso.
+
+    `client_key` es el id que el frontend genera para la conversación y que ya
+    namespacea el tope de tokens en Redis: así el chat sigue mandando lo mismo
+    y el backend sabe a qué conversación guardada pertenece cada turno.
+    """
+
+    __tablename__ = "copilot_conversations"
+
+    id: Mapped[UUIDPk]
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    company_id: Mapped[UUID | None] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    client_key: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_key", name="uq_copilot_conversations_usuario_clave"),
+        Index("ix_copilot_conversations_usuario_reciente", "user_id", "updated_at"),
+    )
+
+
+class CopilotMessage(Base):
+    """Un mensaje guardado. `feedback` es el 👍 (1) / 👎 (-1) de quien
+    preguntó: lo que Operaciones revisa para mejorar las guías."""
+
+    __tablename__ = "copilot_messages"
+
+    id: Mapped[UUIDPk]
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("copilot_conversations.id", ondelete="CASCADE")
+    )
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text)
+    feedback: Mapped[int | None] = mapped_column(SmallInteger)
+    feedback_comment: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="rol_valido"),
+        CheckConstraint("feedback IS NULL OR feedback IN (-1, 1)", name="feedback_valido"),
+        Index("ix_copilot_messages_conversacion", "conversation_id", "created_at"),
+        Index(
+            "ix_copilot_messages_mal_calificados",
+            "created_at",
+            postgresql_where=text("feedback = -1"),
+        ),
+    )
+
+
+class CopilotKnowledgeEntry(Base):
+    """Una guía que escribió Operaciones desde la pantalla de aprendizaje.
+    Se suma a las de `copilot/conocimiento/*.md` sin desplegar código."""
+
+    __tablename__ = "copilot_knowledge_entries"
+
+    id: Mapped[UUIDPk]
+    title: Mapped[str] = mapped_column(String(160))
+    keywords: Mapped[str] = mapped_column(String(500))
+    content: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(server_default=text("true"))
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+
+
+class CopilotUnansweredTopic(Base):
+    """Algo que alguien preguntó y AMVI no tenía guía para contestar."""
+
+    __tablename__ = "copilot_unanswered_topics"
+
+    id: Mapped[UUIDPk]
+    topic: Mapped[str] = mapped_column(String(300))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
+    resolved_at: Mapped[datetime | None]
+
+    __table_args__ = (
+        Index(
+            "ix_copilot_unanswered_pendientes",
+            "created_at",
+            postgresql_where=text("resolved_at IS NULL"),
         ),
     )

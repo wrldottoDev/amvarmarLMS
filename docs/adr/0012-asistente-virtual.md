@@ -385,3 +385,37 @@ confirmar. Los clientes no tienen la herramienta.
 
 El `CHECK` de `copilot_action_proposals.action_code` se amplía en la migración `c5d2e8a41f07`.
 
+
+## Enmienda — el historial se guarda y AMVI aprende de él (2026-10-08)
+
+Pedido de AMVARMAR: que AMVI "guarde un historial para que se vaya automejorando".
+
+**Historial.** Cambia la decisión de no persistir conversaciones. Cada turno
+guarda la pregunta y la respuesta final en `copilot_conversations` /
+`copilot_messages`, ligadas al usuario. El `conversacion_id` que el frontend ya
+mandaba (namespace del tope de tokens) es la clave de la conversación
+(`client_key`). Cada usuario ve, retoma y borra solo las suyas; una ajena
+responde 404. Retención: 180 días sin uso, con un barrido diario en beat
+(`copilot.purge_conversations`). No se guardan adjuntos, propuestas ni
+resultados de herramientas: solo el texto que la persona vio.
+
+**Aprendizaje con una persona en el medio.** AMVI no se reentrena. Mejora así:
+
+- 👍/👎 por respuesta (`copilot_messages.feedback`, con comentario opcional).
+- Cada tema que `como_hago` no encontró queda en `copilot_unanswered_topics`.
+- La pantalla "AMVI · aprendizaje" (permiso `system_settings.manage`) muestra
+  lo mal calificado, con la pregunta que lo originó, y los temas sin guía.
+- Desde ahí Operaciones escribe una guía (`copilot_knowledge_entries`), que
+  `base_de_conocimiento.buscar` suma a las de `conocimiento/*.md` desde ese
+  momento, sin desplegar.
+
+**Sugerencias por pantalla.** El chat vacío propone preguntas según la ruta.
+Es un mapa fijo en el frontend y no llama al modelo.
+
+**Autocompletado.** `GET /shipments/sugerencias` devuelve los valores más
+usados por la empresa en proveedor, carrier, partida y descripción. Los
+formularios de alta y edición los ofrecen con un `<datalist>` nativo. Esto
+tampoco pasa por el modelo: es más rápido, gratis y no inventa nada.
+
+**Estados marítimos.** `proponer_cambio_estado` también avanza el recorrido
+marítimo de un reporte de tránsito (booking, tránsito, transbordo, en destino).

@@ -19,6 +19,7 @@ import {
   pesoVacio,
   type PesoEditable,
 } from "@/components/shipments/editor-peso";
+import { ListaSugerencias } from "@/components/shipments/lista-sugerencias";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
@@ -522,10 +523,19 @@ function FormularioNuevaCarga() {
                     value={valor}
                     onChange={(evento) => asignar(evento.target.value)}
                     placeholder={ejemplo}
+                    list={
+                      etiqueta === "Proveedor"
+                        ? "sugerencias-shipper"
+                        : etiqueta === "Carrier"
+                          ? "sugerencias-carrier"
+                          : undefined
+                    }
                   />
                 </label>
               ))}
             </div>
+            <ListaSugerencias id="sugerencias-shipper" campo="shipper" empresa={empresaEfectiva} />
+            <ListaSugerencias id="sugerencias-carrier" campo="carrier" empresa={empresaEfectiva} />
           </fieldset>
 
           <EditorPiezas piezas={piezas} alCambiar={setPiezas} />

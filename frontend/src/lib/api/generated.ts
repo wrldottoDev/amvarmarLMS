@@ -368,6 +368,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shipments/sugerencias": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sugerir Valores
+         * @description Lo que esa empresa ya usó en ese campo, lo más frecuente primero
+         *     (pedido de AMVARMAR, 2026-10-08): el formulario lo ofrece como
+         *     autocompletado. Solo para quien da de alta o corrige cargas.
+         */
+        get: operations["sugerir_valores_api_v1_shipments_sugerencias_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shipments": {
         parameters: {
             query?: never;
@@ -1559,6 +1581,129 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/copilot/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar Conversaciones
+         * @description Las conversaciones propias, la más reciente primero.
+         */
+        get: operations["listar_conversaciones_api_v1_copilot_conversations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ver Conversacion */
+        get: operations["ver_conversacion_api_v1_copilot_conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        /** Borrar Conversacion */
+        delete: operations["borrar_conversacion_api_v1_copilot_conversations__conversation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/messages/{message_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Calificar Mensaje */
+        post: operations["calificar_mensaje_api_v1_copilot_messages__message_id__feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/learning": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ver Aprendizaje */
+        get: operations["ver_aprendizaje_api_v1_copilot_learning_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/guides": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Crear Guia */
+        post: operations["crear_guia_api_v1_copilot_guides_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/guides/{guide_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Desactivar Guia */
+        post: operations["desactivar_guia_api_v1_copilot_guides__guide_id__deactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/copilot/unanswered/{topic_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolver Tema */
+        post: operations["resolver_tema_api_v1_copilot_unanswered__topic_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1720,6 +1865,21 @@ export interface components {
             /** Contenido Base64 */
             contenido_base64: string;
         };
+        /** AprendizajeResponse */
+        AprendizajeResponse: {
+            /** Mal Calificadas */
+            mal_calificadas: {
+                [key: string]: unknown;
+            }[];
+            /** Temas Sin Guia */
+            temas_sin_guia: {
+                [key: string]: unknown;
+            }[];
+            /** Guias */
+            guias: {
+                [key: string]: unknown;
+            }[];
+        };
         /** AvailableTransitionResponse */
         AvailableTransitionResponse: {
             /** To Status */
@@ -1813,6 +1973,16 @@ export interface components {
             width_cm: string | null;
             /** Height Cm */
             height_cm: string | null;
+        };
+        /** CalificarRequest */
+        CalificarRequest: {
+            /**
+             * Valor
+             * @enum {integer}
+             */
+            valor: 1 | -1;
+            /** Comentario */
+            comentario?: string | null;
         };
         /** CambiarContrasenaRequest */
         CambiarContrasenaRequest: {
@@ -1958,6 +2128,23 @@ export interface components {
         ContrasenaTemporalResponse: {
             /** Password Temporal */
             password_temporal: string;
+        };
+        /** ConversacionResponse */
+        ConversacionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Client Key */
+            client_key: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** CreadoResponse */
         CreadoResponse: {
@@ -2399,6 +2586,15 @@ export interface components {
             /** Visibles */
             visibles: string[];
         };
+        /** GuiaRequest */
+        GuiaRequest: {
+            /** Titulo */
+            titulo: string;
+            /** Palabras Clave */
+            palabras_clave: string;
+            /** Contenido */
+            contenido: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2473,6 +2669,25 @@ export interface components {
             rol: string;
             /** Contenido */
             contenido: string;
+        };
+        /** MensajeGuardadoResponse */
+        MensajeGuardadoResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+            /** Feedback */
+            feedback: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** MensajeResponse */
         MensajeResponse: {
@@ -3790,6 +4005,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BodegaResponse"][];
+                };
+            };
+        };
+    };
+    sugerir_valores_api_v1_shipments_sugerencias_get: {
+        parameters: {
+            query: {
+                campo: "shipper" | "carrier" | "tariff_code" | "description";
+                company_id: string;
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6071,6 +6319,232 @@ export interface operations {
                         [key: string]: string;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_conversaciones_api_v1_copilot_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversacionResponse"][];
+                };
+            };
+        };
+    };
+    ver_conversacion_api_v1_copilot_conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensajeGuardadoResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    borrar_conversacion_api_v1_copilot_conversations__conversation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calificar_mensaje_api_v1_copilot_messages__message_id__feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CalificarRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ver_aprendizaje_api_v1_copilot_learning_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AprendizajeResponse"];
+                };
+            };
+        };
+    };
+    crear_guia_api_v1_copilot_guides_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuiaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    desactivar_guia_api_v1_copilot_guides__guide_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guide_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolver_tema_api_v1_copilot_unanswered__topic_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -174,13 +174,9 @@ def downgrade() -> None:
             type_="foreignkey",
         )
         op.drop_column("shipment_requirements", columna)
-    op.drop_constraint(
-        op.f("ck_documents_invalidacion_exige_motivo"), "documents", type_="check"
-    )
+    op.drop_constraint(op.f("ck_documents_invalidacion_exige_motivo"), "documents", type_="check")
     op.drop_constraint(op.f("ck_documents_issued_by_valido"), "documents", type_="check")
-    op.drop_constraint(
-        op.f("fk_documents_invalidated_by_users"), "documents", type_="foreignkey"
-    )
+    op.drop_constraint(op.f("fk_documents_invalidated_by_users"), "documents", type_="foreignkey")
     op.drop_column("documents", "invalidation_reason")
     op.drop_column("documents", "invalidated_by")
     op.drop_column("documents", "issued_by")

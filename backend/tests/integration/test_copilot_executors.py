@@ -310,3 +310,36 @@ class TestFormaDeSalida:
         assert resultado["tiene_respuesta"] is True
         assert set(resultado) == {"tiene_respuesta", "titulo", "respuesta"}
         assert "despacho" in resultado["titulo"].lower()
+
+
+class TestMisPendientes:
+    async def test_lista_lo_almacenado_en_miami_aunque_no_tenga_pendientes(
+        self, session: AsyncSession, redis
+    ) -> None:
+        """ "¿Qué puedo despachar?" se contestaba solo con las cargas que tenían
+        algo pendiente: las almacenadas sin pendientes no aparecían."""
+        ctx = await _entorno(session)
+        en_miami = await _crear_shipment(session, ctx, empresa=ctx["empresa_a"], estado="STORED")
+        await session.execute(
+            text("""
+                WITH bodega AS (
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:o, :cod, 'WAREHOUSE', true) RETURNING id
+                )
+                UPDATE shipments SET origin_facility_id = (SELECT id FROM bodega) WHERE id = :s
+            """),
+            {"o": ctx["origen"], "cod": f"BOD-{uuid.uuid4().hex[:6]}", "s": en_miami.id},
+        )
+        en_transito = await _crear_shipment(
+            session, ctx, empresa=ctx["empresa_a"], estado="IN_TRANSIT"
+        )
+        permisos = await _permisos_cliente_a(session, redis, ctx)
+
+        resultado = await executors.mis_pendientes(
+            session, permisos, ctx["cliente_a"], ctx["empresa_a"], {}
+        )
+
+        numeros = {c["shipment_number"] for c in resultado["listas_para_despachar"]}
+        assert en_miami.shipment_number in numeros
+        assert en_transito.shipment_number not in numeros

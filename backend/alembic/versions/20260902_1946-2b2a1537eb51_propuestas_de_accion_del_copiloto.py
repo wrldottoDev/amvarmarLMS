@@ -31,10 +31,17 @@ def upgrade() -> None:
             server_default=sa.text("'{}'"),
             nullable=False,
         ),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'PENDING'"), nullable=False),
+        sa.Column(
+            "status", sa.String(length=16), server_default=sa.text("'PENDING'"), nullable=False
+        ),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("result", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint(
             "action_code IN ('procesar_factura_ocr', 'crear_prealerta_borrador')",

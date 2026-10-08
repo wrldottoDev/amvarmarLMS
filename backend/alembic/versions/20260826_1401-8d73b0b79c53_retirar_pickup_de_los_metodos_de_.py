@@ -46,14 +46,18 @@ def upgrade() -> None:
             "y asignales el método real antes de volver a correr la migración."
         )
 
-    op.drop_constraint(op.f("ck_dispatch_requests_method_valido"), "dispatch_requests", type_="check")
+    op.drop_constraint(
+        op.f("ck_dispatch_requests_method_valido"), "dispatch_requests", type_="check"
+    )
     op.create_check_constraint(
         op.f("ck_dispatch_requests_method_valido"), "dispatch_requests", _check(_METODOS)
     )
 
 
 def downgrade() -> None:
-    op.drop_constraint(op.f("ck_dispatch_requests_method_valido"), "dispatch_requests", type_="check")
+    op.drop_constraint(
+        op.f("ck_dispatch_requests_method_valido"), "dispatch_requests", type_="check"
+    )
     op.create_check_constraint(
         op.f("ck_dispatch_requests_method_valido"),
         "dispatch_requests",

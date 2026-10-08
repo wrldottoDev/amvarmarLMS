@@ -83,6 +83,11 @@ def crear_celery() -> Celery:
                 "task": "copilot.expire_proposals",
                 "schedule": 600.0,
             },
+            # Historial de AMVI: 180 días sin uso (ADR-0012, enmienda 2026-10-08).
+            "purge-copilot-conversations-daily": {
+                "task": "copilot.purge_conversations",
+                "schedule": crontab(hour=4, minute=0),
+            },
             # ADR-0008: aviso de "documentos por archivar", una semana antes
             # de que `archive-pending-shipments-daily` los archive de verdad.
             "notify-archiving-soon-daily": {

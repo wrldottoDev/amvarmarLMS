@@ -9,11 +9,12 @@ autenticado igual que cualquier otro, con su propio permiso revalidado.
 import json
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +33,10 @@ from app.core.redis import get_redis
 from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
-from app.modules.copilot import confirmaciones  # noqa: F401 -- registra REGISTRO_DE_CONFIRMACION
+from app.modules.copilot import (
+    confirmaciones,  # noqa: F401 -- registra REGISTRO_DE_CONFIRMACION
+    historial,
+)
 from app.modules.copilot.acciones import REGISTRO_DE_CONFIRMACION, AccionCopilot
 from app.modules.copilot.models import EstadoPropuesta
 from app.modules.copilot.provider import (
@@ -265,7 +269,19 @@ async def respond(
 
     proveedor = fabrica_proveedor()
 
+    # Historial (ADR-0012, enmienda 2026-10-08): la pregunta se guarda antes
+    # de responder, así queda aunque el proveedor falle a mitad de camino.
+    conversacion = await historial.guardar_pregunta(
+        db,
+        user_id=actor.user_id,
+        company_id=company_id,
+        client_key=datos.conversacion_id,
+        texto=datos.mensajes[-1].contenido,
+    )
+    await db.commit()
+
     async def flujo() -> AsyncIterator[str]:
+        respuesta: list[str] = []
         try:
             async for evento in procesar_turno(
                 db,
@@ -281,6 +297,18 @@ async def respond(
                 adjunto=datos.adjunto.model_dump() if datos.adjunto else None,
             ):
                 yield _formatear_sse(evento.evento, evento.datos)
+                if evento.evento == "token":
+                    respuesta.append(str(evento.datos.get("texto", "")))
+                if evento.evento == "fin" and respuesta:
+                    mensaje = await historial.guardar_respuesta(
+                        db, conversacion, "".join(respuesta)
+                    )
+                    await db.commit()
+                    # Con el id, la interfaz puede ofrecer 👍/👎 sobre esta respuesta.
+                    yield _formatear_sse(
+                        "guardado",
+                        {"mensaje_id": str(mensaje), "conversacion_id": str(conversacion)},
+                    )
                 if evento.evento == "fin":
                     # Se registra el gasto REAL después de que ya se le
                     # respondió a la persona: bloquear acá no evitaría nada,
@@ -557,3 +585,120 @@ async def rechazar_propuesta(
 
     await db.commit()
     return {"status": "REJECTED"}
+
+
+# --- Historial y aprendizaje (ADR-0012, enmienda 2026-10-08) ---
+
+
+class ConversacionResponse(BaseModel):
+    id: UUID
+    client_key: str
+    title: str
+    updated_at: datetime
+
+
+class MensajeGuardadoResponse(BaseModel):
+    id: UUID
+    role: str
+    content: str
+    feedback: int | None
+    created_at: datetime
+
+
+class CalificarRequest(BaseModel):
+    valor: Literal[1, -1]
+    comentario: str | None = Field(default=None, max_length=1000)
+
+
+class GuiaRequest(BaseModel):
+    titulo: str = Field(min_length=3, max_length=160)
+    # Separadas por coma: lo que alguien escribiría al preguntar.
+    palabras_clave: str = Field(min_length=2, max_length=500)
+    contenido: str = Field(min_length=10, max_length=8000)
+
+
+class AprendizajeResponse(BaseModel):
+    mal_calificadas: list[dict[str, Any]]
+    temas_sin_guia: list[dict[str, Any]]
+    guias: list[dict[str, Any]]
+
+
+@router.get("/conversations", response_model=list[ConversacionResponse])
+async def listar_conversaciones(actor: ActorDep, db: SesionDb) -> list[ConversacionResponse]:
+    """Las conversaciones propias, la más reciente primero."""
+    return [
+        ConversacionResponse(**vars(c)) for c in await historial.listar(db, user_id=actor.user_id)
+    ]
+
+
+@router.get("/conversations/{conversation_id}", response_model=list[MensajeGuardadoResponse])
+async def ver_conversacion(
+    conversation_id: UUID, actor: ActorDep, db: SesionDb
+) -> list[MensajeGuardadoResponse]:
+    return [
+        MensajeGuardadoResponse(**vars(m))
+        for m in await historial.mensajes(db, user_id=actor.user_id, conversacion=conversation_id)
+    ]
+
+
+@router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def borrar_conversacion(conversation_id: UUID, actor: ActorDep, db: SesionDb) -> None:
+    await historial.borrar(db, user_id=actor.user_id, conversacion=conversation_id)
+    await db.commit()
+
+
+@router.post("/messages/{message_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
+async def calificar_mensaje(
+    message_id: UUID, datos: CalificarRequest, actor: ActorDep, db: SesionDb
+) -> None:
+    await historial.calificar(
+        db,
+        user_id=actor.user_id,
+        mensaje=message_id,
+        valor=datos.valor,
+        comentario=datos.comentario,
+    )
+    await db.commit()
+
+
+async def _exigir_gestion(db: AsyncSession, redis: Redis, actor: Actor) -> None:
+    """Revisar lo que preguntan los clientes y escribir guías es de AMVARMAR."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    if not permisos.permite(Perm.SYSTEM_SETTINGS_MANAGE):
+        raise SinPermiso("Solo AMVARMAR revisa el aprendizaje de AMVI.")
+
+
+@router.get("/learning", response_model=AprendizajeResponse)
+async def ver_aprendizaje(actor: ActorDep, db: SesionDb, redis: RedisDep) -> AprendizajeResponse:
+    await _exigir_gestion(db, redis, actor)
+    return AprendizajeResponse(**await historial.aprendizaje(db))
+
+
+@router.post("/guides", status_code=status.HTTP_201_CREATED)
+async def crear_guia(
+    datos: GuiaRequest, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> dict[str, str]:
+    await _exigir_gestion(db, redis, actor)
+    guia = await historial.crear_guia(
+        db,
+        titulo=datos.titulo,
+        palabras_clave=datos.palabras_clave,
+        contenido=datos.contenido,
+        actor=actor.user_id,
+    )
+    await db.commit()
+    return {"id": str(guia)}
+
+
+@router.post("/guides/{guide_id}/deactivate", status_code=status.HTTP_204_NO_CONTENT)
+async def desactivar_guia(guide_id: UUID, actor: ActorDep, db: SesionDb, redis: RedisDep) -> None:
+    await _exigir_gestion(db, redis, actor)
+    await historial.desactivar_guia(db, guide_id)
+    await db.commit()
+
+
+@router.post("/unanswered/{topic_id}/resolve", status_code=status.HTTP_204_NO_CONTENT)
+async def resolver_tema(topic_id: UUID, actor: ActorDep, db: SesionDb, redis: RedisDep) -> None:
+    await _exigir_gestion(db, redis, actor)
+    await historial.resolver_tema(db, topic_id)
+    await db.commit()

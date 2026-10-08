@@ -1426,3 +1426,36 @@ class TestAvisosDelAlta:
             "shipment.received",
             "shipment.transit_details_requested",
         ]
+
+
+class TestSugerencias:
+    """Autocompletado del formulario (pedido de AMVARMAR, 2026-10-08)."""
+
+    async def test_sugiere_lo_que_la_empresa_ya_uso_lo_mas_frecuente_primero(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        from app.modules.auth.dependencies import Actor
+        from app.modules.shipments.router import sugerir_valores
+
+        for proveedor in ("Atlas Components", "Atlas Components", "Nordic Supply"):
+            await gestion.crear(
+                session,
+                datos=_datos(entorno, shipper=proveedor),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+        ops = Actor(user_id=entorno["ops"], session_id=uuid.uuid4())
+        cliente = Actor(user_id=entorno["cliente"], session_id=uuid.uuid4())
+
+        todos = await sugerir_valores(ops, session, redis, "shipper", entorno["empresa"], None)
+        filtrados = await sugerir_valores(
+            ops, session, redis, "shipper", entorno["empresa"], "nord"
+        )
+        del_cliente = await sugerir_valores(
+            cliente, session, redis, "shipper", entorno["empresa"], None
+        )
+
+        assert todos == ["Atlas Components", "Nordic Supply"]
+        assert filtrados == ["Nordic Supply"]
+        # El cliente no da de alta cargas: no recibe sugerencias.
+        assert del_cliente == []

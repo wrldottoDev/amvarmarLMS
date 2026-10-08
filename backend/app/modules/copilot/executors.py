@@ -22,10 +22,11 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import RecursoNoEncontrado
-from app.modules.copilot import base_de_conocimiento
+from app.modules.copilot import base_de_conocimiento, historial
 from app.modules.dispatches import queries as dispatches_queries
 from app.modules.documents.service import expediente
 from app.modules.rbac.service import PermisosEfectivos
+from app.modules.shipments.models import ShipmentStatus
 from app.modules.shipments.queries import (
     FiltrosListado,
     alcance_de_lectura,
@@ -170,8 +171,20 @@ async def mis_pendientes(
             return bool(fila.requisitos_del_cliente > 0)
         return bool(fila.requisitos_abiertos > 0)
 
+    # Todo lo almacenado en Miami, tenga o no documentos sugeridos: la
+    # descripción de la herramienta lo prometía y no lo devolvía, así que a
+    # "¿qué puedo despachar?" AMVI contestaba solo con las que tenían algo
+    # pendiente.
+    listas = await listar_shipments(
+        session,
+        permisos=permisos,
+        filtros=FiltrosListado(estados=[ShipmentStatus.STORED.value], tipo_origen="MIAMI"),
+        limite=_LIMITE_MIS_PENDIENTES,
+    )
+
     return {
         "pendientes": [_resumen_carga(f) for f in pagina.items if _pendiente(f)],
+        "listas_para_despachar": [_resumen_carga(f) for f in listas.items],
     }
 
 
@@ -260,8 +273,14 @@ async def como_hago(
     """`copilot/conocimiento/*.md` (ADR-0012, Fase 3): un tema sin entrada NO
     se contesta con una adivinanza — el system prompt ya instruye no inventar
     datos, y esto aplica la misma regla a la guía de producto."""
-    entrada = base_de_conocimiento.buscar(argumentos["tema"])
+    entrada = base_de_conocimiento.buscar(
+        argumentos["tema"], await historial.guias_curadas(session)
+    )
     if entrada is None:
+        # Lo que AMVI no supo contestar es lo que Operaciones tiene que escribir.
+        await historial.registrar_tema_sin_guia(
+            session, user_id=actor_user_id, tema=str(argumentos["tema"])
+        )
         return {
             "tiene_respuesta": False,
             "mensaje": "Todavía no tengo una guía escrita para eso. Consultá con Operaciones.",

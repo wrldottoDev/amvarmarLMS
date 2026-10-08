@@ -3,6 +3,7 @@
 import {
   Archive,
   Bell,
+  Bot,
   Boxes,
   Building2,
   ChevronDown,
@@ -82,6 +83,9 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
           { href: "/usuarios", etiqueta: "Usuarios", icono: UsersRound },
           ...(usuario.permisos.includes("locations.manage")
             ? [{ href: "/locations", etiqueta: "Ubicaciones", icono: MapPin }]
+            : []),
+          ...(usuario.permisos.includes("system_settings.manage")
+            ? [{ href: "/amvi", etiqueta: "AMVI · aprendizaje", icono: Bot }]
             : []),
         ]),
     { href: "/sesiones", etiqueta: "Sesiones", icono: MonitorSmartphone },
