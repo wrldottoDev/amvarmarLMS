@@ -102,7 +102,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_shipments_tipo_de_carga_valido", "shipments", type_="check")
+    op.drop_constraint(op.f("ck_shipments_tipo_de_carga_valido"), "shipments", type_="check")
     op.drop_column("shipments", "load_type")
     op.execute("""
         DELETE FROM role_permissions
