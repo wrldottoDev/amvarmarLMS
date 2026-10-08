@@ -8,7 +8,7 @@ import { CargandoPagina } from "@/components/ui/estados-pagina";
 import type { EstadoCarga } from "@/lib/api/tipos";
 
 /**
- * Miami en tres pestañas, en el orden en que la carga avanza. El sistema viejo
+ * Miami en cuatro pestañas, en el orden en que la carga avanza. El sistema viejo
  * separaba "todo lo activo" de "lo que puedo despachar"; mezclarlo en una sola
  * lista era lo que los clientes no entendían.
  */
@@ -28,8 +28,15 @@ const PESTANAS: { clave: string; titulo: string; ayuda: string; estados: EstadoC
   {
     clave: "despacho",
     titulo: "En despacho",
-    ayuda: "Cargas con un despacho pedido o en preparación. Lo despachado pasa al Historial.",
+    ayuda: "Cargas con un despacho pedido o en preparación. Lo despachado pasa a «Despachos completados».",
     estados: ["DISPATCH_REQUESTED", "PREPARING"],
+  },
+  {
+    // Todas, también las archivadas: Historial las sigue mostrando junto a tránsito.
+    clave: "completados",
+    titulo: "Despachos completados",
+    ayuda: "Cargas de Miami ya despachadas o entregadas.",
+    estados: ["DISPATCHED", "AT_DESTINATION", "DELIVERED"],
   },
 ];
 
@@ -52,6 +59,7 @@ function ContenidoMiami() {
       tipoOrigen="MIAMI"
       estadosVista={actual.estados}
       seleccionParaDespacho={actual.clave === "inventario"}
+      incluirArchivadas={actual.clave === "completados"}
       encabezado={
         <PestanasVista
           ruta="/miami"

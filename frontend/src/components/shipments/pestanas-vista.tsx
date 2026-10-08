@@ -17,17 +17,23 @@ export function PestanasVista({
 }) {
   return (
     <div className="space-y-2">
-      <nav className="flex gap-1 border-b" aria-label={etiqueta}>
+      {/* Línea base como sombra interna: con overflow-x (celular), un borde con
+          `-mb-px` en las pestañas queda recortado. */}
+      <nav
+        className="flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--borde)]"
+        aria-label={etiqueta}
+      >
         {pestanas.map((pestana) => (
           <Link
             key={pestana.clave}
             href={`${ruta}?vista=${pestana.clave}`}
             aria-current={pestana.clave === actual ? "page" : undefined}
+            // `!`: `* { border-color }` de globals.css va fuera de capa y pisa los colores de borde.
             className={clases(
-              "-mb-px border-b-2 px-4 py-2 text-sm font-semibold",
+              "shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-semibold",
               pestana.clave === actual
-                ? "border-[var(--mar)] text-[var(--mar)]"
-                : "border-transparent text-[var(--texto-secundario)] hover:text-[var(--texto)]",
+                ? "border-[var(--mar)]! text-[var(--mar)]"
+                : "border-transparent! text-[var(--texto-secundario)] hover:text-[var(--texto)]",
             )}
           >
             {pestana.titulo}
