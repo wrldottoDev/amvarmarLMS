@@ -34,6 +34,7 @@ class Perm:
     SHIPMENTS_CANCEL_PREALERT = "shipments.cancel.prealert"
     SHIPMENTS_CANCEL_IN_TRANSIT = "shipments.cancel.in_transit"
     SHIPMENTS_REOPEN = "shipments.reopen"
+    SHIPMENTS_STATUS_SET_ANY = "shipments.status.set_any"
     SHIPMENTS_LEGACY_REVIEW_RESOLVE = "shipments.legacy_review.resolve"
     SHIPMENTS_LEGAL_HOLD_MANAGE = "shipments.legal_hold.manage"
     # ADR-0006: reportar que no se reconoce una entrega ya marcada. No cambia
@@ -95,6 +96,7 @@ PERMISSIONS: dict[str, str] = {
     Perm.SHIPMENTS_CANCEL_PREALERT: "Cancelar una carga en PRE_ALERT",
     Perm.SHIPMENTS_CANCEL_IN_TRANSIT: "Cancelar una carga en IN_TRANSIT",
     Perm.SHIPMENTS_REOPEN: "Reabrir una carga cancelada",
+    Perm.SHIPMENTS_STATUS_SET_ANY: "Pasar una carga a cualquier estado, sin seguir el flujo",
     Perm.SHIPMENTS_LEGACY_REVIEW_RESOLVE: "Resolver cargas marcadas para revisión legacy",
     Perm.SHIPMENTS_LEGAL_HOLD_MANAGE: "Activar o desactivar retención especial (legal hold)",
     Perm.SHIPMENTS_DISPUTE_CREATE: "Reportar que no se reconoce una entrega",

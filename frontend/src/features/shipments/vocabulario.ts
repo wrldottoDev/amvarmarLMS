@@ -9,12 +9,15 @@ import type { EstadoCarga } from "@/lib/api/tipos";
  */
 export const queSignifica: Record<EstadoCarga, string> = {
   PRE_ALERT: "Nos avisaste que viene. Todavía no llega a bodega.",
-  IN_TRANSIT: "Va en camino a nuestra bodega.",
+  BOOKING_ASSIGNED: "Ya tiene espacio reservado con la naviera.",
+  IN_TRANSIT: "Va en camino.",
+  TRANSSHIPMENT: "Está cambiando de buque rumbo a su destino.",
   RECEIVED: "Llegó a bodega y la estamos revisando.",
   STORED: "Está guardada y lista para que pidas el despacho.",
   DISPATCH_REQUESTED: "Pediste el despacho. Operaciones lo está revisando.",
   PREPARING: "La estamos preparando para salir.",
   DISPATCHED: "Salió de bodega.",
+  AT_DESTINATION: "Llegó a destino.",
   DELIVERED: "Entregada.",
   CANCELLED: "Cancelada.",
 };

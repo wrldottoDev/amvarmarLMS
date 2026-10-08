@@ -26,6 +26,7 @@ from app.modules.shipments.models import (
     RequirementStatus,
     RequirementType,
     ShipmentStatus,
+    TransportMode,
 )
 from app.modules.shipments.peso import UnidadPeso
 from app.modules.users import columnas
@@ -148,6 +149,7 @@ class CrearCargaRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     tariff_code: str | None = Field(default=None, max_length=40, pattern="^(?:[0-9]{1,40})?$")
     transport_mode: str | None = Field(default=None, max_length=20)
+    load_type: Literal["FCL", "LCL"] | None = None
     estimated_arrival_at: datetime | None = None
     weight: PesoInput
     volumetric_weight_kg: Decimal | None = Field(default=None, ge=0)
@@ -228,6 +230,7 @@ class ActualizarCargaRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     tariff_code: str | None = Field(default=None, max_length=40, pattern="^(?:[0-9]{1,40})?$")
     transport_mode: str | None = Field(default=None, max_length=20)
+    load_type: Literal["FCL", "LCL"] | None = None
     estimated_arrival_at: datetime | None = None
     weight: PesoInput | None = None
     volumetric_weight_kg: Decimal | None = Field(default=None, ge=0)
@@ -338,6 +341,7 @@ async def crear_carga(
                 description=datos.description,
                 tariff_code=datos.tariff_code,
                 transport_mode=datos.transport_mode,
+                load_type=datos.load_type,
                 estimated_arrival_at=datos.estimated_arrival_at,
                 weight_value=datos.weight.value,
                 weight_source_unit=datos.weight.unit.value,
@@ -1107,6 +1111,7 @@ class ShipmentResumenResponse(BaseModel):
     container: str | None = None
     shipper: str | None = None
     tariff_code: str | None = None
+    load_type: str | None = None
     carrier: str | None = None
     foots_cft: Decimal | None = None
     volume_m3: Decimal | None = None
@@ -1178,6 +1183,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         container=fila.contenedor,
         shipper=fila.shipper,
         tariff_code=getattr(fila, "tariff_code", None),
+        load_type=getattr(fila, "load_type", None),
         carrier=fila.carrier,
         foots_cft=fila.foots_cft,
         volume_m3=fila.volume_m3,
@@ -1231,6 +1237,7 @@ async def listar_shipments(
     only_archived: bool = False,
     origin_kind: Literal["MIAMI", "TRANSIT"] | None = None,
     origin_country: Annotated[str | None, Query(pattern=r"^[A-Z]{2}$")] = None,
+    transport_mode: Annotated[list[TransportMode] | None, Query()] = None,
 ) -> PaginaShipments:
     """Listado con filtros y paginación por cursor.
 
@@ -1259,6 +1266,7 @@ async def listar_shipments(
             incluir_ocultas=incluir_ocultas,
             tipo_origen=origin_kind,
             pais_origen=origin_country,
+            modos_transporte=[m.value for m in transport_mode] if transport_mode else None,
         ),
         limite=normalizar_limite(limit),
         cursor=Cursor.decodificar(cursor) if cursor else None,

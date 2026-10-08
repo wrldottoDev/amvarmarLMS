@@ -113,6 +113,7 @@ function ContenidoCargas({
               archived: archivadas || undefined,
               origin_kind: tipoOrigen,
               origin_country: filtros.originCountry || undefined,
+              transport_mode: filtros.transportMode ? [filtros.transportMode] : undefined,
             },
           },
         }),

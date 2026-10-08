@@ -26,12 +26,15 @@ class ShipmentStatus(StrEnum):
     el código no use strings sueltos."""
 
     PRE_ALERT = "PRE_ALERT"
+    BOOKING_ASSIGNED = "BOOKING_ASSIGNED"
     IN_TRANSIT = "IN_TRANSIT"
+    TRANSSHIPMENT = "TRANSSHIPMENT"
     RECEIVED = "RECEIVED"
     STORED = "STORED"
     DISPATCH_REQUESTED = "DISPATCH_REQUESTED"
     PREPARING = "PREPARING"
     DISPATCHED = "DISPATCHED"
+    AT_DESTINATION = "AT_DESTINATION"
     DELIVERED = "DELIVERED"
     CANCELLED = "CANCELLED"
 
@@ -183,6 +186,8 @@ class Shipment(Base, TimestampMixin):
     )
 
     transport_mode: Mapped[str | None] = mapped_column(String(20))
+    # Marítimo: contenedor completo (FCL) o carga consolidada (LCL). Opcional.
+    load_type: Mapped[str | None] = mapped_column(String(3))
 
     # ADR-0005: origen estructurado, no texto libre.
     origin_location_id: Mapped[UUID] = mapped_column(
@@ -274,6 +279,9 @@ class Shipment(Base, TimestampMixin):
         CheckConstraint(
             "tariff_code IS NULL OR tariff_code ~ '^[0-9]{1,40}$'",
             name="partida_arancelaria_valida",
+        ),
+        CheckConstraint(
+            "load_type IS NULL OR load_type IN ('FCL', 'LCL')", name="tipo_de_carga_valido"
         ),
         CheckConstraint("package_count >= 0", name="bultos_no_negativos"),
         CheckConstraint("row_version > 0", name="row_version_positiva"),

@@ -97,6 +97,7 @@ _COLUMNA_DE_FECHA: dict[str, str] = {
     ShipmentStatus.RECEIVED: "received_at",
     ShipmentStatus.STORED: "stored_at",
     ShipmentStatus.DISPATCHED: "dispatched_at",
+    ShipmentStatus.AT_DESTINATION: "actual_arrival_at",
     ShipmentStatus.DELIVERED: "delivered_at",
 }
 
@@ -207,6 +208,17 @@ async def _transiciones_permitidas(session: AsyncSession, desde: str) -> list[st
     )
 
 
+async def _estado_activo(session: AsyncSession, codigo: str) -> bool:
+    return bool(
+        (
+            await session.execute(
+                text("SELECT 1 FROM shipment_statuses WHERE code = :c AND is_active"),
+                {"c": codigo},
+            )
+        ).scalar_one_or_none()
+    )
+
+
 async def transicionar(
     session: AsyncSession,
     *,
@@ -239,20 +251,29 @@ async def transicionar(
         )
     ).one_or_none()
 
-    if transicion is None:
+    # Cambio libre (pedido de AMVARMAR, 2026-10-08): Admin y Super admin pasan
+    # una carga a cualquier estado, sin seguir el flujo, sin motivo y sin las
+    # políticas de la transición. Siguen valiendo el archivado, el bloqueo
+    # optimista, la línea de tiempo, la auditoría y el aviso al cliente.
+    libre = permisos.permite(Perm.SHIPMENTS_STATUS_SET_ANY, company_id=carga.company_id)
+
+    if transicion is None and not (
+        libre and datos.to_status != desde and await _estado_activo(session, datos.to_status)
+    ):
         permitidas = await _transiciones_permitidas(session, desde)
         raise TransicionInvalida(
             f"No se puede pasar de {desde} a {datos.to_status}.",
             details=[{"from": desde, "allowed": permitidas}],
         )
 
-    # 2. ¿El actor tiene el permiso, con alcance sobre ESTA empresa?
-    if not permisos.permite(transicion.permiso, company_id=carga.company_id):
-        raise SinPermisoParaTransicion(transicion.permiso)
+    if transicion is not None and not libre:
+        # 2. ¿El actor tiene el permiso, con alcance sobre ESTA empresa?
+        if not permisos.permite(transicion.permiso, company_id=carga.company_id):
+            raise SinPermisoParaTransicion(transicion.permiso)
 
-    # 3. Motivo obligatorio en retrocesos, cancelación, reapertura y reversión.
-    if transicion.requires_reason and not (datos.note or "").strip():
-        raise MotivoRequerido(f"Pasar de {desde} a {datos.to_status} exige una justificación.")
+        # 3. Motivo obligatorio en retrocesos, cancelación, reapertura y reversión.
+        if transicion.requires_reason and not (datos.note or "").strip():
+            raise MotivoRequerido(f"Pasar de {desde} a {datos.to_status} exige una justificación.")
 
     # 4. Bloqueo optimista. Se valida después del catálogo para que un cliente
     #    con la versión vieja reciba primero el error más informativo.
@@ -263,7 +284,10 @@ async def transicionar(
         )
 
     # 5. Políticas de dominio propias de esta transición.
-    await _validar_politicas(session, shipment_id=shipment_id, desde=desde, hacia=datos.to_status)
+    if not libre:
+        await _validar_politicas(
+            session, shipment_id=shipment_id, desde=desde, hacia=datos.to_status
+        )
 
     occurred_at = datos.occurred_at or datetime.now(UTC)
 
@@ -473,6 +497,25 @@ async def transiciones_disponibles(
     ).one_or_none()
     if carga is None or not permisos.permite(Perm.SHIPMENTS_READ, company_id=carga.company_id):
         raise RecursoNoEncontrado("Carga no encontrada.")
+
+    if permisos.permite(Perm.SHIPMENTS_STATUS_SET_ANY, company_id=carga.company_id):
+        # Cambio libre: todos los estados, sin motivo ni bloqueos.
+        libres = (
+            await session.execute(
+                text("""
+                    SELECT code, label FROM shipment_statuses
+                    WHERE is_active AND code <> :desde
+                    ORDER BY sort_order
+                """),
+                {"desde": carga.current_status_code},
+            )
+        ).all()
+        return [
+            TransicionDisponible(
+                to_status=f.code, label=f.label, requires_reason=False, blocked=False, blockers=[]
+            )
+            for f in libres
+        ]
 
     filas = (
         await session.execute(

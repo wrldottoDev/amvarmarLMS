@@ -81,3 +81,24 @@ es responsabilidad de la interfaz, no de la API.
   (ej. `shipments.transition.forward` vs `shipments.transition.backward` vs `shipments.cancel` vs `shipments.reopen`).
 - El campo `note`/justificación deja de ser opcional en las transiciones backward, cancelación y reapertura —
   distinto del resto de transiciones donde es opcional (ver ejemplo de payload en Apéndice C del plan).
+
+## Enmienda — estados marítimos y cambio de estado libre (2026-10-08)
+
+Pedido de AMVARMAR.
+
+**Estados marítimos.** Las cargas que viajan por mar sin pasar por la bodega
+de Miami se registran en: Prealerta, `BOOKING_ASSIGNED` (Booking asignado),
+Tránsito, `TRANSSHIPMENT` (Transbordo) o `AT_DESTINATION` (En destino). El flujo
+marítimo es PRE_ALERT → BOOKING_ASSIGNED → IN_TRANSIT → TRANSSHIPMENT →
+AT_DESTINATION → DELIVERED, con su retroceso de un paso, igual que el flujo de
+Miami. `AT_DESTINATION` graba `actual_arrival_at`. El formulario ofrece estos
+estados solo para cargas marítimas de tránsito; el backend no lo impone.
+
+**Cambio libre.** El permiso `shipments.status.set_any` (Admin y Super admin)
+deja pasar una carga a cualquier estado activo: no exige que la transición esté
+en el catálogo, ni motivo, ni las políticas de la transición (por ejemplo, el WR
+antes de almacenar). Sigue valiendo: la carga archivada no se toca, el bloqueo
+optimista, la línea de tiempo, la auditoría y el aviso al cliente (un retroceso
+se avisa como corrección). Quien no tiene el permiso sigue el catálogo como
+antes. Mover una carga a un estado de despacho a mano no crea una solicitud de
+despacho.

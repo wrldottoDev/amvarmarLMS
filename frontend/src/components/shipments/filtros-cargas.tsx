@@ -24,7 +24,16 @@ export interface FiltrosCarga {
   etaDesde: string;
   etaHasta: string;
   originCountry: string;
+  transportMode: MetodoEnvio | "";
 }
+
+type MetodoEnvio = "SEA" | "AIR" | "LAND";
+
+const metodosEnvio: { valor: MetodoEnvio; etiqueta: string }[] = [
+  { valor: "AIR", etiqueta: "Aéreo" },
+  { valor: "SEA", etiqueta: "Marítimo" },
+  { valor: "LAND", etiqueta: "Terrestre" },
+];
 
 export const filtrosIniciales: FiltrosCarga = {
   q: "",
@@ -39,6 +48,7 @@ export const filtrosIniciales: FiltrosCarga = {
   etaDesde: "",
   etaHasta: "",
   originCountry: "",
+  transportMode: "",
 };
 
 const referencias: { valor: TipoReferencia; etiqueta: string }[] = [
@@ -57,6 +67,7 @@ export function filtrosDesdeParametros(parametros: URLSearchParams): FiltrosCarg
     .getAll("status")
     .filter((estado): estado is EstadoCarga => estadosCarga.includes(estado as EstadoCarga));
   const tipo = parametros.get("reference_type") ?? "";
+  const metodo = parametros.get("transport_mode") ?? "";
   return {
     q: parametros.get("q") ?? "",
     shipmentNumber: parametros.get("shipment_number") ?? "",
@@ -72,6 +83,9 @@ export function filtrosDesdeParametros(parametros: URLSearchParams): FiltrosCarg
     etaDesde: parametros.get("eta_from") ?? "",
     etaHasta: parametros.get("eta_to") ?? "",
     originCountry: parametros.get("origin_country") ?? "",
+    transportMode: metodosEnvio.some((item) => item.valor === metodo)
+      ? (metodo as MetodoEnvio)
+      : "",
   };
 }
 
@@ -89,6 +103,7 @@ export function parametrosDeFiltros(filtros: FiltrosCarga): URLSearchParams {
     ["eta_from", filtros.etaDesde],
     ["eta_to", filtros.etaHasta],
     ["origin_country", filtros.originCountry],
+    ["transport_mode", filtros.transportMode],
   ];
   for (const [clave, valor] of valores) if (valor) parametros.set(clave, valor);
   for (const estado of filtros.estados) parametros.append("status", estado);
@@ -192,6 +207,14 @@ export function FiltrosCargas({
           },
         ]
       : []),
+    ...(valor.transportMode
+      ? [
+          {
+            clave: "transportMode" as const,
+            etiqueta: metodosEnvio.find((m) => m.valor === valor.transportMode)?.etiqueta ?? "",
+          },
+        ]
+      : []),
     ...(valor.etaDesde
       ? [{ clave: "etaDesde" as const, etiqueta: `ETA desde: ${valor.etaDesde}` }]
       : []),
@@ -247,6 +270,27 @@ export function FiltrosCargas({
                   />
                 </label>
               ))}
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium">Método de envío</span>
+                <select
+                  className="h-10 w-full rounded-md border px-3 text-sm"
+                  value={borrador.transportMode}
+                  onChange={(evento) =>
+                    setBorrador((actual) => ({
+                      ...actual,
+                      transportMode: evento.target.value as MetodoEnvio | "",
+                    }))
+                  }
+                >
+                  <option value="">Todos</option>
+                  {metodosEnvio.map((metodo) => (
+                    <option key={metodo.valor} value={metodo.valor}>
+                      {metodo.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               <label className="block">
                 <span className="mb-1 block text-xs font-medium">Tipo de referencia</span>

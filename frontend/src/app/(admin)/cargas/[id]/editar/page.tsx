@@ -99,7 +99,13 @@ export default function PaginaEditarCarga({
       // Los numéricos van como número o `null`; el resto como texto. La cadena
       // vacía en un identificador significa borrarlo, y eso el backend lo
       // entiende, así que no se descarta.
-      cuerpo[campo] = NUMERICOS.has(campo) ? (limpio === "" ? null : limpio) : limpio;
+      if (campo === "estimated_arrival_at") {
+        // Mediodía local, igual que el alta: la fecha no salta de día por el huso.
+        cuerpo[campo] = limpio ? new Date(`${limpio}T12:00:00`).toISOString() : null;
+      } else {
+        cuerpo[campo] =
+          NUMERICOS.has(campo) || campo === "load_type" ? (limpio === "" ? null : limpio) : limpio;
+      }
     }
     if (peso !== null) cuerpo.weight = pesoParaApi(peso);
 
@@ -203,6 +209,20 @@ export default function PaginaEditarCarga({
               <option value="LAND">Terrestre</option>
             </select>
           </label>
+          {valor("transport_mode", datos.transport_mode) === "SEA" ? (
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">Tipo</span>
+              <select
+                className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                value={valor("load_type", datos.load_type)}
+                onChange={(evento) => cambiar("load_type", evento.target.value)}
+              >
+                <option value="">Sin definir</option>
+                <option value="FCL">FCL — contenedor completo</option>
+                <option value="LCL">LCL — carga consolidada</option>
+              </select>
+            </label>
+          ) : null}
           {(
             [
               ["shipper", "Proveedor", datos.shipper],
@@ -269,6 +289,16 @@ export default function PaginaEditarCarga({
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Fecha estimada de arribo (ETA)</span>
+          <input
+            type="date"
+            className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+            value={valor("estimated_arrival_at", datos.estimated_arrival_at?.slice(0, 10))}
+            onChange={(evento) => cambiar("estimated_arrival_at", evento.target.value)}
+          />
         </label>
 
         <label className="block">

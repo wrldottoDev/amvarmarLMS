@@ -63,15 +63,6 @@ class NoSePuedeEditar(Conflicto):
 # ya está en manos de AMVARMAR: quien la recibe en mostrador no debería tener que
 # crearla en prealerta y avanzarla a mano dos veces. Más adelante no se puede
 # nacer —una carga no empieza despachada— y hacia atrás tampoco tiene sentido.
-_ESTADOS_INICIALES: frozenset[str] = frozenset(
-    {
-        ShipmentStatus.PRE_ALERT,
-        ShipmentStatus.IN_TRANSIT,
-        ShipmentStatus.RECEIVED,
-        ShipmentStatus.STORED,
-    }
-)
-
 _SECUENCIA_ESTADOS_INICIALES: tuple[str, ...] = (
     ShipmentStatus.PRE_ALERT,
     ShipmentStatus.IN_TRANSIT,
@@ -79,14 +70,21 @@ _SECUENCIA_ESTADOS_INICIALES: tuple[str, ...] = (
     ShipmentStatus.STORED,
 )
 
-_EDITABLES: frozenset[str] = frozenset(
-    {
-        ShipmentStatus.PRE_ALERT,
-        ShipmentStatus.IN_TRANSIT,
-        ShipmentStatus.RECEIVED,
-        ShipmentStatus.STORED,
-    }
+# Marítimo (2026-10-08): se registra en prealerta, booking, tránsito,
+# transbordo o ya en destino.
+_SECUENCIA_MARITIMA: tuple[str, ...] = (
+    ShipmentStatus.PRE_ALERT,
+    ShipmentStatus.BOOKING_ASSIGNED,
+    ShipmentStatus.IN_TRANSIT,
+    ShipmentStatus.TRANSSHIPMENT,
+    ShipmentStatus.AT_DESTINATION,
 )
+
+_ESTADOS_INICIALES: frozenset[str] = frozenset(_SECUENCIA_ESTADOS_INICIALES) | frozenset(
+    _SECUENCIA_MARITIMA
+)
+
+_EDITABLES: frozenset[str] = _ESTADOS_INICIALES
 
 
 @dataclass(frozen=True)
@@ -99,6 +97,7 @@ class DatosDeCarga:
     description: str | None = None
     tariff_code: str | None = None
     transport_mode: str | None = None
+    load_type: str | None = None
     estimated_arrival_at: datetime | None = None
     weight_value: Decimal | None = None
     weight_source_unit: str | None = None
@@ -186,7 +185,8 @@ async def crear(
     estado_inicial = datos.initial_status or ShipmentStatus.PRE_ALERT.value
     if estado_inicial not in _ESTADOS_INICIALES:
         raise DatosInvalidos(
-            "Una carga solo puede crearse en prealerta, en tránsito, recibida o almacenada."
+            "Una carga solo puede crearse en prealerta, booking asignado, en tránsito, "
+            "transbordo, en destino, recibida o almacenada."
         )
 
     peso = _peso_de_alta(datos)
@@ -201,13 +201,14 @@ async def crear(
                         (company_id, created_by, assigned_to, current_status_code,
                          origin_location_id, origin_facility_id,
                          destination_location_id, destination_address,
-                         description, tariff_code, transport_mode, estimated_arrival_at,
+                         description, tariff_code, transport_mode, load_type,
+                         estimated_arrival_at,
                          weight_kg, weight_lb, weight_source_unit,
                          volumetric_weight_kg, volume_m3,
                          foots_cft, shipper, carrier, permit_review_required)
                     VALUES (:company, :actor, :asignado, :estado,
                             :origen, :bodega, :destino, :direccion,
-                            :descripcion, :partida, :modo, :eta,
+                            :descripcion, :partida, :modo, :tipo_carga, :eta,
                             :peso, :peso_lb, :unidad_peso, :peso_vol, :volumen,
                             :cft, :shipper, :carrier, :permiso)
                     RETURNING id, shipment_number, row_version
@@ -224,6 +225,7 @@ async def crear(
                     "descripcion": datos.description,
                     "partida": datos.tariff_code,
                     "modo": datos.transport_mode,
+                    "tipo_carga": datos.load_type,
                     "eta": datos.estimated_arrival_at,
                     "peso": peso.kg,
                     "peso_lb": peso.lb,
@@ -306,8 +308,14 @@ async def crear(
 
     version = int(fila.row_version)
     if estado_inicial != ShipmentStatus.PRE_ALERT.value:
-        limite = _SECUENCIA_ESTADOS_INICIALES.index(estado_inicial)
-        for destino in _SECUENCIA_ESTADOS_INICIALES[1 : limite + 1]:
+        # Paso a paso, para que cada hito (recibida, almacenada...) quede con su
+        # fecha. Al cliente le llega un solo aviso: el del estado final.
+        secuencia = (
+            _SECUENCIA_ESTADOS_INICIALES
+            if estado_inicial in _SECUENCIA_ESTADOS_INICIALES
+            else _SECUENCIA_MARITIMA
+        )
+        for destino in secuencia[1 : secuencia.index(estado_inicial) + 1]:
             resultado = await transicionar(
                 session,
                 shipment_id=fila.id,
@@ -462,6 +470,7 @@ _EDITABLES_CAMPOS: dict[str, str] = {
     "description": "descripcion",
     "tariff_code": "partida",
     "transport_mode": "modo",
+    "load_type": "tipo_carga",
     "estimated_arrival_at": "eta",
     "weight_kg": "peso",
     "weight_lb": "peso_lb",
