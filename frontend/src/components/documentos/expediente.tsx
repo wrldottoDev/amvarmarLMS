@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Clock, Download, FileText, Pencil, Trash2, Upload, UploadCloud, X } from "lucide-react";
+import { AlertTriangle, Check, Clock, Download, FileText, Pencil, Trash2, Upload, UploadCloud } from "lucide-react";
 import { useRef, useState } from "react";
 import { ExportacionCarga } from "@/components/documentos/progreso-exportacion";
 import {
@@ -9,11 +9,8 @@ import {
   useExpediente,
   useQuitarDocumento,
   useRenombrarDocumento,
-  useRevisarRequisito,
   useSubirDocumento,
 } from "@/features/documentos/consultas";
-import { revisionDeRequisito } from "@/features/documentos/revision";
-import { useSesion } from "@/features/auth/contexto-sesion";
 import {
   estadoSubida,
   estadoRequisito,
@@ -34,6 +31,14 @@ const etiquetaEmisor: Record<IssuedBy, string> = {
   CARRIER: "Transportista",
   AUTHORITY: "Autoridad",
   OTHER: "Otro",
+};
+
+type ArchivoEnLote = {
+  clave: string;
+  nombre: string;
+  estado: "pendiente" | "subiendo" | "listo" | "error";
+  progreso: number;
+  error?: string;
 };
 
 const tonos = {
@@ -62,11 +67,17 @@ export function Expediente({
   const descargar = useDescargar();
   const renombrar = useRenombrarDocumento(cargaId);
   const quitar = useQuitarDocumento(cargaId);
-  const revisar = useRevisarRequisito(cargaId);
-  const { tienePermiso } = useSesion();
 
   const [subiendo, setSubiendo] = useState<string | null>(null);
-  const [progreso, setProgreso] = useState(0);
+  // Lo que eligió y todavía no confirmó: subir pide un paso de confirmación,
+  // pero ninguna aprobación posterior (pedido de AMVARMAR, 2026-10-08).
+  const [porConfirmar, setPorConfirmar] = useState<{
+    archivos: File[];
+    tipoId: string;
+    etiqueta: string;
+    issuedBy: IssuedBy;
+    clave: string;
+  } | null>(null);
   const [emisores, setEmisores] = useState<Record<string, IssuedBy>>({});
   const [tipoLibre, setTipoLibre] = useState("");
   const [emisorLibre, setEmisorLibre] = useState<IssuedBy | "">("");
@@ -74,16 +85,8 @@ export function Expediente({
   const [nombreNuevo, setNombreNuevo] = useState("");
   const [aQuitar, setAQuitar] = useState<{ id: string; original_name: string } | null>(null);
   const [motivoQuitar, setMotivoQuitar] = useState("");
-  const [aRechazar, setARechazar] = useState<{
-    requisitoId: string;
-    documentoId: string;
-    nombre: string;
-  } | null>(null);
-  const [motivoRechazo, setMotivoRechazo] = useState("");
   const [arrastrando, setArrastrando] = useState(false);
-  const [lote, setLote] = useState<
-    { clave: string; nombre: string; estado: "pendiente" | "subiendo" | "listo" | "error"; progreso: number; error?: string }[]
-  >([]);
+  const [lote, setLote] = useState<ArchivoEnLote[]>([]);
   const entradaLote = useRef<HTMLInputElement>(null);
 
   // Renombrar y quitar son de personal interno, igual que `edit_files` del
@@ -109,33 +112,25 @@ export function Expediente({
       r.required_before_status === "DISPATCHED" &&
       ["PENDING", "REJECTED", "OPEN"].includes(r.status),
   );
-  // Aprobar o rechazar es de Operaciones; la carga archivada no se toca.
-  const puedeRevisar = !soloLectura && tienePermiso("documents.verify");
 
   async function guardarNombre(documentoId: string) {
     await renombrar.mutateAsync({ id: documentoId, nombre: nombreNuevo.trim() });
     setRenombrando(null);
   }
 
-  async function alElegirArchivo(
+  function alElegirArchivo(
     requisito: RequisitoDocumental,
     archivo: File | undefined,
     issuedBy: IssuedBy,
   ) {
     if (!archivo || !requisito.document_type_id) return;
-    setSubiendo(requisito.id);
-    setProgreso(0);
-    try {
-      await subir.mutateAsync({
-        archivo,
-        tipoId: requisito.document_type_id,
-        issuedBy,
-        onProgress: setProgreso,
-      });
-    } finally {
-      setSubiendo(null);
-      setProgreso(0);
-    }
+    setPorConfirmar({
+      archivos: [archivo],
+      tipoId: requisito.document_type_id,
+      etiqueta: requisito.label,
+      issuedBy,
+      clave: requisito.id,
+    });
   }
 
   async function abrir(documentoId: string) {
@@ -148,75 +143,57 @@ export function Expediente({
   const opcionesEmisorLibre = (tipoLibreSeleccionado?.issued_by_options ?? []) as IssuedBy[];
   const emisorLibreEfectivo = emisorLibre || opcionesEmisorLibre[0];
 
-  async function alElegirArchivoLibre(archivo: File | undefined) {
-    if (!archivo || !tipoLibreSeleccionado || !emisorLibreEfectivo) return;
-    setSubiendo("libre");
-    setProgreso(0);
-    try {
-      await subir.mutateAsync({
-        archivo,
-        tipoId: tipoLibreSeleccionado.id,
-        issuedBy: emisorLibreEfectivo,
-        onProgress: setProgreso,
-      });
-    } finally {
-      setSubiendo(null);
-      setProgreso(0);
-    }
+  function elegirLibres(archivos: File[]) {
+    if (!tipoLibreSeleccionado || !emisorLibreEfectivo || archivos.length === 0) return;
+    setPorConfirmar({
+      archivos,
+      tipoId: tipoLibreSeleccionado.id,
+      etiqueta: tipoLibreSeleccionado.label,
+      issuedBy: emisorLibreEfectivo,
+      clave: "libre",
+    });
   }
 
-  async function subirLote(archivos: File[]) {
-    if (!tipoLibreSeleccionado || !emisorLibreEfectivo || archivos.length === 0) return;
-    const pendientes = archivos.map((archivo, indice) => ({
+  async function subirConfirmados() {
+    if (!porConfirmar) return;
+    const { archivos, tipoId, issuedBy, clave: origen } = porConfirmar;
+    setPorConfirmar(null);
+    const pendientes: ArchivoEnLote[] = archivos.map((archivo, indice) => ({
       clave: `${archivo.name}-${archivo.size}-${archivo.lastModified}-${indice}`,
       nombre: archivo.name,
-      estado: "pendiente" as const,
+      estado: "pendiente",
       progreso: 0,
     }));
     setLote(pendientes);
-    setSubiendo("lote");
+    setSubiendo(origen);
 
     for (let indice = 0; indice < archivos.length; indice += 1) {
       const archivo = archivos[indice];
       const clave = pendientes[indice].clave;
-      setLote((actual) =>
-        actual.map((item) =>
-          item.clave === clave ? { ...item, estado: "subiendo", progreso: 0 } : item,
-        ),
-      );
+      const actualizar = (cambio: Partial<ArchivoEnLote>) =>
+        setLote((actual) =>
+          actual.map((item) => (item.clave === clave ? { ...item, ...cambio } : item)),
+        );
+      actualizar({ estado: "subiendo", progreso: 0 });
       try {
         await subir.mutateAsync({
           archivo,
-          tipoId: tipoLibreSeleccionado.id,
-          issuedBy: emisorLibreEfectivo,
-          onProgress: (valor) =>
-            setLote((actual) =>
-              actual.map((item) =>
-                item.clave === clave ? { ...item, progreso: valor } : item,
-              ),
-            ),
+          tipoId,
+          issuedBy,
+          onProgress: (valor) => actualizar({ progreso: valor }),
         });
-        setLote((actual) =>
-          actual.map((item) =>
-            item.clave === clave ? { ...item, estado: "listo", progreso: 100 } : item,
-          ),
-        );
+        actualizar({ estado: "listo", progreso: 100 });
       } catch (error) {
-        setLote((actual) =>
-          actual.map((item) =>
-            item.clave === clave
-              ? {
-                  ...item,
-                  estado: "error",
-                  error: error instanceof Error ? error.message : "No se pudo subir.",
-                }
-              : item,
-          ),
-        );
+        actualizar({
+          estado: "error",
+          error: error instanceof Error ? error.message : "No se pudo subir.",
+        });
       }
     }
     setSubiendo(null);
   }
+
+  const progresoActual = lote.find((item) => item.estado === "subiendo")?.progreso ?? 0;
 
   return (
     <section aria-labelledby={`documentos-carga-${cargaId}`} className="space-y-4">
@@ -251,8 +228,33 @@ export function Expediente({
       ) : null}
 
       {subir.error ? <AvisoError error={subir.error} /> : null}
-      {revisar.error && !aRechazar ? <AvisoError error={revisar.error} /> : null}
       {descargar.error ? <AvisoError error={descargar.error} /> : null}
+
+      {lote.length > 0 ? (
+        <ul className="space-y-1" aria-label="Resultado de la carga de archivos">
+          {lote.map((archivo) => (
+            <li key={archivo.clave} className="flex items-center gap-2 text-xs">
+              {archivo.estado === "listo" ? (
+                <Check className="size-3.5 text-[var(--exito)]" aria-hidden="true" />
+              ) : archivo.estado === "error" ? (
+                <AlertTriangle className="size-3.5 text-[var(--peligro)]" aria-hidden="true" />
+              ) : (
+                <Clock className="size-3.5 text-[var(--texto-secundario)]" aria-hidden="true" />
+              )}
+              <span className="truncate font-medium">{archivo.nombre}</span>
+              <span className="text-[var(--texto-secundario)]">
+                {archivo.estado === "subiendo"
+                  ? `Subiendo ${archivo.progreso}%`
+                  : archivo.estado === "listo"
+                    ? "Subido y disponible"
+                    : archivo.estado === "error"
+                      ? archivo.error
+                      : "En espera"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {requisitos.length > 0 ? (
         <ul className="divide-y overflow-hidden rounded-lg border bg-[var(--superficie)]">
@@ -270,11 +272,6 @@ export function Expediente({
               Boolean(tipo) &&
               ["PENDING", "REJECTED", "OPEN"].includes(requisito.status);
             const enProgreso = subiendo === requisito.id;
-            const revision = revisionDeRequisito(
-              requisito,
-              data.documentos.find((d) => d.id === requisito.document_id)?.upload_status,
-              puedeRevisar,
-            );
 
             return (
               <li key={requisito.id} className="flex flex-wrap items-center gap-3 px-4 py-4">
@@ -309,47 +306,6 @@ export function Expediente({
                   </button>
                 ) : null}
 
-                {revision.mostrar && requisito.document_id ? (
-                  <span className="flex shrink-0 flex-wrap items-center gap-2">
-                    {revision.aviso ? (
-                      <span className="text-xs text-[var(--texto-secundario)]">{revision.aviso}</span>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--exito-borde)] px-3 text-sm font-medium text-[var(--exito)] hover:bg-[var(--exito-tenue)] disabled:opacity-60"
-                      title="El documento es correcto: el requisito queda cumplido"
-                      disabled={!revision.listo || revisar.isPending}
-                      onClick={() =>
-                        revisar.mutate({
-                          requisitoId: requisito.id,
-                          documentoId: requisito.document_id as string,
-                          decision: "aprobar",
-                        })
-                      }
-                    >
-                      <Check className="size-4" aria-hidden="true" />
-                      Aprobar
-                    </button>
-                    <button
-                      type="button"
-                      className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium text-[var(--peligro)] hover:bg-[var(--peligro-tenue)] disabled:opacity-60"
-                      title="El documento no sirve: hay que volver a subirlo"
-                      disabled={!revision.listo || revisar.isPending}
-                      onClick={() => {
-                        setMotivoRechazo("");
-                        setARechazar({
-                          requisitoId: requisito.id,
-                          documentoId: requisito.document_id as string,
-                          nombre: requisito.label,
-                        });
-                      }}
-                    >
-                      <X className="size-4" aria-hidden="true" />
-                      Rechazar
-                    </button>
-                  </span>
-                ) : null}
-
                 {puedeSubir ? (
                   <span className="flex flex-wrap items-center justify-end gap-2">
                     {opcionesEmisor.length > 1 ? (
@@ -375,7 +331,7 @@ export function Expediente({
                     ) : null}
                     <BotonSubir
                       enProgreso={enProgreso}
-                      progreso={enProgreso ? progreso : 0}
+                      progreso={enProgreso ? progresoActual : 0}
                       formatos={requisito.allowed_formats}
                       onElegir={(archivo) =>
                         emisor && void alElegirArchivo(requisito, archivo, emisor)
@@ -436,9 +392,9 @@ export function Expediente({
 
           <BotonSubir
             enProgreso={subiendo === "libre"}
-            progreso={subiendo === "libre" ? progreso : 0}
+            progreso={subiendo === "libre" ? progresoActual : 0}
             formatos={tipoLibreSeleccionado?.allowed_formats ?? []}
-            onElegir={(archivo) => void alElegirArchivoLibre(archivo)}
+            onElegir={(archivo) => elegirLibres(archivo ? [archivo] : [])}
             deshabilitado={!tipoLibreSeleccionado || !emisorLibreEfectivo}
           />
           </div>
@@ -452,7 +408,7 @@ export function Expediente({
               .map((formato) => `.${formato.toLowerCase()}`)
               .join(",")}
             onChange={(evento) => {
-              void subirLote(Array.from(evento.target.files ?? []));
+              elegirLibres(Array.from(evento.target.files ?? []));
               evento.target.value = "";
             }}
           />
@@ -475,7 +431,7 @@ export function Expediente({
             onDrop={(evento) => {
               evento.preventDefault();
               setArrastrando(false);
-              void subirLote(Array.from(evento.dataTransfer.files));
+              elegirLibres(Array.from(evento.dataTransfer.files));
             }}
           >
             <UploadCloud className="mb-2 size-7 text-[var(--marca)]" aria-hidden="true" />
@@ -485,31 +441,6 @@ export function Expediente({
             </span>
           </button>
 
-          {lote.length > 0 ? (
-            <ul className="space-y-1" aria-label="Resultado de la carga de archivos">
-              {lote.map((archivo) => (
-                <li key={archivo.clave} className="flex items-center gap-2 text-xs">
-                  {archivo.estado === "listo" ? (
-                    <Check className="size-3.5 text-[var(--exito)]" aria-hidden="true" />
-                  ) : archivo.estado === "error" ? (
-                    <AlertTriangle className="size-3.5 text-[var(--peligro)]" aria-hidden="true" />
-                  ) : (
-                    <Clock className="size-3.5 text-[var(--texto-secundario)]" aria-hidden="true" />
-                  )}
-                  <span className="truncate font-medium">{archivo.nombre}</span>
-                  <span className="text-[var(--texto-secundario)]">
-                    {archivo.estado === "subiendo"
-                      ? `Subiendo ${archivo.progreso}%`
-                      : archivo.estado === "listo"
-                        ? "Listo"
-                        : archivo.estado === "error"
-                          ? archivo.error
-                          : "En espera"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </div>
       ) : null}
 
@@ -685,58 +616,50 @@ export function Expediente({
         </div>
       </Modal>
 
+      {/* Confirmación antes de subir: es el único paso. Después no hay
+          aprobación — el archivo queda en el expediente al instante. */}
       <Modal
-        abierto={aRechazar !== null}
-        titulo="Rechazar documento"
-        cerrar={() => setARechazar(null)}
+        abierto={porConfirmar !== null}
+        titulo={
+          porConfirmar && porConfirmar.archivos.length > 1
+            ? `¿Subir ${porConfirmar.archivos.length} archivos?`
+            : "¿Subir este archivo?"
+        }
+        cerrar={() => setPorConfirmar(null)}
       >
         <p className="text-sm">
-          <strong>{aRechazar?.nombre}</strong> vuelve a quedar pendiente y hay que subir otro
-          archivo. La empresa recibe un aviso; el motivo queda en la línea de tiempo de la carga,
-          así que conviene que diga qué corregir.
+          Se {porConfirmar && porConfirmar.archivos.length > 1 ? "suben" : "sube"} como{" "}
+          <strong>{porConfirmar?.etiqueta}</strong>
+          {porConfirmar ? ` (emitido por ${etiquetaEmisor[porConfirmar.issuedBy].toLowerCase()})` : ""}.
         </p>
-        <label className="mt-3 block text-sm font-medium">
-          Motivo del rechazo
-          <textarea
-            className="mt-1 w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
-            rows={3}
-            maxLength={2000}
-            value={motivoRechazo}
-            onChange={(evento) => setMotivoRechazo(evento.target.value)}
-          />
-        </label>
-
-        {revisar.error ? (
-          <div className="mt-3">
-            <AvisoError error={revisar.error} />
-          </div>
-        ) : null}
-
+        <ul className="mt-3 space-y-1 rounded-md border bg-[var(--hover)] px-3 py-2 text-sm">
+          {porConfirmar?.archivos.map((archivo, indice) => (
+            <li key={`${archivo.name}-${indice}`} className="flex justify-between gap-3">
+              <span className="truncate font-medium">{archivo.name}</span>
+              <span className="shrink-0 text-[var(--texto-secundario)]">
+                {formatearTamano(archivo.size)}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 text-xs text-[var(--texto-secundario)]">
+          Queda disponible en el expediente apenas termina de subir: nadie tiene que aprobarlo.
+        </p>
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
             className="h-10 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
-            onClick={() => setARechazar(null)}
+            onClick={() => setPorConfirmar(null)}
           >
             Cancelar
           </button>
           <button
             type="button"
-            className="h-10 rounded-md bg-[var(--peligro)] px-4 text-sm font-semibold text-white disabled:opacity-60"
-            disabled={revisar.isPending || !motivoRechazo.trim()}
-            onClick={async () => {
-              if (aRechazar) {
-                await revisar.mutateAsync({
-                  requisitoId: aRechazar.requisitoId,
-                  documentoId: aRechazar.documentoId,
-                  decision: "rechazar",
-                  motivo: motivoRechazo.trim(),
-                });
-              }
-              setARechazar(null);
-            }}
+            className="flex h-10 items-center gap-2 rounded-md bg-[var(--mar)] px-4 text-sm font-semibold text-white"
+            onClick={() => void subirConfirmados()}
           >
-            Rechazar
+            <Upload className="size-4" aria-hidden="true" />
+            Subir
           </button>
         </div>
       </Modal>

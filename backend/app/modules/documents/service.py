@@ -34,7 +34,7 @@ from app.modules.documents.validation import (
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments.models import RequirementStatus
-from app.modules.shipments.service import CargaArchivada
+from app.modules.shipments.service import CargaArchivada, _publicar_requisito_resuelto
 
 # Límites por defecto (ADR-0009). Se sobreescriben desde `system_settings`, que
 # SUPER_ADMIN puede editar sin desplegar.
@@ -555,37 +555,50 @@ async def completar(
 
 
 async def marcar_requisito_subido(session: AsyncSession, document_id: UUID) -> None:
-    """El requisito que este documento venía a satisfacer pasa a `UPLOADED`.
+    """El requisito que este documento venía a satisfacer queda cumplido.
 
-    NO pasa a `VERIFIED` (ADR-0003): subir un archivo no equivale a que
-    Operaciones lo haya aceptado. Sigue pendiente de revisión, pero no bloquea
-    ninguna operación. El plan de trabajo decía
-    `FULFILLED` automático; manda el ADR, que es la decisión más nueva.
+    Pasa directo a `VERIFIED` (enmienda de ADR-0003 del 2026-10-08): AMVARMAR
+    pidió que los documentos no tengan que aprobarse. Si un archivo está mal,
+    Operaciones lo quita del expediente y el requisito vuelve a pendiente.
 
     El enlace es por carga y tipo de documento, no por un `requirement_id` que
     el cliente mande: así no puede apuntar su factura al requisito que le
     convenga. Si hubiera varios abiertos del mismo tipo se toma el más viejo.
     """
-    await session.execute(
-        text("""
-            UPDATE shipment_requirements
-            SET status = :subido
-            WHERE id = (
-                SELECT r.id
-                FROM shipment_requirements r
-                JOIN shipment_documents sd
-                  ON sd.shipment_id = r.shipment_id
-                 AND sd.document_type_id = r.document_type_id
-                WHERE sd.document_id = :documento
-                  AND r.requirement_type = 'DOCUMENT'
-                  AND r.status IN ('PENDING', 'REJECTED')
-                ORDER BY r.created_at
-                LIMIT 1
-                FOR UPDATE OF r
-            )
-        """),
-        {"subido": RequirementStatus.UPLOADED.value, "documento": document_id},
-    )
+    resuelto = (
+        await session.execute(
+            text("""
+                UPDATE shipment_requirements r
+                SET status = :verificado, verified_document_id = :documento,
+                    reviewed_document_id = :documento,
+                    completed_by = (SELECT uploaded_by FROM documents WHERE id = :documento),
+                    completed_at = now()
+                WHERE r.id = (
+                    SELECT r2.id
+                    FROM shipment_requirements r2
+                    JOIN shipment_documents sd
+                      ON sd.shipment_id = r2.shipment_id
+                     AND sd.document_type_id = r2.document_type_id
+                    WHERE sd.document_id = :documento
+                      AND r2.requirement_type = 'DOCUMENT'
+                      AND r2.status IN ('PENDING', 'REJECTED', 'UPLOADED')
+                    ORDER BY r2.created_at
+                    LIMIT 1
+                    FOR UPDATE OF r2
+                )
+                RETURNING r.id, r.shipment_id
+            """),
+            {"verificado": RequirementStatus.VERIFIED.value, "documento": document_id},
+        )
+    ).one_or_none()
+
+    if resuelto is not None:
+        await _publicar_requisito_resuelto(
+            session,
+            shipment_id=resuelto.shipment_id,
+            requirement_id=resuelto.id,
+            estado=RequirementStatus.VERIFIED.value,
+        )
 
 
 _BYTES_CABECERA = 8192
