@@ -26,6 +26,7 @@ from app.modules.copilot import base_de_conocimiento, historial
 from app.modules.dispatches import queries as dispatches_queries
 from app.modules.documents.service import expediente
 from app.modules.rbac.service import PermisosEfectivos
+from app.modules.shipments.models import ShipmentStatus
 from app.modules.shipments.queries import (
     FiltrosListado,
     alcance_de_lectura,
@@ -170,8 +171,20 @@ async def mis_pendientes(
             return bool(fila.requisitos_del_cliente > 0)
         return bool(fila.requisitos_abiertos > 0)
 
+    # Todo lo almacenado en Miami, tenga o no documentos sugeridos: la
+    # descripción de la herramienta lo prometía y no lo devolvía, así que a
+    # "¿qué puedo despachar?" AMVI contestaba solo con las que tenían algo
+    # pendiente.
+    listas = await listar_shipments(
+        session,
+        permisos=permisos,
+        filtros=FiltrosListado(estados=[ShipmentStatus.STORED.value], tipo_origen="MIAMI"),
+        limite=_LIMITE_MIS_PENDIENTES,
+    )
+
     return {
         "pendientes": [_resumen_carga(f) for f in pagina.items if _pendiente(f)],
+        "listas_para_despachar": [_resumen_carga(f) for f in listas.items],
     }
 
 
