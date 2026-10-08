@@ -2,7 +2,9 @@
 
 <!-- palabras_clave: solicitar despacho, pedir despacho, pido, pedir, solicito, quiero despachar, nuevo despacho, despachar cargas, sacar cargas de bodega, retirar mercaderia, maritimo, aereo, terrestre -->
 
-Andá a **Despachos → Solicitar despacho** y elegí una o más cargas de la misma empresa.
+La forma más directa: en **Miami → Inventario en Miami** marcá las cargas almacenadas que querés
+despachar y tocá **Solicitar despacho**. También podés ir a **Despachos → Solicitar despacho** y elegirlas
+ahí. Cada carga aparece con su WR y su factura.
 
 - Las cargas de Miami se pueden incluir cuando están `STORED` (almacenadas). Los reportes de tránsito
   no se pueden despachar.

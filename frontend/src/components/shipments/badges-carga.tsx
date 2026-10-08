@@ -18,16 +18,32 @@ const estiloEstado: Record<EstadoCarga, string> = {
   CANCELLED: "bg-[var(--peligro-tenue)] text-[var(--peligro)]",
 };
 
-export function BadgeEstado({ estado }: { estado: string }) {
+export function BadgeEstado({
+  estado,
+  ubicacion,
+}: {
+  estado: string;
+  /** Vista del cliente: dónde está la carga ("En Miami"). El estado exacto
+   * queda debajo, chico, para quien quiera el detalle. */
+  ubicacion?: string;
+}) {
   const estadoValido = esEstadoCarga(estado) ? estado : null;
-  return (
+  const etiqueta = estadoValido ? etiquetaEstado[estadoValido] : estado;
+  const badge = (
     <span
       className={clases(
         "inline-flex min-h-7 items-center rounded px-2.5 py-1 text-xs font-bold whitespace-nowrap",
         estadoValido ? estiloEstado[estadoValido] : "bg-[var(--hover)] text-[var(--texto-secundario)]",
       )}
     >
-      {estadoValido ? etiquetaEstado[estadoValido] : estado}
+      {ubicacion ?? etiqueta}
+    </span>
+  );
+  if (!ubicacion) return badge;
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5">
+      {badge}
+      <span className="text-[11px] text-[var(--texto-secundario)]">{etiqueta}</span>
     </span>
   );
 }

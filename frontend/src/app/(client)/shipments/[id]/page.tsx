@@ -29,6 +29,7 @@ import { EstadoExplicado } from "@/components/shipments/estado-explicado";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useSesion } from "@/features/auth/contexto-sesion";
 import { identificadorCarga } from "@/features/shipments/identificador";
+import { ubicacionParaCliente } from "@/features/shipments/vocabulario";
 import { useActualizarDatosTransito } from "@/features/shipments/consultas";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
@@ -182,14 +183,20 @@ export default function PaginaDetalleCarga() {
   return (
     <div className="space-y-8">
       <header className="border-b pb-6">
-        <Link href="/shipments" className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-[var(--mar)] hover:underline">
+        <Link
+          href={carga.origin_kind === "TRANSIT" ? "/transito" : "/miami"}
+          className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-[var(--mar)] hover:underline"
+        >
           <ArrowLeft className="size-4" aria-hidden="true" />
-          Cargas
+          {carga.origin_kind === "TRANSIT" ? "Reportes de tránsito" : "Miami"}
         </Link>
         <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <BadgeEstado estado={carga.status} />
+              <BadgeEstado
+                estado={carga.status}
+                ubicacion={esCliente ? ubicacionParaCliente(carga) : undefined}
+              />
               <BadgePendientes
                 cantidad={pendientes}
                 etiqueta={esCliente && !esTransito ? "sugerido" : "pendiente"}

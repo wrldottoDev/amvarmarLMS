@@ -12,7 +12,8 @@ import {
 } from "@/features/shipments/columnas";
 import type { CargaResumen } from "@/lib/api/tipos";
 import { clases, formatearFecha } from "@/lib/utilidades";
-import { identificadorCarga } from "@/features/shipments/identificador";
+import { identificadorCarga, identificadorConFactura } from "@/features/shipments/identificador";
+import { ubicacionParaCliente } from "@/features/shipments/vocabulario";
 
 /**
  * Cómo se identifica una carga en pantalla.
@@ -37,6 +38,7 @@ export function ListadoCargas({
   seleccionadas,
   alternarSeleccion,
   alternarTodas,
+  esSeleccionable = () => true,
   tipoOrigen,
 }: {
   cargas: CargaResumen[];
@@ -48,6 +50,8 @@ export function ListadoCargas({
   seleccionadas?: ReadonlySet<string>;
   alternarSeleccion?: (carga: CargaResumen) => void;
   alternarTodas?: () => void;
+  /** Filas que no se pueden marcar (en el inventario, lo que no está almacenado). */
+  esSeleccionable?: (carga: CargaResumen) => boolean;
   tipoOrigen?: "MIAMI" | "TRANSIT";
 }) {
   const { data: preferencia } = usePreferenciaColumnas();
@@ -64,7 +68,9 @@ export function ListadoCargas({
     tipoOrigen,
   );
   const seleccionHabilitada = Boolean(seleccionadas && alternarSeleccion && alternarTodas);
-  const todasSeleccionadas = cargas.length > 0 && cargas.every((carga) => seleccionadas?.has(carga.id));
+  const marcables = cargas.filter(esSeleccionable);
+  const todasSeleccionadas =
+    marcables.length > 0 && marcables.every((carga) => seleccionadas?.has(carga.id));
 
   return (
     <>
@@ -104,7 +110,7 @@ export function ListadoCargas({
                 >
                   {seleccionHabilitada ? (
                     <td className="px-4 py-3.5">
-                      <input type="checkbox" className="size-4 accent-[var(--mar)]" checked={seleccionadas?.has(carga.id) ?? false} onChange={() => alternarSeleccion?.(carga)} aria-label={`Seleccionar carga ${referencia(carga)}`} />
+                      <input type="checkbox" className="size-4 accent-[var(--mar)] disabled:opacity-30" disabled={!esSeleccionable(carga)} checked={seleccionadas?.has(carga.id) ?? false} onChange={() => alternarSeleccion?.(carga)} aria-label={`Seleccionar carga ${referencia(carga)}`} />
                     </td>
                   ) : null}
                   {columnas.map((clave) => (
@@ -147,17 +153,19 @@ export function ListadoCargas({
               )}
             >
               {seleccionHabilitada ? (
-                <input type="checkbox" className="size-4 shrink-0 accent-[var(--mar)]" checked={seleccionadas?.has(carga.id) ?? false} onChange={() => alternarSeleccion?.(carga)} aria-label={`Seleccionar carga ${referencia(carga)}`} />
+                <input type="checkbox" className="size-4 shrink-0 accent-[var(--mar)] disabled:opacity-30" disabled={!esSeleccionable(carga)} checked={seleccionadas?.has(carga.id) ?? false} onChange={() => alternarSeleccion?.(carga)} aria-label={`Seleccionar carga ${referencia(carga)}`} />
               ) : null}
               <Link href={`/shipments/${carga.id}`} className="min-w-0 flex-1">
-                <strong className="block text-sm">{referencia(carga)}</strong>
+                <strong className="block text-sm">{identificadorConFactura(carga)}</strong>
                 <span className="block text-xs text-[var(--texto-secundario)]">
                   {tipoOrigen === "TRANSIT"
                     ? `${carga.shipper || "Proveedor sin indicar"} · ETA ${formatearFecha(carga.estimated_arrival_at)}`
                     : `${carga.origin.location_code} → ${carga.destination.location_code} · ${formatearFecha(carga.created_at)}`}
                 </span>
               </Link>
-              {soloLectura ? (
+              {esCliente ? (
+                <BadgeEstado estado={carga.status} ubicacion={ubicacionParaCliente(carga)} />
+              ) : soloLectura ? (
                 <BadgeEstado estado={carga.status} />
               ) : (
                 <TransicionCarga
@@ -208,6 +216,9 @@ function Celda({
   }
 
   if (clave === "estado") {
+    if (esCliente) {
+      return <BadgeEstado estado={carga.status} ubicacion={ubicacionParaCliente(carga)} />;
+    }
     return soloLectura ? (
       <BadgeEstado estado={carga.status} />
     ) : (

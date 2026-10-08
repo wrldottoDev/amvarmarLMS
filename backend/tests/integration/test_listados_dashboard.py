@@ -652,11 +652,31 @@ class TestEstadoYPendientesSeparados:
 
 
 class TestDashboard:
-    async def test_las_tarjetas_cuentan_por_estado(self, session: AsyncSession, redis) -> None:
+    async def _a_miami(self, session: AsyncSession, ctx: dict, carga: uuid.UUID) -> None:
+        """La carga sale de una bodega que emite WR: es de Miami."""
+        await session.execute(
+            text("""
+                WITH bodega AS (
+                    INSERT INTO facilities
+                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                    VALUES (:o, :cod, 'WAREHOUSE', true) RETURNING id
+                )
+                UPDATE shipments SET origin_facility_id = (SELECT id FROM bodega) WHERE id = :s
+            """),
+            {"o": ctx["origen"], "cod": f"BOD-{uuid.uuid4().hex[:6]}", "s": carga},
+        )
+
+    async def test_una_tarjeta_por_seccion_del_menu(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
-        await _carga(session, ctx, estado=ShipmentStatus.RECEIVED)
-        await _carga(session, ctx, estado=ShipmentStatus.STORED)
-        await _carga(session, ctx, estado=ShipmentStatus.IN_TRANSIT)
+        for estado in (
+            ShipmentStatus.IN_TRANSIT,
+            ShipmentStatus.RECEIVED,
+            ShipmentStatus.STORED,
+        ):
+            await self._a_miami(session, ctx, await _carga(session, ctx, estado=estado))
+        await _carga(session, ctx, estado=ShipmentStatus.BOOKING_ASSIGNED)
+        await _carga(session, ctx, estado=ShipmentStatus.TRANSSHIPMENT)
+        await _carga(session, ctx, estado=ShipmentStatus.DISPATCH_REQUESTED)
 
         tarjetas = await queries.tarjetas_dashboard(
             session,
@@ -664,52 +684,12 @@ class TestDashboard:
             solo_del_cliente=False,
         )
 
-        assert tarjetas.en_bodega == 2
-        assert tarjetas.en_transito == 1
+        assert tarjetas.camino_a_miami == 1
+        assert tarjetas.inventario_miami == 2
+        assert tarjetas.transito_activo == 2
+        assert tarjetas.en_despacho == 1
 
-    async def test_proximos_a_llegar_usa_la_ventana(self, session: AsyncSession, redis) -> None:
-        ctx = await _entorno(session)
-        await _carga(
-            session,
-            ctx,
-            estado=ShipmentStatus.IN_TRANSIT,
-            eta=datetime.now(UTC) + timedelta(days=3),
-        )
-        await _carga(
-            session,
-            ctx,
-            estado=ShipmentStatus.IN_TRANSIT,
-            eta=datetime.now(UTC) + timedelta(days=90),
-        )
-
-        tarjetas = await queries.tarjetas_dashboard(
-            session,
-            permisos=await _permisos(session, redis, ctx["operaciones"]),
-            solo_del_cliente=False,
-        )
-
-        assert tarjetas.proximos_a_llegar == 1
-
-    async def test_una_carga_terminal_no_cuenta_como_proxima(
-        self, session: AsyncSession, redis
-    ) -> None:
-        ctx = await _entorno(session)
-        await _carga(
-            session,
-            ctx,
-            estado=ShipmentStatus.DELIVERED,
-            eta=datetime.now(UTC) + timedelta(days=2),
-        )
-
-        tarjetas = await queries.tarjetas_dashboard(
-            session,
-            permisos=await _permisos(session, redis, ctx["operaciones"]),
-            solo_del_cliente=False,
-        )
-
-        assert tarjetas.proximos_a_llegar == 0
-
-    async def test_entregados_este_mes(self, session: AsyncSession, redis) -> None:
+    async def test_completadas_este_mes(self, session: AsyncSession, redis) -> None:
         ctx = await _entorno(session)
         await _carga(session, ctx, estado=ShipmentStatus.DELIVERED, entregada_el=datetime.now(UTC))
         await _carga(
@@ -718,6 +698,11 @@ class TestDashboard:
             estado=ShipmentStatus.DELIVERED,
             entregada_el=datetime.now(UTC) - timedelta(days=95),
         )
+        en_destino = await _carga(session, ctx, estado=ShipmentStatus.AT_DESTINATION)
+        await session.execute(
+            text("UPDATE shipments SET actual_arrival_at = now() WHERE id = :s"),
+            {"s": en_destino},
+        )
 
         tarjetas = await queries.tarjetas_dashboard(
             session,
@@ -725,7 +710,7 @@ class TestDashboard:
             solo_del_cliente=False,
         )
 
-        assert tarjetas.entregados_este_mes == 1
+        assert tarjetas.completadas_este_mes == 2
 
     async def test_requieren_accion_distingue_cliente_de_operaciones(
         self, session: AsyncSession, redis
@@ -768,7 +753,7 @@ class TestDashboard:
             solo_del_cliente=True,
         )
 
-        assert tarjetas.en_transito == 1
+        assert tarjetas.transito_activo == 1
 
     async def test_proximos_movimientos_ordena_por_llegada(
         self, session: AsyncSession, redis

@@ -2,30 +2,33 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertCircle,
   ArrowRight,
-  CalendarClock,
   CheckCircle2,
+  PlaneLanding,
   RefreshCw,
   Ship,
+  Truck,
   Warehouse,
 } from "lucide-react";
 import Link from "next/link";
 import { BadgeEstado, BadgePendientes } from "@/components/shipments/badges-carga";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { CargandoPagina, EstadoVacio } from "@/components/ui/estados-pagina";
-import { identificadorCarga } from "@/features/shipments/identificador";
+import { identificadorConFactura } from "@/features/shipments/identificador";
+import { ubicacionParaCliente } from "@/features/shipments/vocabulario";
 import { api, exigirDatos } from "@/lib/api/client";
 import { formatearFecha } from "@/lib/utilidades";
 
 type VistaDashboard = "client" | "operations";
 
+// Una tarjeta por sección del menú, y cada una lleva a su sección: como el
+// panel del sistema viejo, que mostraba cuánto había y dejaba entrar directo.
 const tarjetas = [
-  { clave: "en_bodega", etiqueta: "En bodega", icono: Warehouse, estilo: "bg-[var(--marca-tenue)] text-[var(--mar)]" },
-  { clave: "en_transito", etiqueta: "En tránsito", icono: Ship, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
-  { clave: "proximos_a_llegar", etiqueta: "Próximos a llegar", icono: CalendarClock, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
-  { clave: "requieren_accion", etiqueta: "Requieren acción", icono: AlertCircle, estilo: "bg-[var(--advertencia-tenue)] text-[var(--advertencia)]" },
-  { clave: "entregados_este_mes", etiqueta: "Entregados este mes", icono: CheckCircle2, estilo: "bg-[var(--exito-tenue)] text-[var(--exito)]" },
+  { clave: "camino_a_miami", etiqueta: "En camino a Miami", enlace: "/miami?vista=camino", icono: PlaneLanding, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
+  { clave: "inventario_miami", etiqueta: "Inventario en Miami", enlace: "/miami?vista=inventario", icono: Warehouse, estilo: "bg-[var(--marca-tenue)] text-[var(--mar)]" },
+  { clave: "en_despacho", etiqueta: "En despacho", enlace: "/despachos", icono: Truck, estilo: "bg-[var(--advertencia-tenue)] text-[var(--advertencia)]" },
+  { clave: "transito_activo", etiqueta: "Reportes de tránsito", enlace: "/transito", icono: Ship, estilo: "bg-[var(--marca-tenue)] text-[var(--marca-oscura)]" },
+  { clave: "completadas_este_mes", etiqueta: "Completadas este mes", enlace: "/shipments/historial", icono: CheckCircle2, estilo: "bg-[var(--exito-tenue)] text-[var(--exito)]" },
 ] as const;
 
 export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titulo: string }) {
@@ -63,7 +66,7 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
         {tarjetas.map((tarjeta) => {
           const Icono = tarjeta.icono;
           return (
-            <article key={tarjeta.clave} className="min-h-32 rounded-lg border bg-[var(--superficie)] p-4 shadow-sm last:col-span-2 xl:last:col-span-1">
+            <Link key={tarjeta.clave} href={tarjeta.enlace} className="min-h-32 rounded-lg border bg-[var(--superficie)] p-4 shadow-sm transition-colors last:col-span-2 hover:border-[var(--mar)] hover:bg-[var(--hover)] xl:last:col-span-1">
               <div className="flex items-start justify-between gap-3">
                 <span className={`grid size-9 place-items-center rounded-md ${tarjeta.estilo}`}>
                   <Icono className="size-4" aria-hidden="true" />
@@ -71,7 +74,7 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
                 <strong className="text-2xl font-bold tabular-nums">{consulta.data.tarjetas[tarjeta.clave]}</strong>
               </div>
               <p className="mt-5 text-sm font-medium text-[var(--texto-secundario)]">{tarjeta.etiqueta}</p>
-            </article>
+            </Link>
           );
         })}
       </section>
@@ -103,7 +106,7 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-[var(--mar)]">
-                      {identificadorCarga(carga)}
+                      {identificadorConFactura(carga)}
                     </p>
                   </div>
                   <div className="min-w-0 text-sm">
@@ -112,7 +115,10 @@ export function DashboardCargas({ vista, titulo }: { vista: VistaDashboard; titu
                   </div>
                   <p className="text-sm"><span className="mr-1 text-xs text-[var(--texto-secundario)]">ETA</span>{formatearFecha(carga.estimated_arrival_at)}</p>
                   <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                    <BadgeEstado estado={carga.status} />
+                    <BadgeEstado
+                      estado={carga.status}
+                      ubicacion={vista === "client" ? ubicacionParaCliente(carga) : undefined}
+                    />
                     <BadgePendientes
                       cantidad={pendientes}
                       etiqueta={vista === "client" ? "sugerido" : "pendiente"}

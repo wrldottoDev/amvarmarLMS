@@ -17,6 +17,10 @@ export function columnaPermitida(
 ) {
   if (esCliente && ocultasCliente.has(columna)) return false;
   if (esCliente && tipoOrigen === "TRANSIT" && columna === "invoice") return false;
+  // BL, AMVAR y FCL/LCL son de los reportes de tránsito: en Miami solo confunden.
+  if (esCliente && tipoOrigen === "MIAMI" && ["bl", "amvar", "tipo_carga"].includes(columna)) {
+    return false;
+  }
   if (tipoOrigen === "TRANSIT" && columna === "fecha") return false;
   if (tipoOrigen !== "TRANSIT" && columna === "eta") return false;
   return true;
@@ -34,6 +38,7 @@ export function columnasParaListado(
 
   if (esCliente && !resultado.includes("bl")) resultado.splice(1, 0, "bl");
   if (!resultado.includes("shipper")) resultado.push("shipper");
+  if (!resultado.includes("tipo_carga")) resultado.push("tipo_carga");
   if (!resultado.includes("eta")) resultado.push("eta");
   return resultado;
 }
@@ -74,6 +79,7 @@ export const contenidoColumna: Record<string, (carga: CargaResumen) => string> =
   invoice: (c) => c.invoice || "—",
   bl: (c) => c.bl || "—",
   amvar: (c) => c.amvar || "—",
+  tipo_carga: (c) => c.load_type || "—",
   estado: (c) => c.status,
   shipper: (c) => c.shipper || "—",
   carrier: (c) => c.carrier || "—",

@@ -32,6 +32,7 @@ COLUMNAS_CARGAS: list[DefinicionColumna] = [
     DefinicionColumna("invoice", "Invoice #"),
     DefinicionColumna("bl", "BL"),
     DefinicionColumna("amvar", "Número AMVAR"),
+    DefinicionColumna("tipo_carga", "Tipo"),
     DefinicionColumna("estado", "Estado", fija=True),
     DefinicionColumna("shipper", "Proveedor"),
     DefinicionColumna("carrier", "Carrier"),
