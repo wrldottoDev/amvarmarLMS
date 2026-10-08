@@ -1,15 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import PaginaCargas from "@/app/(client)/shipments/page";
+import { PestanasVista } from "@/components/shipments/pestanas-vista";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import type { EstadoCarga } from "@/lib/api/tipos";
-import { clases } from "@/lib/utilidades";
 
 /**
- * Miami en tres pestañas, en el orden en que la carga avanza. El sistema viejo
+ * Miami en cuatro pestañas, en el orden en que la carga avanza. El sistema viejo
  * separaba "todo lo activo" de "lo que puedo despachar"; mezclarlo en una sola
  * lista era lo que los clientes no entendían.
  */
@@ -29,8 +28,15 @@ const PESTANAS: { clave: string; titulo: string; ayuda: string; estados: EstadoC
   {
     clave: "despacho",
     titulo: "En despacho",
-    ayuda: "Cargas con un despacho pedido o en preparación. Lo despachado pasa al Historial.",
+    ayuda: "Cargas con un despacho pedido o en preparación. Lo despachado pasa a «Despachos completados».",
     estados: ["DISPATCH_REQUESTED", "PREPARING"],
+  },
+  {
+    // Todas, también las archivadas: Historial las sigue mostrando junto a tránsito.
+    clave: "completados",
+    titulo: "Despachos completados",
+    ayuda: "Cargas de Miami ya despachadas o entregadas.",
+    estados: ["DISPATCHED", "AT_DESTINATION", "DELIVERED"],
   },
 ];
 
@@ -53,27 +59,15 @@ function ContenidoMiami() {
       tipoOrigen="MIAMI"
       estadosVista={actual.estados}
       seleccionParaDespacho={actual.clave === "inventario"}
+      incluirArchivadas={actual.clave === "completados"}
       encabezado={
-        <div className="space-y-2">
-          <nav className="flex gap-1 border-b" aria-label="Secciones de Miami">
-            {PESTANAS.map((pestana) => (
-              <Link
-                key={pestana.clave}
-                href={`/miami?vista=${pestana.clave}`}
-                aria-current={pestana.clave === actual.clave ? "page" : undefined}
-                className={clases(
-                  "-mb-px border-b-2 px-4 py-2 text-sm font-semibold",
-                  pestana.clave === actual.clave
-                    ? "border-[var(--mar)] text-[var(--mar)]"
-                    : "border-transparent text-[var(--texto-secundario)] hover:text-[var(--texto)]",
-                )}
-              >
-                {pestana.titulo}
-              </Link>
-            ))}
-          </nav>
-          <p className="text-sm text-[var(--texto-secundario)]">{actual.ayuda}</p>
-        </div>
+        <PestanasVista
+          ruta="/miami"
+          etiqueta="Secciones de Miami"
+          pestanas={PESTANAS}
+          actual={actual.clave}
+          ayuda={actual.ayuda}
+        />
       }
     />
   );

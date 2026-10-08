@@ -184,7 +184,17 @@ export default function PaginaDetalleCarga() {
     <div className="space-y-8">
       <header className="border-b pb-6">
         <Link
-          href={carga.origin_kind === "TRANSIT" ? "/transito" : "/miami"}
+          href={
+            carga.origin_kind === "TRANSIT"
+              ? carga.status === "AT_DESTINATION" || carga.status === "DELIVERED"
+                ? "/transito?vista=destino"
+                : "/transito"
+              : carga.status === "DISPATCHED" ||
+                  carga.status === "AT_DESTINATION" ||
+                  carga.status === "DELIVERED"
+                ? "/miami?vista=completados"
+                : "/miami"
+          }
           className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-[var(--mar)] hover:underline"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />
