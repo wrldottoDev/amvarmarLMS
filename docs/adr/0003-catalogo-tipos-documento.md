@@ -94,3 +94,19 @@ Operaciones.
   pendientes de Operaciones" — `open_requirements_count` tal como está definido en el documento de arquitectura
   no separa por actor responsable; hace falta un campo adicional (ej. `pending_actor`) o un conteo separado
   para no mostrarle al cliente pendientes que en realidad debe resolver Operaciones (packing list, BL).
+
+## Enmienda — subir un documento lo deja cumplido (2026-10-08)
+
+Pedido de AMVARMAR: los documentos ya no se aprueban. Cuando el worker
+confirma los bytes de un archivo (`READY`), el requisito documental que viene a
+cumplir pasa directo a `VERIFIED`, con `verified_document_id` y `completed_by`
+de quien lo subió, y se publica `shipment.requirement_resolved` (que puede
+avisar "lista para despachar"). `UPLOADED` deja de usarse para cargas nuevas;
+los requisitos viejos en ese estado se muestran como recibidos.
+
+La interfaz pide una confirmación antes de subir ("se sube como Factura
+comercial: factura.pdf, 1,2 MB") y después muestra el avance y "Subido y
+disponible". Ya no hay botones Aprobar/Rechazar. Si un archivo está mal,
+Operaciones lo quita del expediente (invalidación, con motivo) y el requisito
+vuelve a pendiente. Los endpoints de verificar y rechazar siguen existiendo
+para la API, pero la interfaz no los usa.

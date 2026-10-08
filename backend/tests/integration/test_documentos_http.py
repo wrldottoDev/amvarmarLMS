@@ -493,14 +493,12 @@ class TestFlujoCompleto:
             archivo = await directo.get(descarga.json()["url"])
         assert archivo.content == contenido
 
-    async def test_subir_mueve_el_requisito_a_uploaded_pero_no_lo_satisface(
+    async def test_subir_cumple_el_requisito_sin_aprobacion(
         self, cliente: httpx.AsyncClient, entorno: dict, db_directa: AsyncSession
     ) -> None:
-        """Paso 3.4 + ADR-0003.
-
-        Subir el archivo NO cierra el requisito: queda en `UPLOADED` hasta que
-        Operaciones lo verifique, aunque ese estado nunca bloquea el despacho.
-        """
+        """ADR-0003, enmienda del 2026-10-08: subir el archivo cumple el
+        requisito, sin que Operaciones tenga que aprobarlo. Pero recién cuando
+        el worker confirmó todos los bytes, no al reservar ni al completar."""
         cabeceras = await _autenticar(cliente, entorno["email"])
 
         requisito = (
@@ -552,7 +550,18 @@ class TestFlujoCompleto:
         assert await _estado_requisito(db_directa, requisito) == "PENDING"
         await _procesar_documento(db_directa, presign["document_id"])
 
-        assert await _estado_requisito(db_directa, requisito) == "UPLOADED"
+        assert await _estado_requisito(db_directa, requisito) == "VERIFIED"
+        resuelto = (
+            await db_directa.execute(
+                text("""
+                    SELECT count(*) FROM outbox_events
+                    WHERE event_type = 'shipment.requirement_resolved'
+                      AND payload ->> 'requirement_id' = :r
+                """),
+                {"r": str(requisito)},
+            )
+        ).scalar_one()
+        assert resuelto == 1
 
     async def test_completar_con_contenido_que_no_coincide(
         self, cliente: httpx.AsyncClient, entorno: dict
@@ -751,8 +760,8 @@ class TestExpediente:
         ).json()
 
         assert cuerpo["requisitos"][0]["document_id"] == presign["document_id"]
-        # Subir NO satisface el requisito (ADR-0003): queda en revisión.
-        assert cuerpo["requisitos"][0]["status"] == "UPLOADED"
+        # Subir cumple el requisito (ADR-0003, enmienda 2026-10-08).
+        assert cuerpo["requisitos"][0]["status"] == "VERIFIED"
 
     async def test_no_devuelve_el_expediente_de_otra_empresa(
         self, cliente: httpx.AsyncClient, entorno: dict

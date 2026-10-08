@@ -207,7 +207,7 @@ function FormularioDespacho() {
                 <strong className="block text-sm">2. Documentos opcionales</strong>
                 <span className="text-xs text-[var(--texto-secundario)]">
                   Nos ayudaría que subieras estos documentos, pero podés continuar sin ellos.
-                  Operaciones los revisará si decidís adjuntarlos.
+                  Lo que subas queda en el expediente al instante.
                 </span>
               </div>
               {cargasElegidas.map((carga) => (

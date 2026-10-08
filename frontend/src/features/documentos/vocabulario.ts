@@ -13,14 +13,16 @@ export const estadoRequisito: Record<
     explicacion: "Todavía no lo recibimos.",
     tono: "falta",
   },
+  // Subir ya no necesita aprobación (2026-10-08). UPLOADED queda solo en
+  // requisitos viejos, de antes del cambio: se muestran igual que los nuevos.
   UPLOADED: {
-    etiqueta: "En revisión",
-    explicacion: "Lo recibimos y Operaciones lo está revisando.",
-    tono: "espera",
+    etiqueta: "Recibido",
+    explicacion: "Ya está en el expediente.",
+    tono: "listo",
   },
   VERIFIED: {
-    etiqueta: "Aprobado",
-    explicacion: "Revisado y aceptado.",
+    etiqueta: "Recibido",
+    explicacion: "Ya está en el expediente.",
     tono: "listo",
   },
   REJECTED: {
