@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchAutenticado } from "@/lib/api/client";
+import { api, exigirDatos, fetchAutenticado } from "@/lib/api/client";
 
 // `openapi-fetch` no transmite un cuerpo en streaming (ADR-0012); este hook
 // habla SSE directo contra el mismo backend que usa el resto de la API.
@@ -11,7 +11,14 @@ const baseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "");
 export interface MensajeConversacion {
   rol: "user" | "assistant";
   contenido: string;
+  /** Guardado en el historial: con el id se puede calificar (👍/👎). */
+  id?: string;
+  feedback?: number | null;
 }
+
+/** El backend acepta hasta 20 mensajes por turno: una conversación retomada
+ * larga manda solo lo último, que es lo que el modelo necesita para seguir. */
+const MAXIMO_MENSAJES_POR_TURNO = 20;
 
 export interface EstadoHerramienta {
   nombre: string;
@@ -104,9 +111,9 @@ export function leerCampoSSE(
 }
 
 /**
- * El chat no se persiste (ADR-0012): `mensajes` vive solo en este hook, y se
- * pierde al cerrar el panel o recargar. Cada turno reenvía la conversación
- * completa porque el backend tampoco la retiene (`store=false`).
+ * Cada turno reenvía la conversación completa porque el proveedor no la
+ * retiene (`store=false`). El backend sí la guarda (ADR-0012, enmienda
+ * 2026-10-08): se puede retomar con `retomar()` y calificar cada respuesta.
  */
 export function useChatAsistente() {
   const [mensajes, setMensajes] = useState<MensajeConversacion[]>([]);
@@ -137,13 +144,17 @@ export function useChatAsistente() {
       const controlador = new AbortController();
       controladorRef.current = controlador;
       let textoRespuesta = "";
+      let idGuardado: string | undefined;
 
       try {
         const respuesta = await fetchAutenticado(`${baseUrl}/api/v1/copilot/respond`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            mensajes: historial,
+            // Solo rol y contenido: el id y la calificación son de la interfaz.
+            mensajes: historial
+              .slice(-MAXIMO_MENSAJES_POR_TURNO)
+              .map(({ rol, contenido }) => ({ rol, contenido })),
             conversacion_id: conversacionIdRef.current,
             contexto_pagina: { ruta },
             ...(adjunto ? { adjunto } : {}),
@@ -186,6 +197,8 @@ export function useChatAsistente() {
             } else if (campo.evento === "propuesta") {
               const propuesta = campo.datos as unknown as PropuestaAccion;
               setPropuestas((previas) => [...previas, { posicion: posicionAncla, propuesta }]);
+            } else if (campo.evento === "guardado") {
+              idGuardado = campo.datos.mensaje_id as string;
             } else if (campo.evento === "error") {
               setError({ code: campo.datos.code as string, message: campo.datos.message as string });
             }
@@ -203,7 +216,10 @@ export function useChatAsistente() {
         setHerramientasActivas([]);
         controladorRef.current = null;
         if (textoRespuesta) {
-          setMensajes((previos) => [...previos, { rol: "assistant", contenido: textoRespuesta }]);
+          setMensajes((previos) => [
+            ...previos,
+            { rol: "assistant", contenido: textoRespuesta, id: idGuardado, feedback: null },
+          ]);
         }
       }
     },
@@ -222,8 +238,50 @@ export function useChatAsistente() {
     conversacionIdRef.current = crypto.randomUUID();
   }, []);
 
+  /** Abre una conversación del historial y sigue desde ahí. */
+  const retomar = useCallback(async (conversacion: { id: string; client_key: string }) => {
+    controladorRef.current?.abort();
+    const guardados = exigirDatos(
+      await api.GET("/api/v1/copilot/conversations/{conversation_id}", {
+        params: { path: { conversation_id: conversacion.id } },
+      }),
+    );
+    setMensajes(
+      guardados.map((m) => ({
+        rol: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+        contenido: m.content,
+        id: m.id,
+        feedback: m.feedback,
+      })),
+    );
+    setPropuestas([]);
+    setError(null);
+    setEnviando(false);
+    conversacionIdRef.current = conversacion.client_key;
+  }, []);
+
+  const calificar = useCallback(
+    async (id: string, valor: 1 | -1, comentario?: string) => {
+      // Optimista: el ícono cambia al instante; si falla, vuelve.
+      const anterior = mensajes.find((m) => m.id === id)?.feedback ?? null;
+      setMensajes((previos) => previos.map((m) => (m.id === id ? { ...m, feedback: valor } : m)));
+      const { error: fallo } = await api.POST("/api/v1/copilot/messages/{message_id}/feedback", {
+        params: { path: { message_id: id } },
+        body: { valor, comentario: comentario?.trim() || null },
+      });
+      if (fallo) {
+        setMensajes((previos) =>
+          previos.map((m) => (m.id === id ? { ...m, feedback: anterior } : m)),
+        );
+      }
+    },
+    [mensajes],
+  );
+
   return {
     mensajes,
+    retomar,
+    calificar,
     enviando,
     herramientasActivas,
     propuestas,

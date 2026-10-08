@@ -109,15 +109,19 @@ def _palabras_clave_de(entrada: EntradaConocimiento) -> frozenset[str]:
     return frozenset(palabras)
 
 
-def buscar(tema: str) -> EntradaConocimiento | None:
+def buscar(tema: str, extras: tuple[EntradaConocimiento, ...] = ()) -> EntradaConocimiento | None:
     """La entrada que más raíces comparte con `tema` (bolsa de palabras, no
     frase exacta). `None` si ninguna comparte al menos una — un empate se
     resuelve por orden alfabético de archivo, para que el resultado sea el
-    mismo en cada corrida."""
+    mismo en cada corrida.
+
+    `extras` son las guías que escribió Operaciones desde la pantalla de
+    aprendizaje (`historial.guias_curadas`): compiten igual que las de los
+    archivos, y en un empate gana la del archivo."""
     palabras_tema = _palabras(tema)
     mejor: EntradaConocimiento | None = None
     mejor_puntaje = 0
-    for entrada in _entradas():
+    for entrada in (*_entradas(), *extras):
         puntaje = len(palabras_tema & _palabras_clave_de(entrada))
         if puntaje > mejor_puntaje:
             mejor, mejor_puntaje = entrada, puntaje

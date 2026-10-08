@@ -191,11 +191,20 @@ class ProponerCambioEstadoArgs(BaseModel):
     )
     # Solo el ingreso a bodega (ADR-0012, enmienda 2026-09-24): son los avances
     # que no piden justificación. Despacho y entrega siguen su propio flujo.
-    estado_destino: Literal["IN_TRANSIT", "RECEIVED", "STORED"] = Field(
+    estado_destino: Literal[
+        "IN_TRANSIT",
+        "RECEIVED",
+        "STORED",
+        "BOOKING_ASSIGNED",
+        "TRANSSHIPMENT",
+        "AT_DESTINATION",
+    ] = Field(
         description=(
-            "IN_TRANSIT (en tránsito), RECEIVED (recibida, ya en bodega) o "
-            "STORED (almacenada). Si la carga está varios estados antes, se "
-            "proponen todos los pasos intermedios."
+            "Ingreso a bodega: IN_TRANSIT (en tránsito), RECEIVED (recibida, ya en "
+            "bodega) o STORED (almacenada). Recorrido marítimo de un reporte de "
+            "tránsito: BOOKING_ASSIGNED (booking asignado), IN_TRANSIT, "
+            "TRANSSHIPMENT (transbordo) o AT_DESTINATION (llegó a destino). Si la "
+            "carga está varios estados antes, se proponen todos los pasos intermedios."
         ),
     )
 

@@ -22,7 +22,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import RecursoNoEncontrado
-from app.modules.copilot import base_de_conocimiento
+from app.modules.copilot import base_de_conocimiento, historial
 from app.modules.dispatches import queries as dispatches_queries
 from app.modules.documents.service import expediente
 from app.modules.rbac.service import PermisosEfectivos
@@ -260,8 +260,14 @@ async def como_hago(
     """`copilot/conocimiento/*.md` (ADR-0012, Fase 3): un tema sin entrada NO
     se contesta con una adivinanza — el system prompt ya instruye no inventar
     datos, y esto aplica la misma regla a la guía de producto."""
-    entrada = base_de_conocimiento.buscar(argumentos["tema"])
+    entrada = base_de_conocimiento.buscar(
+        argumentos["tema"], await historial.guias_curadas(session)
+    )
     if entrada is None:
+        # Lo que AMVI no supo contestar es lo que Operaciones tiene que escribir.
+        await historial.registrar_tema_sin_guia(
+            session, user_id=actor_user_id, tema=str(argumentos["tema"])
+        )
         return {
             "tiene_respuesta": False,
             "mensaje": "Todavía no tengo una guía escrita para eso. Consultá con Operaciones.",

@@ -365,6 +365,18 @@ async def procesar_factura_ocr(
 
 # Ingreso a bodega, en orden. Son los avances que no piden justificación
 # (ADR-0001); lo que sigue a STORED lo mueve el flujo de despachos.
+# Recorrido marítimo de un reporte de tránsito (2026-10-08).
+_RECORRIDO_MARITIMO: tuple[str, ...] = (
+    ShipmentStatus.PRE_ALERT,
+    ShipmentStatus.BOOKING_ASSIGNED,
+    ShipmentStatus.IN_TRANSIT,
+    ShipmentStatus.TRANSSHIPMENT,
+    ShipmentStatus.AT_DESTINATION,
+)
+_SOLO_MARITIMOS = frozenset(
+    {ShipmentStatus.BOOKING_ASSIGNED, ShipmentStatus.TRANSSHIPMENT, ShipmentStatus.AT_DESTINATION}
+)
+
 _INGRESO_A_BODEGA: tuple[str, ...] = (
     ShipmentStatus.PRE_ALERT,
     ShipmentStatus.IN_TRANSIT,
@@ -471,20 +483,22 @@ async def proponer_cambio_estado(
             "motivo": motivo,
         }
 
-    if actual not in _INGRESO_A_BODEGA[:-1] or destino not in _INGRESO_A_BODEGA:
+    secuencia = _RECORRIDO_MARITIMO if {actual, destino} & _SOLO_MARITIMOS else _INGRESO_A_BODEGA
+    if actual not in secuencia[:-1] or destino not in secuencia:
         return sin_propuesta(
             f"La carga está en «{_etiqueta(actual)}». AMVI solo avanza el ingreso a "
-            "bodega (Prealerta, En tránsito, Recibida, Almacenada); lo demás se hace "
-            "desde la carga."
+            "bodega (Prealerta, En tránsito, Recibida, Almacenada) y el recorrido "
+            "marítimo (Booking asignado, Tránsito, Transbordo, En destino); lo demás "
+            "se hace desde la carga."
         )
-    desde_i = _INGRESO_A_BODEGA.index(actual)
-    hasta_i = _INGRESO_A_BODEGA.index(destino)
+    desde_i = secuencia.index(actual)
+    hasta_i = secuencia.index(destino)
     if hasta_i <= desde_i:
         return sin_propuesta(
             f"La carga ya está en «{_etiqueta(actual)}». Retroceder pide una "
             "justificación y se hace desde la carga, no desde AMVI."
         )
-    pasos = list(_INGRESO_A_BODEGA[desde_i + 1 : hasta_i + 1])
+    pasos = list(secuencia[desde_i + 1 : hasta_i + 1])
 
     # El primer paso se valida ya, con el mismo cálculo que la pantalla de
     # transiciones. Los siguientes dependen de lo que abra el primero (por

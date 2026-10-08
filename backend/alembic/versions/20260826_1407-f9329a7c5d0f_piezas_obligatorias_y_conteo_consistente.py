@@ -52,20 +52,23 @@ def upgrade() -> None:
     # No se inventan piezas: nadie sabe cuántos bultos traía una carga que se
     # registró sin desglose, y poner "1 bulto" para que pase el constraint
     # convierte un dato faltante en un dato falso.
-    sin_piezas = conexion.exec_driver_sql("""
+    sin_piezas = (
+        conexion.exec_driver_sql("""
         UPDATE shipments s
         SET legacy_review_required = true
         WHERE s.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM shipment_packages sp WHERE sp.shipment_id = s.id)
           AND NOT s.legacy_review_required
         RETURNING s.shipment_number
-    """).scalars().all()
+    """)
+        .scalars()
+        .all()
+    )
 
     if sin_piezas:
         print(
             f"  AVISO: {len(sin_piezas)} carga(s) sin piezas quedaron marcadas para "
-            f"revisión: {', '.join(sin_piezas[:10])}"
-            + (" …" if len(sin_piezas) > 10 else "")
+            f"revisión: {', '.join(sin_piezas[:10])}" + (" …" if len(sin_piezas) > 10 else "")
         )
 
     # --- 3. Trigger que mantiene el contador ---

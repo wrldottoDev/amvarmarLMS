@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.security.argon2 import hash_password
-from app.main import app
 from app.modules.copilot import executors_escritura
 from app.modules.copilot import provider as copilot_provider
 from app.modules.copilot.acciones import REGISTRO_DE_CONFIRMACION, AccionCopilot
@@ -76,27 +75,6 @@ def _texto(texto: str) -> RespuestaProveedor:
         tokens_entrada=5,
         tokens_salida=5,
     )
-
-
-@pytest.fixture
-def usar_proveedor():
-    """Reemplaza el proveedor real por uno falso solo para el test, y limpia
-    al terminar aunque el test falle."""
-
-    def _usar(proveedor) -> None:
-        app.dependency_overrides[_fabrica_proveedor] = lambda: lambda: proveedor
-
-    yield _usar
-    app.dependency_overrides.pop(_fabrica_proveedor, None)
-
-
-@pytest.fixture(autouse=True)
-def _breaker_limpio():
-    """El circuit breaker es estado de módulo — sin esto, un test que lo abre
-    dejaría el siguiente empezando ya degradado."""
-    copilot_provider._reiniciar_breaker_para_pruebas()
-    yield
-    copilot_provider._reiniciar_breaker_para_pruebas()
 
 
 async def _usuario_interno(

@@ -55,19 +55,17 @@ class AdjuntoChat(BaseModel):
 
 
 class RespondRequest(BaseModel):
-    # El historial completo de la conversación hasta acá. `store=false` (el
-    # chat no se persiste ni en el proveedor ni en el backend) significa que
-    # no hay un id de respuesta anterior que reenviar: el frontend mantiene la
-    # conversación de la pestaña y la reenvía entera en cada turno
-    # (ADR-0012, enmienda 2026-09).
+    # El historial de la conversación hasta acá. `store=false` en el proveedor
+    # significa que no hay un id de respuesta anterior que reenviar: el
+    # frontend reenvía la conversación en cada turno (ADR-0012, enmienda
+    # 2026-09). El backend guarda cada turno para el historial del usuario
+    # (enmienda 2026-10-08), pero no lo usa para armar el siguiente.
     mensajes: list[MensajeChat] = Field(min_length=1, max_length=20)
     contexto_pagina: ContextoPagina | None = None
-    # Opaco: solo namespacea el contador de tokens en Redis (ADR-0012,
-    # enmienda 2026-09-06). El frontend lo genera una vez por conversación
-    # (`crypto.randomUUID()`) y lo reenvía en cada turno; nunca es una
-    # referencia a datos guardados, así que no hace falta validarlo contra
-    # nada — solo acotar su forma para no dejar crecer claves de Redis sin
-    # límite.
+    # Lo genera el frontend una vez por conversación (`crypto.randomUUID()`)
+    # y lo reenvía en cada turno. Namespacea el tope de tokens en Redis y es
+    # la clave de la conversación guardada de ESE usuario (`client_key`): otro
+    # usuario con el mismo valor tiene otra conversación, nunca la misma.
     conversacion_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     # Una factura, un packing list, la foto de un papel. Se lee en este turno
     # y se descarta; ver `AdjuntoChat`.

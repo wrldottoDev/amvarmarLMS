@@ -105,10 +105,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_document_export_jobs_estado_expira", table_name="document_export_jobs"
-    )
-    op.drop_index(
-        "ix_document_export_jobs_empresa_recurso", table_name="document_export_jobs"
-    )
+    op.drop_index("ix_document_export_jobs_estado_expira", table_name="document_export_jobs")
+    op.drop_index("ix_document_export_jobs_empresa_recurso", table_name="document_export_jobs")
     op.drop_table("document_export_jobs")

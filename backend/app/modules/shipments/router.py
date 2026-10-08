@@ -18,6 +18,7 @@ from app.core.redis import get_redis
 from app.modules.audit.models import Outcome
 from app.modules.audit.service import registrar
 from app.modules.auth.dependencies import Actor, actor_actual
+from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import gestion, queries, service
 from app.modules.shipments.models import (
@@ -317,6 +318,51 @@ async def listar_bodegas(actor: ActorDep, db: SesionDb) -> list[BodegaResponse]:
         )
     ).all()
     return [BodegaResponse(**dict(f._mapping)) for f in filas]
+
+
+# Columnas que el formulario autocompleta. Lista cerrada: el nombre va dentro
+# del SQL, así que nunca sale del parámetro de la petición.
+_CAMPOS_SUGERIBLES = {
+    "shipper": "shipper",
+    "carrier": "carrier",
+    "tariff_code": "tariff_code",
+    "description": "description",
+}
+
+
+@router.get("/sugerencias", response_model=list[str])
+async def sugerir_valores(
+    actor: ActorDep,
+    db: SesionDb,
+    redis: RedisDep,
+    campo: Literal["shipper", "carrier", "tariff_code", "description"],
+    company_id: UUID,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+) -> list[str]:
+    """Lo que esa empresa ya usó en ese campo, lo más frecuente primero
+    (pedido de AMVARMAR, 2026-10-08): el formulario lo ofrece como
+    autocompletado. Solo para quien da de alta o corrige cargas."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    if not (
+        permisos.permite(Perm.SHIPMENTS_CREATE, company_id=company_id)
+        or permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=company_id)
+    ):
+        return []
+    columna = _CAMPOS_SUGERIBLES[campo]
+    filas = await db.execute(
+        text(f"""
+            SELECT s.{columna} AS valor
+            FROM shipments s
+            WHERE s.company_id = :empresa AND s.deleted_at IS NULL
+              AND NULLIF(btrim(s.{columna}), '') IS NOT NULL
+              AND (CAST(:q AS text) IS NULL OR s.{columna} ILIKE '%' || CAST(:q AS text) || '%')
+            GROUP BY s.{columna}
+            ORDER BY count(*) DESC, max(s.created_at) DESC
+            LIMIT 10
+        """),  # noqa: S608  # nosec B608 - columna de una lista cerrada
+        {"empresa": company_id, "q": (q or "").strip() or None},
+    )
+    return [str(f.valor) for f in filas]
 
 
 @router.post("", response_model=CargaCreadaResponse, status_code=status.HTTP_201_CREATED)

@@ -65,7 +65,7 @@ def _fusionar(desde: str, hacia: str) -> None:
 
     op.execute(
         f"DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE code = '{desde}')"
-    )  # noqa: S608
+    )
     op.execute(f"DELETE FROM roles WHERE code = '{desde}'")  # noqa: S608
 
 

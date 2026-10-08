@@ -4,6 +4,7 @@ import { ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useState } from "react";
+import { ListaSugerencias } from "@/components/shipments/lista-sugerencias";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
@@ -183,12 +184,14 @@ export default function PaginaEditarCarga({
             <input
               className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
               value={valor("tariff_code", datos.tariff_code)}
+              list="sugerencias-tariff_code"
               inputMode="numeric"
               maxLength={40}
               onChange={(evento) =>
                 cambiar("tariff_code", evento.target.value.replace(/\D/g, "").slice(0, 40))
               }
             />
+            <ListaSugerencias id="sugerencias-tariff_code" campo="tariff_code" empresa={datos.company_id} />
           </label>
         </div>
       </fieldset>
@@ -235,10 +238,13 @@ export default function PaginaEditarCarga({
                 className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
                 value={valor(campo, actual)}
                 onChange={(evento) => cambiar(campo, evento.target.value)}
+                list={`sugerencias-${campo}`}
               />
             </label>
           ))}
         </div>
+        <ListaSugerencias id="sugerencias-shipper" campo="shipper" empresa={datos.company_id} />
+        <ListaSugerencias id="sugerencias-carrier" campo="carrier" empresa={datos.company_id} />
       </fieldset>
 
       <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
