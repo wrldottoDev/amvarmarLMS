@@ -12,7 +12,8 @@ El menú sigue el recorrido de una carga:
 - **Reportes de tránsito**: cargas que viajan directo a destino sin pasar por Miami. Tiene dos pestañas:
   - **En camino**: las que todavía viajan. Las fechas estimadas de arribo (ETA) pueden variar y están
     sujetas a cambios.
-  - **En Costa Rica**: las que ya llegaron a destino o se entregaron, todas, también las más viejas.
+  - **En Costa Rica (completados)**: las que ya llegaron a destino o se entregaron, todas, también las
+    más viejas.
 - **Historial**: lo que ya terminó, es decir, cargas de Miami despachadas o entregadas y reportes de
   tránsito que llegaron a destino.
 

@@ -22,7 +22,7 @@ const PESTANAS: { clave: string; titulo: string; ayuda: string; estados: EstadoC
   },
   {
     clave: "destino",
-    titulo: "En Costa Rica",
+    titulo: "En Costa Rica (completados)",
     ayuda: "Reportes de tránsito que ya llegaron a destino o se entregaron.",
     estados: ["AT_DESTINATION", "DELIVERED"],
   },
