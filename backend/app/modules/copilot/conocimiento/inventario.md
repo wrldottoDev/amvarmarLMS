@@ -11,8 +11,8 @@ El menú sigue el recorrido de una carga:
   - **En despacho**: cargas con un despacho pedido o en preparación.
   - **Despachos completados**: cargas ya despachadas o entregadas, todas, también las más viejas.
 - **Reportes de tránsito**: cargas que viajan directo a destino sin pasar por Miami. Tiene dos pestañas:
-  - **En camino**: las que todavía viajan. Las fechas estimadas de arribo (ETA) pueden variar y están
-    sujetas a cambios.
+  - **En camino**: las que todavía viajan. Los ETAs son aproximados: AMVARMAR no garantiza el
+    cumplimiento estricto de los plazos de entrega por factores externos ajenos a su control.
   - **En Costa Rica (completados)**: las que ya llegaron a destino o se entregaron, todas, también las
     más viejas.
 - **Historial**: lo que ya terminó, es decir, cargas de Miami despachadas o entregadas y reportes de
