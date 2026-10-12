@@ -4,11 +4,13 @@ import { ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useState } from "react";
+import { SelectorEmpresa } from "@/components/admin/selector-empresa";
 import { ListaSugerencias } from "@/components/shipments/lista-sugerencias";
 import { AvisoError } from "@/components/ui/aviso-error";
 import { Boton } from "@/components/ui/boton";
 import { CargandoPagina } from "@/components/ui/estados-pagina";
 import { useUbicaciones } from "@/features/admin/consultas";
+import { useSesion } from "@/features/auth/contexto-sesion";
 import { identificadorCarga } from "@/features/shipments/identificador";
 import {
   aPayload,
@@ -32,8 +34,8 @@ import {
  * Corregir los datos de una carga.
  *
  * Equivale a `edit_warehouse.html` del sistema viejo. No cambia el estado —eso
- * va por transiciones, que dejan su evento— ni la empresa dueña: mover una
- * carga de cliente es un movimiento contable, no una corrección de tipeo.
+ * va por transiciones, que dejan su evento—. El cliente solo lo cambia un
+ * administrador, para una carga anotada a la empresa equivocada.
  *
  * Se mandan solo los campos que la persona tocó. Enviar el objeto entero haría
  * que dos personas editando campos distintos se pisaran igual, que es
@@ -50,6 +52,8 @@ export default function PaginaEditarCarga({
   const ubicaciones = useUbicaciones();
   const actualizar = useActualizarCarga(id);
   const reemplazarPiezas = useReemplazarPiezas(id);
+  const { tienePermiso } = useSesion();
+  const esAdmin = tienePermiso("shipments.status.set_any");
 
   // `null` = sin tocar. Distinto de cadena vacía, que significa "borralo".
   const [cambios, setCambios] = useState<Record<string, string>>({});
@@ -97,6 +101,8 @@ export default function PaginaEditarCarga({
 
     for (const [campo, texto] of Object.entries(cambios)) {
       const limpio = texto.trim();
+      // «Elegí una empresa…» no es un cliente: no se manda.
+      if (campo === "company_id" && !limpio) continue;
       // Los numéricos van como número o `null`; el resto como texto. La cadena
       // vacía en un identificador significa borrarlo, y eso el backend lo
       // entiende, así que no se descarta.
@@ -151,6 +157,20 @@ export default function PaginaEditarCarga({
           {identificadorCarga(datos)}
         </p>
       </div>
+
+      {esAdmin ? (
+        <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
+          <legend className="px-1 font-semibold">Cliente</legend>
+          <SelectorEmpresa
+            valor={valor("company_id", datos.company_id)}
+            alCambiar={(empresa) => cambiar("company_id", empresa)}
+          />
+          <p className="text-xs text-[var(--texto-secundario)]">
+            Para una carga anotada al cliente equivocado. Pasa al otro cliente con sus documentos y
+            su historial. No se puede si tiene un despacho solicitado.
+          </p>
+        </fieldset>
+      ) : null}
 
       <fieldset className="space-y-3 rounded-lg border bg-[var(--superficie)] p-4">
         <legend className="px-1 font-semibold">Identificadores</legend>

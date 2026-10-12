@@ -39,7 +39,8 @@ import { formatearFecha, formatearFechaHora } from "@/lib/utilidades";
  *
  * Es el mismo conjunto que `_EDITABLES` de `shipments/gestion.py`. Una vez
  * despachada, un error se registra como corrección en la línea de tiempo y no
- * se sobreescribe: el expediente ya salió con esos datos.
+ * se sobreescribe: el expediente ya salió con esos datos. Admin y Super admin
+ * (`shipments.status.set_any`) editan en cualquier estado.
  */
 const EDITABLES = new Set([
   "PRE_ALERT",
@@ -140,7 +141,7 @@ function FormularioDatosTransito({
 export default function PaginaDetalleCarga() {
   const parametros = useParams<{ id: string }>();
   const cargaId = parametros.id;
-  const { usuario } = useSesion();
+  const { usuario, tienePermiso } = useSesion();
   const [vista, setVista] = useState<"resumen" | "documentos" | "historial">("resumen");
   const consulta = useQuery({
     queryKey: ["carga", cargaId],
@@ -228,7 +229,9 @@ export default function PaginaDetalleCarga() {
             {/* Solo Operaciones edita, y solo mientras la carga no salió de
                 bodega. Un cliente que ve el botón y recibe un 403 al pulsarlo
                 aprende menos que uno que no lo ve. */}
-            {!usuario?.empresa && !carga.archived_at && EDITABLES.has(carga.status) ? (
+            {!usuario?.empresa &&
+            !carga.archived_at &&
+            (EDITABLES.has(carga.status) || tienePermiso("shipments.status.set_any")) ? (
               <Link
                 href={`/cargas/${carga.id}/editar`}
                 className="flex h-10 items-center gap-1.5 rounded-md border px-4 text-sm font-medium hover:bg-[var(--hover)]"
