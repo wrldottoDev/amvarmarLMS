@@ -1739,6 +1739,8 @@ export interface components {
         ActualizarCargaRequest: {
             /** Row Version */
             row_version: number;
+            /** Company Id */
+            company_id?: string | null;
             /** Origin Location Id */
             origin_location_id?: string | null;
             /** Origin Facility Id */

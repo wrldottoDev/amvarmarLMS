@@ -224,6 +224,8 @@ class ActualizarCargaRequest(BaseModel):
 
     row_version: int = Field(ge=1)
 
+    # Solo Admin y Super admin, y sin un despacho activo (`gestion.actualizar`).
+    company_id: UUID | None = None
     origin_location_id: UUID | None = None
     origin_facility_id: UUID | None = None
     destination_location_id: UUID | None = None

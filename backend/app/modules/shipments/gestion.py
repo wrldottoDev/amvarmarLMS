@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflicto, RecursoNoEncontrado, ReglaDeNegocioViolada
 from app.modules.audit.outbox import publicar
+from app.modules.audit.service import registrar
 from app.modules.rbac.catalog import Perm
 from app.modules.rbac.service import PermisosEfectivos
 from app.modules.shipments.models import (
@@ -85,6 +86,14 @@ _ESTADOS_INICIALES: frozenset[str] = frozenset(_SECUENCIA_ESTADOS_INICIALES) | f
 )
 
 _EDITABLES: frozenset[str] = _ESTADOS_INICIALES
+
+
+def _edita_en_cualquier_estado(permisos: PermisosEfectivos, company_id: UUID) -> bool:
+    """Admin y Super admin corrigen datos en cualquier estado (pedido de
+    AMVARMAR, 2026-10-12): el 94 % de los WR ya está despachado y un error de
+    captura ahí no tenía arreglo. Es el mismo permiso del cambio de estado
+    libre; Operaciones sigue con el bloqueo de arriba."""
+    return permisos.permite(Perm.SHIPMENTS_STATUS_SET_ANY, company_id=company_id)
 
 
 @dataclass(frozen=True)
@@ -445,10 +454,11 @@ async def _guardar_referencias(
         )
 
 
-# Campos que un PATCH puede tocar. `current_status_code`, `company_id` y
-# `shipment_number` quedan fuera a propósito: el estado lo mueve el motor de
-# transiciones, y cambiar de empresa o de número reescribiría la identidad de la
-# carga en vez de corregirla.
+# Campos que un PATCH puede tocar. `current_status_code` y `shipment_number`
+# quedan fuera a propósito: el estado lo mueve el motor de transiciones, y
+# cambiar el número reescribiría la identidad de la carga en vez de corregirla.
+# `company_id` tampoco está acá: va aparte, solo para administradores
+# (`_validar_cambio_de_empresa`).
 # Identificadores comerciales. No son columnas de `shipments` sino filas de
 # `shipment_references`, así que se aplican aparte del UPDATE genérico. El
 # sistema viejo los editaba desde el mismo formulario y acá también.
@@ -518,7 +528,9 @@ async def actualizar(
     if not permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=carga.company_id):
         raise SinPermisoParaTransicion(Perm.SHIPMENTS_UPDATE)
 
-    if carga.current_status_code not in _EDITABLES:
+    if carga.current_status_code not in _EDITABLES and not _edita_en_cualquier_estado(
+        permisos, carga.company_id
+    ):
         raise NoSePuedeEditar(
             "Esta carga ya salió de bodega y sus datos no se corrigen desde acá. "
             "Si hay un error, registrelo como corrección en la línea de tiempo.",
@@ -555,8 +567,20 @@ async def actualizar(
             }
         )
 
+    empresa_nueva = cambios_normalizados.pop("company_id", None)
+    if empresa_nueva == carga.company_id:
+        empresa_nueva = None
+    if empresa_nueva is not None:
+        await _validar_cambio_de_empresa(
+            session, shipment_id, carga.company_id, empresa_nueva, permisos
+        )
+
     aplicables = {c: v for c, v in cambios_normalizados.items() if c in _EDITABLES_CAMPOS}
     referencias = {c: v for c, v in cambios_normalizados.items() if c in _REFERENCIAS_EDITABLES}
+    columnas = _EDITABLES_CAMPOS
+    if empresa_nueva is not None:
+        aplicables["company_id"] = empresa_nueva
+        columnas = {**_EDITABLES_CAMPOS, "company_id": "empresa"}
 
     if not aplicables and not referencias:
         raise DatosInvalidos("No hay ningún campo editable en la solicitud.")
@@ -571,10 +595,8 @@ async def actualizar(
         )
         return nueva_version
 
-    asignaciones = ", ".join(f"{campo} = :{_EDITABLES_CAMPOS[campo]}" for campo in aplicables)
-    parametros: dict[str, Any] = {
-        _EDITABLES_CAMPOS[campo]: valor for campo, valor in aplicables.items()
-    }
+    asignaciones = ", ".join(f"{campo} = :{columnas[campo]}" for campo in aplicables)
+    parametros: dict[str, Any] = {columnas[campo]: valor for campo, valor in aplicables.items()}
     parametros |= {"id": shipment_id, "version": row_version}
 
     consulta = f"""
@@ -592,6 +614,18 @@ async def actualizar(
         ) from error
 
     await _aplicar_referencias(session, shipment_id, referencias)
+    if empresa_nueva is not None:
+        await _mover_documentos(session, shipment_id, empresa_nueva)
+        await registrar(
+            session,
+            action="shipment.company_changed",
+            resource_type="shipment",
+            resource_id=shipment_id,
+            actor_user_id=actor_user_id,
+            company_id=empresa_nueva,
+            before_data={"company_id": str(carga.company_id)},
+            after_data={"company_id": str(empresa_nueva)},
+        )
     await _registrar_correccion(
         session,
         shipment_id,
@@ -606,6 +640,57 @@ async def actualizar(
     )
 
     return nueva_version
+
+
+async def _validar_cambio_de_empresa(
+    session: AsyncSession,
+    shipment_id: UUID,
+    actual: UUID,
+    nueva: UUID,
+    permisos: PermisosEfectivos,
+) -> None:
+    """Cambiar el cliente corrige una carga anotada al cliente equivocado.
+
+    Solo Admin y Super admin, y solo sin un despacho activo: el despacho es de
+    la empresa vieja, y moverle una carga lo dejaría pidiendo algo ajeno.
+    """
+    if not (
+        _edita_en_cualquier_estado(permisos, actual) and _edita_en_cualquier_estado(permisos, nueva)
+    ):
+        raise NoSePuedeEditar("Solo un administrador puede cambiar el cliente de una carga.")
+    if not await _empresa_existe(session, nueva):
+        raise DatosInvalidos("La empresa indicada no existe.")
+    en_despacho = (
+        await session.execute(
+            text("""
+                SELECT 1 FROM dispatch_request_shipments
+                WHERE shipment_id = :s AND released_at IS NULL
+            """),
+            {"s": shipment_id},
+        )
+    ).first()
+    if en_despacho is not None:
+        raise NoSePuedeEditar(
+            "Esta carga tiene un despacho solicitado a nombre del cliente actual y no se "
+            "puede pasar a otro. Cancelen o rechacen el despacho primero."
+        )
+
+
+async def _mover_documentos(session: AsyncSession, shipment_id: UUID, empresa: UUID) -> None:
+    """Los documentos de la carga pasan con ella. Uno compartido con otra carga
+    se queda donde está: el acceso va por la carga, así que el cliente nuevo
+    igual lo ve desde esta."""
+    await session.execute(
+        text("""
+            UPDATE documents d SET company_id = :e
+            WHERE d.id IN (SELECT document_id FROM shipment_documents WHERE shipment_id = :s)
+              AND NOT EXISTS (
+                  SELECT 1 FROM shipment_documents o
+                  WHERE o.document_id = d.id AND o.shipment_id <> :s
+              )
+        """),
+        {"e": empresa, "s": shipment_id},
+    )
 
 
 async def _subir_version(session: AsyncSession, shipment_id: UUID, row_version: int) -> int:
@@ -798,7 +883,9 @@ async def reemplazar_bultos(
     if not permisos.permite(Perm.SHIPMENTS_UPDATE, company_id=carga.company_id):
         raise SinPermisoParaTransicion(Perm.SHIPMENTS_UPDATE)
 
-    if carga.current_status_code not in _EDITABLES:
+    if carga.current_status_code not in _EDITABLES and not _edita_en_cualquier_estado(
+        permisos, carga.company_id
+    ):
         raise NoSePuedeEditar(
             "Esta carga ya salió de bodega y su desglose no se corrige desde acá."
         )

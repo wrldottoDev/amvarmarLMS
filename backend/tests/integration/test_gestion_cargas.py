@@ -5,15 +5,18 @@ pruebas vigilan es la frontera con el motor de transiciones: acá se corrigen
 datos, nunca se mueve el estado.
 """
 
+import dataclasses
 import uuid
 from decimal import Decimal
 
 import pytest
+from scripts.seed_document_types import sembrar as sembrar_documentos
 from scripts.seed_rbac import sembrar as sembrar_rbac
 from scripts.seed_shipment_statuses import sembrar as sembrar_estados
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.rbac.catalog import Perm
 from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import gestion
@@ -87,6 +90,14 @@ async def entorno(session: AsyncSession):
 
 async def _permisos(session, redis, user_id):
     return await obtener_permisos_efectivos(session, redis, user_id)
+
+
+def _sin_estado_libre(permisos):
+    """Un actor de staff sin los poderes de Admin: sigue el bloqueo por estado."""
+    return dataclasses.replace(
+        permisos,
+        permisos=tuple(p for p in permisos.permisos if p.code != Perm.SHIPMENTS_STATUS_SET_ANY),
+    )
 
 
 def _datos(entorno, **extra) -> gestion.DatosDeCarga:
@@ -579,7 +590,7 @@ class TestActualizar:
         self, session: AsyncSession, redis, entorno
     ) -> None:
         """Sus datos describen algo que ya ocurrió: cambiarlos reescribe la
-        historia en vez de corregir una captura."""
+        historia en vez de corregir una captura. Vale para quien no es Admin."""
         carga = await self._crear(session, redis, entorno)
         await session.execute(
             text("UPDATE shipments SET current_status_code = 'DISPATCHED' WHERE id = :s"),
@@ -593,8 +604,50 @@ class TestActualizar:
                 cambios={"description": "Tarde"},
                 row_version=carga.row_version,
                 actor_user_id=entorno["ops"],
-                permisos=await _permisos(session, redis, entorno["ops"]),
+                permisos=_sin_estado_libre(await _permisos(session, redis, entorno["ops"])),
             )
+
+    async def test_admin_corrige_una_carga_despachada(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Pedido de AMVARMAR (2026-10-12): casi todo el inventario ya está
+        despachado, y un error de captura ahí no tenía arreglo."""
+        carga = await self._crear(session, redis, entorno)
+        await session.execute(
+            text("UPDATE shipments SET current_status_code = 'DISPATCHED' WHERE id = :s"),
+            {"s": carga.id},
+        )
+        permisos = await _permisos(session, redis, entorno["ops"])
+
+        version = await gestion.actualizar(
+            session,
+            shipment_id=carga.id,
+            cambios={"description": "Corregida después"},
+            row_version=carga.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=permisos,
+        )
+        await gestion.reemplazar_bultos(
+            session,
+            shipment_id=carga.id,
+            bultos=(gestion.DatosDeBulto(package_type="BOX", quantity=3),),
+            row_version=version,
+            actor_user_id=entorno["ops"],
+            permisos=permisos,
+        )
+
+        fila = (
+            await session.execute(
+                text("""
+                    SELECT description,
+                           (SELECT sum(quantity) FROM shipment_packages WHERE shipment_id = s.id)
+                               AS bultos
+                    FROM shipments s WHERE id = :s
+                """),
+                {"s": carga.id},
+            )
+        ).one()
+        assert (fila.description, fila.bultos) == ("Corregida después", 3)
 
     async def test_deja_constancia_de_que_se_corrigio(
         self, session: AsyncSession, redis, entorno
@@ -1459,3 +1512,143 @@ class TestSugerencias:
         assert filtrados == ["Nordic Supply"]
         # El cliente no da de alta cargas: no recibe sugerencias.
         assert del_cliente == []
+
+
+class TestCambiarCliente:
+    """Una carga anotada al cliente equivocado se pasa al correcto (pedido de
+    AMVARMAR, 2026-10-12). Solo Admin, y sin un despacho activo."""
+
+    async def _crear(self, session, redis, entorno):
+        return await gestion.crear(
+            session,
+            datos=_datos(entorno),
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+    async def _otra_empresa(self, session) -> uuid.UUID:
+        empresa: uuid.UUID = (
+            await session.execute(
+                text(
+                    "INSERT INTO companies (legal_name, status) VALUES (:n,'ACTIVE') RETURNING id"
+                ),
+                {"n": f"Otra {uuid.uuid4().hex[:6]} S.A."},
+            )
+        ).scalar_one()
+        return empresa
+
+    async def _documento(self, session, entorno, shipment_id) -> uuid.UUID:
+        await sembrar_documentos(session)
+        documento: uuid.UUID = (
+            await session.execute(
+                text("""
+                    INSERT INTO documents
+                        (company_id, uploaded_by, storage_provider, storage_key,
+                         original_name, safe_name, media_type, size_bytes, sha256,
+                         upload_status, issued_by)
+                    VALUES (:c, :u, 's3', :key, 'factura.pdf', 'factura.pdf',
+                            'application/pdf', 10, :sha, 'READY', 'PROVIDER')
+                    RETURNING id
+                """),
+                {
+                    "c": entorno["empresa"],
+                    "u": entorno["ops"],
+                    "key": f"test/{uuid.uuid4()}.pdf",
+                    "sha": "b" * 64,
+                },
+            )
+        ).scalar_one()
+        await session.execute(
+            text("""
+                INSERT INTO shipment_documents (shipment_id, document_id, document_type_id)
+                SELECT :s, :d, id FROM document_types WHERE code = 'COMMERCIAL_INVOICE'
+            """),
+            {"s": shipment_id, "d": documento},
+        )
+        return documento
+
+    async def test_pasa_con_sus_documentos_y_queda_auditado(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._crear(session, redis, entorno)
+        documento = await self._documento(session, entorno, carga.id)
+        otra = await self._otra_empresa(session)
+
+        await gestion.actualizar(
+            session,
+            shipment_id=carga.id,
+            cambios={"company_id": otra},
+            row_version=carga.row_version,
+            actor_user_id=entorno["ops"],
+            permisos=await _permisos(session, redis, entorno["ops"]),
+        )
+
+        empresa_carga, empresa_documento, auditoria = (
+            await session.execute(
+                text("""
+                    SELECT (SELECT company_id FROM shipments WHERE id = :s),
+                           (SELECT company_id FROM documents WHERE id = :d),
+                           (SELECT before_data->>'company_id' FROM audit_logs
+                            WHERE action = 'shipment.company_changed' AND resource_id = :s)
+                """),
+                {"s": carga.id, "d": documento},
+            )
+        ).one()
+        assert (empresa_carga, empresa_documento) == (otra, otra)
+        assert auditoria == str(entorno["empresa"])
+
+    async def test_con_un_despacho_activo_no_se_mueve(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._crear(session, redis, entorno)
+        await session.execute(
+            text("""
+                WITH despacho AS (
+                    INSERT INTO dispatch_requests (company_id, requested_by, method, status)
+                    VALUES (:c, :u, 'SEA', 'PENDING') RETURNING id
+                )
+                INSERT INTO dispatch_request_shipments (dispatch_request_id, shipment_id)
+                SELECT id, :s FROM despacho
+            """),
+            {"c": entorno["empresa"], "u": entorno["cliente"], "s": carga.id},
+        )
+
+        with pytest.raises(gestion.NoSePuedeEditar, match="despacho"):
+            await gestion.actualizar(
+                session,
+                shipment_id=carga.id,
+                cambios={"company_id": await self._otra_empresa(session)},
+                row_version=carga.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_sin_poderes_de_admin_no_se_mueve(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._crear(session, redis, entorno)
+
+        with pytest.raises(gestion.NoSePuedeEditar, match="administrador"):
+            await gestion.actualizar(
+                session,
+                shipment_id=carga.id,
+                cambios={"company_id": await self._otra_empresa(session)},
+                row_version=carga.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=_sin_estado_libre(await _permisos(session, redis, entorno["ops"])),
+            )
+
+    async def test_a_una_empresa_inexistente_no(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        carga = await self._crear(session, redis, entorno)
+
+        with pytest.raises(gestion.DatosInvalidos):
+            await gestion.actualizar(
+                session,
+                shipment_id=carga.id,
+                cambios={"company_id": uuid.uuid4()},
+                row_version=carga.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
