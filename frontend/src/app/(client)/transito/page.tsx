@@ -59,7 +59,8 @@ function ContenidoTransito() {
           {enCamino ? (
             <p className="flex items-start gap-2 rounded-md border border-[var(--advertencia-borde)] bg-[var(--advertencia-tenue)] px-4 py-3 text-sm text-[var(--advertencia)]">
               <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              Los tiempos estimados de arribo (ETA) pueden variar y están sujetos a cambios.
+              Los ETAs son aproximados. No garantizamos el cumplimiento estricto de los plazos de entrega
+              debido a factores externos ajenos a nuestro control.
             </p>
           ) : null}
         </div>
