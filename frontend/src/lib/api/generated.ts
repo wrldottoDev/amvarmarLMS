@@ -1704,6 +1704,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aranceles/estimar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Estimar */
+        post: operations["estimar_api_v1_aranceles_estimar_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2494,6 +2511,72 @@ export interface components {
             /** Trade Name */
             trade_name: string | null;
         };
+        /** EstimarRequest */
+        EstimarRequest: {
+            /** Valor Mercancia Usd */
+            valor_mercancia_usd: number | string;
+            /**
+             * Flete Usd
+             * @default 0
+             */
+            flete_usd: number | string;
+            /**
+             * Seguro Usd
+             * @default 0
+             */
+            seguro_usd: number | string;
+            /** Tipo Cambio */
+            tipo_cambio: number | string;
+            /** Dai */
+            dai: number | string;
+            /**
+             * Ley 6946
+             * @default 1
+             */
+            ley_6946: number | string;
+            /**
+             * Selectivo
+             * @default 0
+             */
+            selectivo: number | string;
+            /**
+             * Margen Ge
+             * @default 0
+             */
+            margen_ge: number | string;
+            /**
+             * Iva
+             * @default 13
+             */
+            iva: number | string;
+            /**
+             * Otros Cargos Crc
+             * @default 0
+             */
+            otros_cargos_crc: number | string;
+            /**
+             * Sc Incluye Ley 6946
+             * @default false
+             */
+            sc_incluye_ley_6946: boolean;
+        };
+        /** EstimarResponse */
+        EstimarResponse: {
+            /** Valor Aduanero Usd */
+            valor_aduanero_usd: string;
+            /** Valor Aduanero Crc */
+            valor_aduanero_crc: string;
+            /** Lineas */
+            lineas: components["schemas"]["LineaResponse"][];
+            /** Total */
+            total: string;
+            /** Reglas Version */
+            reglas_version: string;
+            /** Sc Incluye Ley 6946 */
+            sc_incluye_ley_6946: boolean;
+            /** Redondeo */
+            redondeo: string;
+        };
         /** EventoResponse */
         EventoResponse: {
             /**
@@ -2619,6 +2702,21 @@ export interface components {
          * @enum {string}
          */
         IssuedBy: "PROVIDER" | "CLIENT" | "AMVARMAR" | "CARRIER" | "AUTHORITY" | "OTHER";
+        /** LineaResponse */
+        LineaResponse: {
+            /** Concepto */
+            concepto: string;
+            /** Base */
+            base: string;
+            /** Tasa */
+            tasa: string | null;
+            /** Monto */
+            monto: string;
+            /** Suma Al Total */
+            suma_al_total: boolean;
+            /** Fuente */
+            fuente: string;
+        };
         /** LoginRequest */
         LoginRequest: {
             /**
@@ -6545,6 +6643,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    estimar_api_v1_aranceles_estimar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EstimarRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstimarResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
