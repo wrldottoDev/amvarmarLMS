@@ -6,6 +6,7 @@ import {
   Bot,
   Boxes,
   Building2,
+  Calculator,
   ChevronDown,
   Gauge,
   LogOut,
@@ -85,7 +86,10 @@ export function PortalShell({ children }: Readonly<{ children: React.ReactNode }
             ? [{ href: "/locations", etiqueta: "Ubicaciones", icono: MapPin }]
             : []),
           ...(usuario.permisos.includes("system_settings.manage")
-            ? [{ href: "/amvi", etiqueta: "AMVI · aprendizaje", icono: Bot }]
+            ? [
+                { href: "/amvi", etiqueta: "AMVI · aprendizaje", icono: Bot },
+                { href: "/calculadora-impuestos", etiqueta: "Calculadora de impuestos", icono: Calculator },
+              ]
             : []),
         ]),
     { href: "/sesiones", etiqueta: "Sesiones", icono: MonitorSmartphone },

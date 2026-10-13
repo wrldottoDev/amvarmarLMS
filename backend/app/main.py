@@ -9,6 +9,7 @@ from app.core.observability.http import registrar_metricas_http
 from app.core.observability.router import router as metrics_router
 from app.core.observability.tracing import configurar_trazas
 from app.modules.admin.router import router as admin_router
+from app.modules.aranceles.router import router as aranceles_router
 from app.modules.auth.router import me_router
 from app.modules.auth.router import router as auth_router
 from app.modules.copilot.router import router as copilot_router
@@ -44,3 +45,4 @@ app.include_router(dispatches_router)
 app.include_router(notifications_router)
 app.include_router(admin_router)
 app.include_router(copilot_router)
+app.include_router(aranceles_router)
