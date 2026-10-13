@@ -23,7 +23,7 @@
 - La autenticación es por dependencia de cada endpoint (`actor_actual`, `backend/app/modules/auth/dependencies.py:38-61`). No hay un middleware global (`backend/app/main.py:36-46`). **Un `APIRouter` sin `ActorDep` es público.**
 - Endpoints públicos que ya existen: health, login/refresh/recuperación e invitaciones (`auth/router.py:74-487`). Patrón a seguir.
 - Rate limiting: limitador propio con Redis, `backend/app/core/rate_limit.py:23-95`, que responde 429 con `Retry-After` (`core/errors.py:137-138`). `INCR` y `EXPIRE` van por separado (`rate_limit.py:49-52`): sirve para límites por ventana, **no** como presupuesto duro bajo concurrencia (ver §8).
-- **La IP del cliente se puede falsificar.** Uvicorn corre con `--forwarded-allow-ips "*"` (`infra/produccion/docker-compose.yml:101-102`) y toma el primer valor de `X-Forwarded-For`. nginx no configura `real_ip`, y Cloudflare está delante. **Hay que corregirlo antes de cualquier límite por IP en un endpoint público** (el arreglo también protege el login actual).
+- **La IP del cliente se podía falsificar** (uvicorn con `--forwarded-allow-ips "*"` toma el primer valor de `X-Forwarded-For`, y nginx lo agregaba sin limpiar). **Corregido el 2026-10-12 (PR #40):** `infra/produccion/nginx/cloudflare-realip.conf` + `X-Forwarded-For` sobrescrito. Verificado en producción. Los rangos de Cloudflare hay que mantenerlos al día (ver el comentario del snippet).
 - nginx: `/api/` sin `limit_req` ni `limit_conn`, `client_max_body_size 20m`, timeout de lectura de 120 s (`infra/produccion/nginx/produccion-app.amvarmar.com.conf:21-33`).
 
 ### 1.3 Frontend

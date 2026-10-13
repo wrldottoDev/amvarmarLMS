@@ -22,7 +22,7 @@
 | D16 | **Retención de estimaciones** | 30 / 90 / 180 días | 180 días (igual que el historial de Amvi), con la IP solo como hash con sal | F5 |
 | D17 | **¿Herramienta `estimar_impuestos` en el Amvi del LMS?** | Sí, fase posterior / no | Sí, después de F6. Reutiliza el motor sin exponer nada nuevo. | — |
 | D18 | **Modelo** | `gpt-5.6-luna` (actual) / `gpt-5.6-terra` (×10 de costo) | Empezar con luna. Cambiar solo si la evaluación de F4 muestra una diferencia que lo justifique. | F4 |
-| D19 | **Arreglo de `real_ip` de Cloudflare** | Hacerlo ya, aparte del proyecto / dentro de F5 | **Hacerlo ya**: hoy también afecta los límites de login del LMS (02 §1.2) | — |
+| D19 | **Arreglo de `real_ip` de Cloudflare** | — | **Resuelto el 2026-10-12 (PR #40)**: nginx toma `CF-Connecting-IP` solo desde los rangos de Cloudflare y sobrescribe `X-Forwarded-For`. Verificado en producción: una IP inventada en la cabecera ya no llega al limitador, ni a través de Cloudflare ni conectando directo al origen. | — |
 | D20 | **¿Mostrar el TLC en el MVP?** | Solo aviso informativo / calcular la preferencia | Solo aviso en el MVP. El cálculo con preferencia va en F7 y requiere que el usuario declare la prueba de origen. | F5 |
 | D21 | **Rol SQL dedicado para el módulo público** | Misma conexión que el LMS / rol de mínimos privilegios | Rol propio, solo con acceso a las tablas del estimador (02 §8) | F5 |
 | D22 | **Interruptor de emergencia** | Variable de entorno (requiere reinicio) / flag dinámico en Redis | Flag dinámico, auditado, por función (IA, cálculo, chat, enlaces) | F5 |
