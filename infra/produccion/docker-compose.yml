@@ -94,7 +94,10 @@ services:
     # Detrás de nginx: sin `--proxy-headers` todas las peticiones llegarían con
     # la IP de la red de Docker, y el rate limit por IP del login y la
     # auditoría quedarían ciegos. Confiar en cualquier origen es seguro porque
-    # el puerto solo escucha en 127.0.0.1: el único que llega es nginx.
+    # el puerto solo escucha en 127.0.0.1: el único que llega es nginx, y nginx
+    # SOBRESCRIBE X-Forwarded-For con la IP real (nginx/cloudflare-realip.conf).
+    # Uvicorn toma el primer valor de esa cabecera: si nginx la agregara en vez
+    # de sobrescribirla, el primero sería el que inventó el cliente.
     # Sin el access log de uvicorn: escribe la URL cruda y dejaría en los logs
     # el token de `GET /auth/invitation/{token}`. El middleware ya registra
     # cada petición con la ruta en plantilla.
