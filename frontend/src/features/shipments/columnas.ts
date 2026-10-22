@@ -75,7 +75,7 @@ export function useGuardarColumnas() {
  */
 export const contenidoColumna: Record<string, (carga: CargaResumen) => string> = {
   identificador: identificadorCarga,
-  empresa: () => "",
+  empresa: (c) => c.company_name || "—",
   invoice: (c) => c.invoice || "—",
   bl: (c) => c.bl || "—",
   amvar: (c) => c.amvar || "—",
