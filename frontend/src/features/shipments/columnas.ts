@@ -92,6 +92,7 @@ export const contenidoColumna: Record<string, (carga: CargaResumen) => string> =
     const lb = c.weight_lb != null ? `${c.weight_lb} lb` : null;
     return [kg, lb].filter(Boolean).join(" · ") || "—";
   },
+  peso_volumetrico: (c) => (c.volumetric_weight_kg != null ? `${c.volumetric_weight_kg} kg` : "—"),
   bultos: (c) => `${c.package_count}`,
   pendientes: () => "",
   fecha: (c) => formatearFecha(c.created_at),
@@ -99,4 +100,4 @@ export const contenidoColumna: Record<string, (carga: CargaResumen) => string> =
 };
 
 /** Columnas que se alinean a la derecha por ser números. */
-export const columnasNumericas = new Set(["foots_cft", "peso", "bultos"]);
+export const columnasNumericas = new Set(["foots_cft", "peso", "peso_volumetrico", "bultos"]);

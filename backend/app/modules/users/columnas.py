@@ -41,6 +41,7 @@ COLUMNAS_CARGAS: list[DefinicionColumna] = [
     DefinicionColumna("po", "PO"),
     DefinicionColumna("container", "Contenedor"),
     DefinicionColumna("peso", "Peso"),
+    DefinicionColumna("peso_volumetrico", "Peso volumétrico"),
     DefinicionColumna("bultos", "Bultos"),
     DefinicionColumna("pendientes", "Pendientes"),
     DefinicionColumna("fecha", "Fecha"),

@@ -1168,6 +1168,7 @@ class ShipmentResumenResponse(BaseModel):
     weight_kg: Decimal | None = None
     weight_lb: Decimal | None = None
     weight_source_unit: UnidadPeso | None = None
+    volumetric_weight_kg: Decimal | None = None
     hidden_at: datetime | None = None
     archived_at: datetime | None = None
 
@@ -1238,6 +1239,7 @@ def _a_resumen(fila: Any) -> ShipmentResumenResponse:
         weight_kg=fila.weight_kg,
         weight_lb=fila.weight_lb,
         weight_source_unit=fila.weight_source_unit,
+        volumetric_weight_kg=fila.volumetric_weight_kg,
         hidden_at=fila.hidden_at,
         archived_at=fila.archived_at,
         origin=UbicacionResponse(
@@ -1364,7 +1366,6 @@ async def obtener_shipment(
         **_a_resumen(fila).model_dump(),
         description=fila.description,
         destination_address=fila.destination_address,
-        volumetric_weight_kg=fila.volumetric_weight_kg,
         received_at=fila.received_at,
         stored_at=fila.stored_at,
         dispatched_at=fila.dispatched_at,
