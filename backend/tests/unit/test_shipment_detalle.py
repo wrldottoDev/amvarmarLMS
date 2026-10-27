@@ -54,7 +54,7 @@ async def test_detalle_conserva_volumen_sin_argumentos_duplicados(monkeypatch, v
         updated_at=ahora,
         description=None,
         destination_address=None,
-        volumetric_weight_kg=None,
+        volumetric_weight_kg=volumen,
         received_at=ahora,
         stored_at=None,
         dispatched_at=None,
@@ -73,5 +73,6 @@ async def test_detalle_conserva_volumen_sin_argumentos_duplicados(monkeypatch, v
 
     assert detalle.id == fila.id
     assert detalle.volume_m3 == volumen
+    assert detalle.volumetric_weight_kg == volumen
     assert detalle.packages == []
     assert detalle.received_at == ahora

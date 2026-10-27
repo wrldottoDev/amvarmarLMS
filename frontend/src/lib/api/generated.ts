@@ -3293,6 +3293,8 @@ export interface components {
             /** Weight Lb */
             weight_lb?: string | null;
             weight_source_unit?: components["schemas"]["UnidadPeso"] | null;
+            /** Volumetric Weight Kg */
+            volumetric_weight_kg?: string | null;
             /** Hidden At */
             hidden_at?: string | null;
             /** Archived At */

@@ -96,6 +96,7 @@ _COLUMNAS_LISTADO = """
     s.weight_kg,
     s.weight_lb,
     s.weight_source_unit,
+    s.volumetric_weight_kg,
     s.row_version,
     s.foots_cft,
     s.volume_m3,
@@ -330,7 +331,6 @@ async def obtener_shipment(
         SELECT {_COLUMNAS_LISTADO},
                s.row_version,
                s.description,
-               s.volumetric_weight_kg,
                s.received_at, s.stored_at, s.dispatched_at, s.delivered_at,
                s.destination_address
         FROM shipments s
