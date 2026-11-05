@@ -41,6 +41,7 @@ dependencies = [
 
     # Worker / outbox
     "celery[redis]>=5.4,<6.0",
+    "kombu[redis]>=5.4,<5.7",  # 5.7 exige redis-py>=6.1 y redis va <6.0
     "tenacity>=9.0,<10.0",
 
     # Object storage S3-compatible (MinIO en local)
