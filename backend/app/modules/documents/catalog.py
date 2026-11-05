@@ -129,4 +129,23 @@ TIPOS_DOCUMENTO: dict[str, DefinicionTipoDocumento] = {
         allowed_formats=[*_CON_DOCX, "XLSX", "CSV"],
         required_before_status=None,
     ),
+    # Lo que se adjunta sin clasificar (pedido de AMVARMAR, 2026-11-05): es el
+    # tipo por defecto de «Adjuntar otro documento». Sin `required_before_status`
+    # no genera requisitos, así que no aparece como pendiente en ninguna carga.
+    DocumentTypeCode.OTHER: DefinicionTipoDocumento(
+        label="Varios",
+        description="Documentos adicionales de la carga sin un tipo específico.",
+        provided_by=ProvidedBy.CLIENT_OR_STAFF,
+        context=DocumentContext.SHIPMENT,
+        issued_by_options=[
+            IssuedBy.OTHER,
+            IssuedBy.PROVIDER,
+            IssuedBy.CLIENT,
+            IssuedBy.AMVARMAR,
+            IssuedBy.CARRIER,
+            IssuedBy.AUTHORITY,
+        ],
+        allowed_formats=_CON_DOCX,
+        required_before_status=None,
+    ),
 }

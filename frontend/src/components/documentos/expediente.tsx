@@ -139,7 +139,10 @@ export function Expediente({
     window.open(enlace.url, "_blank", "noopener,noreferrer");
   }
 
-  const tipoLibreSeleccionado = data.tipos.find((tipo) => tipo.id === tipoLibre);
+  // Sin elegir nada se sube como «Varios»: lo extra no tiene por qué clasificarse.
+  const tipoLibreSeleccionado =
+    data.tipos.find((tipo) => tipo.id === tipoLibre) ??
+    data.tipos.find((tipo) => tipo.code === "OTHER");
   const opcionesEmisorLibre = (tipoLibreSeleccionado?.issued_by_options ?? []) as IssuedBy[];
   const emisorLibreEfectivo = emisorLibre || opcionesEmisorLibre[0];
 
@@ -358,7 +361,7 @@ export function Expediente({
             <span className="mb-1 block text-sm font-medium">Adjuntar otro documento</span>
             <select
               className="h-10 w-full rounded-md border bg-[var(--superficie)] px-3 text-sm"
-              value={tipoLibre}
+              value={tipoLibreSeleccionado?.id ?? ""}
               onChange={(evento) => {
                 setTipoLibre(evento.target.value);
                 setEmisorLibre("");
@@ -437,7 +440,10 @@ export function Expediente({
             <UploadCloud className="mb-2 size-7 text-[var(--marca)]" aria-hidden="true" />
             <strong className="text-sm">Arrastrá varios archivos aquí</strong>
             <span className="mt-1 text-xs text-[var(--texto-secundario)]">
-              Primero seleccioná el tipo documental. También podés hacer clic para elegirlos.
+              {tipoLibreSeleccionado
+                ? `Se guardan como «${tipoLibreSeleccionado.label}».`
+                : "Primero seleccioná el tipo documental."}{" "}
+              También podés hacer clic para elegirlos.
             </span>
           </button>
 
