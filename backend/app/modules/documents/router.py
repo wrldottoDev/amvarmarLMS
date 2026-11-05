@@ -18,6 +18,7 @@ from starlette.requests import Request
 
 from app.core.database import get_session
 from app.core.errors import ErrorDeAplicacion, RecursoNoEncontrado, SinPermiso
+from app.core.logging import obtener_logger
 from app.core.redis import get_redis
 from app.infrastructure.storage.s3 import TTL_DESCARGA_SEGUNDOS, TTL_SUBIDA_SEGUNDOS
 from app.modules.audit.models import Outcome
@@ -30,6 +31,7 @@ from app.modules.rbac.service import PermisosEfectivos, obtener_permisos_efectiv
 from app.modules.shipments.queries import alcance_de_lectura
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
+_log = obtener_logger("documentos")
 
 SesionDb = Annotated[AsyncSession, Depends(get_session)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
@@ -130,6 +132,9 @@ async def _confirmar_y_encolar(
     try:
         _encolar_documento(document_id)
     except Exception as error:
+        # El 503 no dice por qué: sin esto, un broker caído o sin disco solo
+        # dejaba la línea de acceso y había que adivinar.
+        _log.error("documento_no_encolado", document_id=str(document_id), exc_info=True)
         await db.execute(
             text("""
                 UPDATE documents SET upload_status = 'UPLOADING'
@@ -153,6 +158,7 @@ async def _confirmar_y_encolar_exportacion(db: AsyncSession, *, job: exports.Exp
     try:
         _encolar_exportacion(job.id)
     except Exception as error:
+        _log.error("exportacion_no_encolada", job_id=str(job.id), exc_info=True)
         await db.execute(
             text("""
                 UPDATE document_export_jobs
