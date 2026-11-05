@@ -133,7 +133,8 @@ function FormularioNuevaCarga() {
       hayPeso &&
       problemaDePiezas(piezas) === null &&
       (!exigeFactura || factura.trim()) &&
-      (desdeMiami !== false || bl.trim()),
+      (desdeMiami !== false || bl.trim()) &&
+      (desdeMiami !== true || wr.trim()),
   );
 
   async function guardar() {
@@ -224,7 +225,7 @@ function FormularioNuevaCarga() {
           >
             <strong className="block">De nuestra bodega de Miami</strong>
             <span className="text-sm text-[var(--texto-secundario)]">
-              Lleva Warehouse Receipt. La bodega lo emite al recibir la mercancía.
+              Lleva Warehouse Receipt, que es obligatorio.
             </span>
           </button>
 
@@ -331,20 +332,17 @@ function FormularioNuevaCarga() {
               {desdeMiami ? (
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium">
-                    Warehouse Receipt{" "}
-                    <span className="font-normal text-[var(--texto-secundario)]">
-                      (si ya lo emitieron)
-                    </span>
+                    Warehouse Receipt <span className="font-normal text-[var(--peligro)]">— obligatorio</span>
                   </span>
                   <input
-                    className="w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm"
+                    className={clases(
+                      "w-full rounded-md border bg-[var(--superficie)] px-3 py-2 text-sm",
+                      !wr.trim() && "border-[var(--peligro)]",
+                    )}
                     value={wr}
                     onChange={(evento) => setWr(evento.target.value)}
                     placeholder="WR105921"
                   />
-                  <span className="mt-1 block text-xs text-[var(--texto-secundario)]">
-                    Se puede dejar vacío: se exige recién al dar la carga por almacenada.
-                  </span>
                 </label>
               ) : null}
 
