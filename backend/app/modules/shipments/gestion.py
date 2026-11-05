@@ -38,8 +38,11 @@ from app.modules.shipments.models import (
 )
 from app.modules.shipments.peso import PesoConvertido, UnidadPeso, convertir_peso
 from app.modules.shipments.policies import (
+    WarehouseReceiptFaltante,
+    bodega_usa_warehouse_receipt,
     validar_identificador_comercial,
     validar_referencia_permitida,
+    validar_wr_libre,
 )
 from app.modules.shipments.service import (
     DatosTransicion,
@@ -259,6 +262,7 @@ async def crear(
         await validar_referencia_permitida(
             session, shipment_id=fila.id, reference_type=ReferenceType.WR.value
         )
+        await validar_wr_libre(session, shipment_id=fila.id, valor=(datos.wr or "").strip())
     await _guardar_referencias(session, fila.id, datos)
 
     # La regla del negocio: lo de Miami lleva WR, lo demás lleva factura. Se
@@ -269,6 +273,7 @@ async def crear(
         shipment_id=fila.id,
         origin_facility_id=datos.origin_facility_id,
         invoice=datos.invoice,
+        wr=datos.wr,
     )
 
     await _guardar_bultos(session, fila.id, datos.packages)
@@ -800,10 +805,19 @@ async def _aplicar_referencias(
     """
     for campo, valor in referencias.items():
         tipo = _REFERENCIAS_EDITABLES[campo]
-        if tipo == ReferenceType.WR and (valor or "").strip():
-            await validar_referencia_permitida(
-                session, shipment_id=shipment_id, reference_type=tipo.value
-            )
+        limpio = (valor or "").strip()
+        if tipo == ReferenceType.WR:
+            if limpio:
+                await validar_referencia_permitida(
+                    session, shipment_id=shipment_id, reference_type=tipo.value
+                )
+                await validar_wr_libre(session, shipment_id=shipment_id, valor=limpio)
+            elif await bodega_usa_warehouse_receipt(session, shipment_id):
+                # Obligatorio desde el alta (2026-11-05): corregirlo sí, borrarlo no.
+                raise WarehouseReceiptFaltante(
+                    "Las cargas de una bodega que emite Warehouse Receipt necesitan su WR. "
+                    "Puede corregirlo, pero no dejarlo vacío."
+                )
         await session.execute(
             text("""
                 DELETE FROM shipment_references
@@ -812,7 +826,6 @@ async def _aplicar_referencias(
             {"s": shipment_id, "t": tipo.value},
         )
 
-        limpio = (valor or "").strip()
         if limpio:
             await session.execute(
                 text("""

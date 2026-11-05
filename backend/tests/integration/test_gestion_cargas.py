@@ -21,7 +21,11 @@ from app.modules.rbac.models import RoleCode, ScopeType
 from app.modules.rbac.service import obtener_permisos_efectivos
 from app.modules.shipments import gestion
 from app.modules.shipments.models import ShipmentStatus
-from app.modules.shipments.policies import IdentificadorFaltante
+from app.modules.shipments.policies import (
+    IdentificadorFaltante,
+    WarehouseReceiptFaltante,
+    WarehouseReceiptRepetido,
+)
 from app.modules.shipments.service import SinPermisoParaTransicion, VersionDesactualizada
 
 pytestmark = pytest.mark.integration
@@ -119,6 +123,20 @@ def _datos(entorno, **extra) -> gestion.DatosDeCarga:
     )
 
 
+async def _bodega_con_wr(session: AsyncSession, entorno) -> uuid.UUID:
+    bodega: uuid.UUID = (
+        await session.execute(
+            text("""
+                INSERT INTO facilities
+                    (location_id, facility_code, facility_type, uses_warehouse_receipt)
+                VALUES (:l, :cod, 'WAREHOUSE', true) RETURNING id
+            """),
+            {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
+        )
+    ).scalar_one()
+    return bodega
+
+
 class TestCrear:
     async def test_nace_en_prealerta_con_numero_propio(
         self, session: AsyncSession, redis, entorno
@@ -179,18 +197,8 @@ class TestCrear:
     async def test_desde_una_bodega_que_emite_wr_no_hace_falta_factura(
         self, session: AsyncSession, redis, entorno
     ) -> None:
-        """El WR lo emite la bodega al recibir, así que puede no existir todavía
-        al dar de alta. Se exige al almacenar, no acá."""
-        bodega = (
-            await session.execute(
-                text("""
-                    INSERT INTO facilities
-                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
-                    VALUES (:l, :cod, 'WAREHOUSE', true) RETURNING id
-                """),
-                {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
-            )
-        ).scalar_one()
+        """Lo de Miami se identifica por su WR: la factura es opcional."""
+        bodega = await _bodega_con_wr(session, entorno)
 
         creada = await gestion.crear(
             session,
@@ -199,6 +207,7 @@ class TestCrear:
                 origin_location_id=entorno["origen"],
                 destination_location_id=entorno["destino"],
                 origin_facility_id=bodega,
+                wr="WR105921",
                 weight_value=Decimal("10"),
                 weight_source_unit="KG",
                 packages=(gestion.DatosDeBulto(package_type="BOX", quantity=1),),
@@ -208,6 +217,43 @@ class TestCrear:
         )
 
         assert creada.id
+
+    async def test_desde_una_bodega_que_emite_wr_sin_wr_no_se_crea(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Obligatorio desde el alta (pedido de AMVARMAR, 2026-11-05). Antes se
+        exigía recién al almacenar."""
+        bodega = await _bodega_con_wr(session, entorno)
+
+        with pytest.raises(WarehouseReceiptFaltante):
+            await gestion.crear(
+                session,
+                datos=_datos(entorno, origin_facility_id=bodega, wr="  "),
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_un_wr_repetido_en_la_bodega_no_se_crea(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Antes el `ON CONFLICT DO NOTHING` lo descartaba en silencio y la carga
+        quedaba sin WR. Se compara normalizado, como el índice único."""
+        bodega = await _bodega_con_wr(session, entorno)
+        permisos = await _permisos(session, redis, entorno["ops"])
+        await gestion.crear(
+            session,
+            datos=_datos(entorno, origin_facility_id=bodega, wr="WR105921"),
+            actor_user_id=entorno["ops"],
+            permisos=permisos,
+        )
+
+        with pytest.raises(WarehouseReceiptRepetido):
+            await gestion.crear(
+                session,
+                datos=_datos(entorno, origin_facility_id=bodega, wr="wr-105921"),
+                actor_user_id=entorno["ops"],
+                permisos=permisos,
+            )
 
     async def test_sin_peso_no_se_crea(self, session: AsyncSession, redis, entorno) -> None:
         """Regla del `WarehouseForm.clean` del sistema viejo.
@@ -1057,32 +1103,58 @@ class TestEditarIdentificadores:
 
         assert nueva == creada.row_version + 1
 
-    async def test_el_wr_se_puede_agregar_despues(
-        self, session: AsyncSession, redis, entorno
-    ) -> None:
-        """La bodega lo emite al recibir, así que puede no existir al dar de alta."""
-        bodega = (
-            await session.execute(
-                text("""
-                    INSERT INTO facilities
-                        (location_id, facility_code, facility_type, uses_warehouse_receipt)
-                    VALUES (:l, :cod, 'WAREHOUSE', true) RETURNING id
-                """),
-                {"l": entorno["origen"], "cod": f"MIA-{uuid.uuid4().hex[:5]}"},
-            )
-        ).scalar_one()
-        creada = await self._crear(session, redis, entorno, origin_facility_id=bodega)
+    async def test_el_wr_se_puede_corregir(self, session: AsyncSession, redis, entorno) -> None:
+        bodega = await _bodega_con_wr(session, entorno)
+        creada = await self._crear(
+            session, redis, entorno, origin_facility_id=bodega, wr="WR105921"
+        )
 
         await gestion.actualizar(
             session,
             shipment_id=creada.id,
-            cambios={"wr": "WR105921"},
+            cambios={"wr": "WR105922"},
             row_version=creada.row_version,
             actor_user_id=entorno["ops"],
             permisos=await _permisos(session, redis, entorno["ops"]),
         )
 
-        assert await self._referencia(session, creada.id, "WR") == "WR105921"
+        assert await self._referencia(session, creada.id, "WR") == "WR105922"
+
+    async def test_el_wr_de_una_carga_de_miami_no_se_puede_borrar(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        bodega = await _bodega_con_wr(session, entorno)
+        creada = await self._crear(
+            session, redis, entorno, origin_facility_id=bodega, wr="WR105921"
+        )
+
+        with pytest.raises(WarehouseReceiptFaltante):
+            await gestion.actualizar(
+                session,
+                shipment_id=creada.id,
+                cambios={"wr": ""},
+                row_version=creada.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
+
+    async def test_un_wr_que_ya_tiene_otra_carga_da_conflicto(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        """Antes llegaba como `IntegrityError` sin capturar: un 500 al guardar."""
+        bodega = await _bodega_con_wr(session, entorno)
+        await self._crear(session, redis, entorno, origin_facility_id=bodega, wr="WR105921")
+        otra = await self._crear(session, redis, entorno, origin_facility_id=bodega, wr="WR200000")
+
+        with pytest.raises(WarehouseReceiptRepetido, match="WR105921"):
+            await gestion.actualizar(
+                session,
+                shipment_id=otra.id,
+                cambios={"wr": "WR105921"},
+                row_version=otra.row_version,
+                actor_user_id=entorno["ops"],
+                permisos=await _permisos(session, redis, entorno["ops"]),
+            )
 
     async def test_queda_constancia_de_lo_que_se_toco(
         self, session: AsyncSession, redis, entorno

@@ -131,7 +131,9 @@ export default function PaginaEditarCarga({
       version = resultado.row_version;
     }
 
-    if (Object.keys(cambios).length > 0) {
+    // El peso va en `cuerpo` aunque no esté en `cambios`: sin mirarlo, corregir
+    // solo el peso volvía a la carga sin guardar nada.
+    if (Object.keys(cambios).length > 0 || peso !== null) {
       await actualizar.mutateAsync({ ...cuerpo, row_version: version } as never);
     }
 
