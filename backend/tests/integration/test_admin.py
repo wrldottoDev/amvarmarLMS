@@ -499,6 +499,52 @@ class TestUsuarios:
         assert fila.status == "SUSPENDED"
         assert fila.deleted_at is not None
 
+    async def test_reactivar_usuario_desactivado(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        permisos = await _permisos(session, redis, entorno["super"])
+        await service.desactivar_usuario(
+            session, user_id=entorno["cliente_alfa"], permisos=permisos
+        )
+
+        await service.reactivar_usuario(session, user_id=entorno["cliente_alfa"], permisos=permisos)
+
+        fila = (
+            await session.execute(
+                text("SELECT status, deleted_at FROM users WHERE id = :u"),
+                {"u": entorno["cliente_alfa"]},
+            )
+        ).one()
+        assert fila.status == "ACTIVE"
+        assert fila.deleted_at is None
+
+    async def test_no_reactiva_a_quien_es_de_una_empresa_cerrada(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        permisos = await _permisos(session, redis, entorno["super"])
+        await service.desactivar_empresa(session, company_id=entorno["alfa"], permisos=permisos)
+
+        with pytest.raises(service.DatosInvalidos):
+            await service.reactivar_usuario(
+                session, user_id=entorno["cliente_alfa"], permisos=permisos
+            )
+
+    async def test_un_cliente_no_reactiva_usuarios(
+        self, session: AsyncSession, redis, entorno
+    ) -> None:
+        permisos = await _permisos(session, redis, entorno["super"])
+        await service.desactivar_usuario(
+            session, user_id=entorno["cliente_alfa"], permisos=permisos
+        )
+        otro = await _usuario(session, RoleCode.CLIENTE, ScopeType.ORGANIZATION, entorno["alfa"])
+
+        with pytest.raises(SinPermiso):
+            await service.reactivar_usuario(
+                session,
+                user_id=entorno["cliente_alfa"],
+                permisos=await _permisos(session, redis, otro),
+            )
+
     async def test_cambiar_de_rol_sube_la_version_de_permisos(
         self, session: AsyncSession, redis, entorno
     ) -> None:
