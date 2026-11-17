@@ -91,13 +91,18 @@ export function useDesactivarEmpresa() {
   });
 }
 
-export function useUsuarios(companyId?: string) {
+export function useUsuarios(companyId?: string, incluirInactivos = false) {
   return useQuery({
-    queryKey: [...claveUsuarios, companyId ?? "todos"],
+    queryKey: [...claveUsuarios, companyId ?? "todos", incluirInactivos],
     queryFn: async (): Promise<UsuarioAdmin[]> =>
       exigirDatos(
         await api.GET("/api/v1/admin/users", {
-          params: { query: companyId ? { company_id: companyId } : {} },
+          params: {
+            query: {
+              ...(companyId ? { company_id: companyId } : {}),
+              incluir_inactivos: incluirInactivos,
+            },
+          },
         }),
       ),
   });
@@ -159,6 +164,19 @@ export function useDesactivarUsuario() {
     mutationFn: async (id: string) =>
       exigirDatos(
         await api.DELETE("/api/v1/admin/users/{user_id}", {
+          params: { path: { user_id: id } },
+        }),
+      ),
+    onSuccess: () => cliente.invalidateQueries({ queryKey: claveUsuarios }),
+  });
+}
+
+export function useReactivarUsuario() {
+  const cliente = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      exigirDatos(
+        await api.POST("/api/v1/admin/users/{user_id}/reactivate", {
           params: { path: { user_id: id } },
         }),
       ),

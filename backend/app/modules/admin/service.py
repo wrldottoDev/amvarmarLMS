@@ -686,7 +686,9 @@ async def _cambiar_rol(
         raise DatosInvalidos(f"El rol {role_code} no existe.")
 
 
-async def _empresa_del_usuario(session: AsyncSession, user_id: UUID) -> UUID | None:
+async def _empresa_del_usuario(
+    session: AsyncSession, user_id: UUID, *, incluir_desactivados: bool = False
+) -> UUID | None:
     fila = (
         await session.execute(
             text("""
@@ -694,9 +696,9 @@ async def _empresa_del_usuario(session: AsyncSession, user_id: UUID) -> UUID | N
                 FROM users u
                 LEFT JOIN company_memberships m
                        ON m.user_id = u.id AND m.status = 'ACTIVE'
-                WHERE u.id = :u AND u.deleted_at IS NULL
+                WHERE u.id = :u AND (:todos OR u.deleted_at IS NULL)
             """),
-            {"u": user_id},
+            {"u": user_id, "todos": incluir_desactivados},
         )
     ).one_or_none()
 
@@ -787,6 +789,37 @@ async def desactivar_usuario(
         text("""
             UPDATE auth_sessions SET revoked_at = now(), revoke_reason = 'ADMIN_REVOKED'
             WHERE user_id = :id AND revoked_at IS NULL
+        """),
+        {"id": user_id},
+    )
+    await invalidar_permisos(session, user_id)
+
+
+async def reactivar_usuario(
+    session: AsyncSession, *, user_id: UUID, permisos: PermisosEfectivos
+) -> None:
+    """Deshace `desactivar_usuario`. No toca la contraseña: para darle acceso
+    se restablece aparte.
+
+    El correo es único aunque la cuenta esté desactivada, así que sin esto
+    no queda forma de volver a darle acceso a esa persona.
+    """
+    empresa = await _empresa_del_usuario(session, user_id, incluir_desactivados=True)
+    _exigir(permisos, Perm.USERS_MANAGE, empresa)
+
+    # Quien quedó suspendido porque se desactivó su empresa no vuelve a entrar
+    # a una empresa cerrada.
+    if empresa is not None and await session.scalar(
+        text("SELECT deleted_at IS NOT NULL FROM companies WHERE id = :c"), {"c": empresa}
+    ):
+        raise DatosInvalidos("La empresa de esta cuenta está desactivada.")
+
+    await session.execute(
+        text("""
+            UPDATE users
+            SET status = 'ACTIVE', deleted_at = NULL,
+                authz_version = authz_version + 1, updated_at = now()
+            WHERE id = :id
         """),
         {"id": user_id},
     )

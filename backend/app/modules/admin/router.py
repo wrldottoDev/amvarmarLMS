@@ -504,3 +504,22 @@ async def desactivar_usuario(
         ip_address=_ip(request),
     )
     await db.commit()
+
+
+@router.post("/users/{user_id}/reactivate", status_code=status.HTTP_204_NO_CONTENT)
+async def reactivar_usuario(
+    user_id: UUID, request: Request, actor: ActorDep, db: SesionDb, redis: RedisDep
+) -> None:
+    """Vuelve a habilitar una cuenta desactivada. La contraseña no cambia."""
+    permisos = await obtener_permisos_efectivos(db, redis, actor.user_id)
+    await service.reactivar_usuario(db, user_id=user_id, permisos=permisos)
+
+    await registrar(
+        db,
+        action="user.reactivated",
+        resource_type="user",
+        resource_id=user_id,
+        actor_user_id=actor.user_id,
+        ip_address=_ip(request),
+    )
+    await db.commit()

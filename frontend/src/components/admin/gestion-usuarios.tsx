@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, MailCheck, Plus, Power, UserRound } from "lucide-react";
+import { KeyRound, MailCheck, Plus, Power, RotateCcw, UserRound } from "lucide-react";
 import { useState } from "react";
 import { ContrasenaTemporal, type EstadoInvitacion } from "./contrasena-temporal";
 import { AvisoError } from "@/components/ui/aviso-error";
@@ -12,6 +12,7 @@ import {
   useDesactivarUsuario,
   useEmpresas,
   useEnviarVerificacion,
+  useReactivarUsuario,
   useRestablecerContrasena,
   useUsuarios,
 } from "@/features/admin/consultas";
@@ -39,11 +40,13 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
     invitacion: EstadoInvitacion;
   } | null>(null);
 
-  const { data, isPending, error } = useUsuarios(modo.empresaFiltro);
+  const [verDesactivados, setVerDesactivados] = useState(false);
+  const { data, isPending, error } = useUsuarios(modo.empresaFiltro, verDesactivados);
   const empresas = useEmpresas(false, true);
   const crear = useCrearUsuario();
   const restablecer = useRestablecerContrasena();
   const desactivar = useDesactivarUsuario();
+  const reactivar = useReactivarUsuario();
   const verificar = useEnviarVerificacion();
   const [avisoVerificacion, setAvisoVerificacion] = useState<{
     texto: string;
@@ -128,6 +131,17 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
         </p>
       ) : null}
       {verificar.error ? <AvisoError error={verificar.error} /> : null}
+      {reactivar.error ? <AvisoError error={reactivar.error} /> : null}
+
+      <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="size-4 accent-[var(--mar)]"
+          checked={verDesactivados}
+          onChange={(evento) => setVerDesactivados(evento.target.checked)}
+        />
+        Ver también los desactivados
+      </label>
 
       {error ? <AvisoError error={error} /> : null}
       {isPending ? <CargandoPagina /> : null}
@@ -230,7 +244,18 @@ export function GestionUsuarios({ modo }: { modo: Modo }) {
                     <Power className="size-4" aria-hidden="true" />
                     Desactivar
                   </button>
-                ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:bg-[var(--hover)]"
+                    title="Vuelve a habilitar la cuenta. Para que entre, restablecé su contraseña."
+                    onClick={() => reactivar.mutate(usuario.id)}
+                    disabled={reactivar.isPending}
+                  >
+                    <RotateCcw className="size-4" aria-hidden="true" />
+                    Reactivar
+                  </button>
+                )}
               </span>
             </li>
           ))}
